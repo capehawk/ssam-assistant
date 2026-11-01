@@ -6,8 +6,8 @@ import { onEnter, go as goMenu } from '../../core/shell.js';
 import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
 import { readText, fileMessage } from '../../core/files.js';
-import { toast, saveFile } from '../../core/ui.js';
-import { makeHwpx } from '../../core/hwpx.js';
+import { toast } from '../../core/ui.js';
+import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { stepsHTML } from '../../core/steps.js';
 import { stripNames } from '../../core/privacy.js';
 import {
@@ -411,7 +411,7 @@ function exportHTML() {
       ${plan.attach.length ? `<div class="cp-buim"><b>붙임</b><ol id="cpBuim">${plan.attach.map(a => `<li>${esc(KIND_NAME[a.kind] || '첨부')}(${esc(a.name)}) 1부.</li>`).join('')}</ol></div>` : ''}
       ${plan.monthly.length && noSec('monthly') ? '<p class="muted">목차에 「월별」 칸이 없어 월별 활동 표는 한글 파일에 들어가지 않아요. 2단계에서 칸을 더해 주세요.</p>' : ''}
       ${!d ? '<p class="banner warn"><span class="grow">3단계에서 초안을 먼저 써 주세요.</span></p>' : fin ? '<p class="banner ok"><span class="grow">확정한 계획이에요. 고치면 다시 「작성 중」이 돼요.</span></p>' : ''}
-      <div class="row yp-out"><button class="btn" type="button" data-c="hwpx"${d ? '' : ' disabled'}>한글 파일로 내려받기</button><span class="grow"></span>
+      <div class="row yp-out">${exportButton('data-c="hwpx"', { disabled: !d })}<span class="grow"></span>
         <button class="btn primary" type="button" data-c="final"${d ? '' : ' disabled'}>${fin ? '다시 확정' : '확정'}</button></div>
     </div>`;
 }
@@ -450,11 +450,8 @@ function toClass(aid) {
 }
 async function downloadHwpx() {
   if (!plan.draft) return;
-  const name = `${planTitle(plan).replace(/[\\/:*?"<>|]/g, '_')}.hwpx`;
-  try {
-    const where = await saveFile(name, makeHwpx(planDoc(plan)), 'application/hwp+zip');
-    toast(window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요');
-  } catch (e) { toast('한글 파일을 저장하지 못했어요'); }
+  try { toast(await exportDoc(planDoc(plan), planTitle(plan)), 6000); }
+  catch (e) { toast('파일을 저장하지 못했어요'); }
 }
 function confirmPlan() {
   if (!plan.draft) return;

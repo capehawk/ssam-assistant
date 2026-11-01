@@ -6,8 +6,8 @@ import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { getSchool } from '../../core/settings.js';
-import { toast, copyText, saveFile } from '../../core/ui.js';
-import { makeHwpx } from '../../core/hwpx.js';
+import { toast, copyText } from '../../core/ui.js';
+import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { listEvents, setEvents, removeEvents, dayIssues, suggestDates, weekday } from '../../core/calendar.js';
 import { stepsHTML } from '../../core/steps.js';
 import { SECTIONS, TEXT_SECTIONS, newPlan, listPlans, getPlan, savePlan, deletePlan, currentId, setCurrent, normReview, normGuide, normDraft, overlap, guideStatus, insertSentence, planDoc, planText } from './year-model.js';
@@ -244,7 +244,7 @@ function step5() {
       <h3>내보내기와 확정</h3>
       <p class="muted">확정하면 계획서와 일정을 저장하고, 일정은 이 컴퓨터의 학사일정에 넣어요. 확정한 계획은 다음 해 「작년 계획서」로 불러올 수 있어요.</p>
       ${fin ? '<p class="banner ok"><span class="grow">확정한 계획이에요. 고치면 다시 「작성 중」이 돼요.</span></p>' : ''}
-      <div class="row yp-out"><button class="btn" type="button" data-y="hwpx">한글 파일로 내려받기</button><button class="btn" type="button" data-copy="schedule">일정 복사</button><span class="grow"></span>
+      <div class="row yp-out">${exportButton('data-y="hwpx"')}<button class="btn" type="button" data-copy="schedule">일정 복사</button><span class="grow"></span>
         <button class="btn primary" type="button" data-y="final">${fin ? '다시 확정' : '확정'}</button></div>
     </div>`;
 }
@@ -304,11 +304,8 @@ function askDelete() {
 
 async function downloadHwpx() {
   if (!plan.draft) return;
-  const name = `${plan.year}학년도 ${(plan.name || '업무').replace(/[\\/:*?"<>|]/g, '_')} 운영 계획.hwpx`;
-  try {
-    const where = await saveFile(name, makeHwpx(planDoc(plan)), 'application/hwp+zip');
-    toast(window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요');
-  } catch (e) { toast('한글 파일을 저장하지 못했어요'); }
+  try { toast(await exportDoc(planDoc(plan), `${plan.year}학년도 ${plan.name || '업무'} 운영 계획`), 6000); }
+  catch (e) { toast('파일을 저장하지 못했어요'); }
 }
 
 /* ---------- AI: 작년 평가 ---------- */

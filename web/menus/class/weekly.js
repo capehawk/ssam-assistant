@@ -2,8 +2,8 @@
    AI 알림은 시작할 때의 주(월요일)에, 비어 있는 칸만 채움 */
 import { onEnter, go } from '../../core/shell.js';
 import * as ai from '../../core/ai.js';
-import { toast, copyText, saveFile } from '../../core/ui.js';
-import { makeHwpx } from '../../core/hwpx.js';
+import { toast, copyText } from '../../core/ui.js';
+import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { listEvents, addDays } from '../../core/calendar.js';
 import {
   makeCtx, getInfo, getWeekly, saveWeekly, weekView, defaultWeek, weeklyTitle, weekCell, weeklyDoc, weekPeriods, normNotes, NOTE_ROWS, fmtDay, today, migrateWeeklyEvents, hasTimetable } from './class-model.js';
@@ -57,7 +57,7 @@ function render() {
       <button class="btn tonal" type="button" data-w="ai"${b ? ' disabled' : ''}>${b ? 'AI가 쓰는 중…' : 'AI로 알림 쓰기'}</button>
       <button class="btn" type="button" data-w="copy">복사</button>
       <button class="btn" type="button" data-w="print">인쇄</button>
-      <button class="btn primary" type="button" data-w="hwpx">한글 파일</button>
+      ${exportButton('data-w="hwpx"', { cls: 'primary' })}
     </div>
     <div class="yp-card cls-sheet">
       <input class="field cls-w-title" id="clsWTitle" value="${esc(title)}" aria-label="제목">
@@ -116,11 +116,8 @@ function docOf() {
 }
 async function downloadHwpx() {
   const { days, title, doc } = docOf();
-  const name = `${title.replace(/[\\/:*?"<>|]/g, '_')}(${dotted(days[0].date)}~${dotted(days[4].date)}).hwpx`;
-  try {
-    const where = await saveFile(name, makeHwpx(doc), 'application/hwp+zip');
-    toast(window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요');
-  } catch (err) { toast('한글 파일을 저장하지 못했어요'); }
+  try { toast(await exportDoc(doc, `${title}(${dotted(days[0].date)}~${dotted(days[4].date)})`), 6000); }
+  catch (err) { toast('파일을 저장하지 못했어요'); }
 }
 function plainText() {
   const { days, title, w, notes } = docOf();

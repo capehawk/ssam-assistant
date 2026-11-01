@@ -1,6 +1,6 @@
 {
   "name": "ssam-assistant",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "쌤비서 — 평가·연수·계획·학급·품의 업무를 돕는 교사용 AI 업무 앱",

@@ -2,7 +2,7 @@
    채점을 마친 평가만 모음 */
 import { toast, copyText, saveFile } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
-import { makeHwpx } from '../../../core/hwpx.js';
+import { exportButton, exportDoc } from '../../../core/doc-export.js';
 import { studentTotal } from './unit-grade.js';
 import {
   listTests, loadTests, graded, makeTitle, filterTests, summaryTable, studentHistory, itemStats, domainStats, reteach,
@@ -34,7 +34,7 @@ function tableHTML(tests) {
   const tb = summaryTable(tests);
   const cell = v => (v == null ? '<td class="muted">-</td>' : `<td class="num">${v}</td>`);
   return `<div class="yp-card">
-    <div class="row"><b>성적 일람표</b><span class="muted">100점으로 바꾼 점수</span><span class="grow"></span><button class="btn" type="button" data-un="csv">엑셀(CSV)</button><button class="btn" type="button" data-un="tableHwpx">한글 파일</button></div>
+    <div class="row"><b>성적 일람표</b><span class="muted">100점으로 바꾼 점수</span><span class="grow"></span><button class="btn" type="button" data-un="csv">엑셀(CSV)</button>${exportButton('data-un="tableHwpx"')}</div>
     <div class="un-grid-wrap"><table class="un-sumt"><thead><tr><th>번호</th>${tb.cols.map(c => `<th data-col="${esc(c.id)}" title="${esc(c.title)}">${esc(c.title)}</th>`).join('')}<th>평균</th></tr></thead>
     <tbody>${tb.rows.map(r => `<tr data-no="${r.no}"><th>${r.no}번</th>${tb.cols.map(c => cell(r.cells[c.id])).join('')}${cell(r.avg)}</tr>`).join('')}
     <tr class="avg"><th>반 평균</th>${tb.cols.map(c => cell(tb.colAvg[c.id])).join('')}<td></td></tr></tbody></table></div></div>`;
@@ -171,10 +171,8 @@ async function download(kind) {
   const tests = loaded(filterTests(doneTests(), { subject: R.subject, term: R.term }));
   const tb = summaryTable(tests), base = fileName(`${R.subject || '전체'} 단원평가 성적 일람표`);
   try {
-    const where = kind === 'csv'
-      ? await saveFile(base + '.csv', new TextEncoder().encode(tableCsv(tb)), 'text/csv')
-      : await saveFile(base + '.hwpx', makeHwpx(tableDoc(base, tb)), 'application/hwp+zip');
-    toast(`저장했어요: ${where}`);
+    if (kind !== 'csv') { toast(await exportDoc(tableDoc(base, tb), base), 6000); return; }
+    toast(`저장했어요: ${await saveFile(base + '.csv', new TextEncoder().encode(tableCsv(tb)), 'text/csv')}`);
   } catch (e) { toast('파일을 저장하지 못했어요', 5000); }
 }
 

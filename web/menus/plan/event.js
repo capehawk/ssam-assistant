@@ -7,7 +7,7 @@ import * as ai from '../../core/ai.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { getSchool } from '../../core/settings.js';
 import { toast, copyText, saveFile } from '../../core/ui.js';
-import { makeHwpx } from '../../core/hwpx.js';
+import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { openPurchase } from '../purchase/purchase.js';
 import { stepsHTML } from '../../core/steps.js';
 import { listEvents as listCalendar, setEvents, removeEvents, dayIssues, suggestDates, weekday, isDate } from '../../core/calendar.js';
@@ -293,7 +293,7 @@ function step3() {
     }
   }
   return `${refNotesHTML(ev.refNotes.docs, ev.refNotes.stale)}<div class="yp-card">${tabs}${body}
-      <div class="row yp-out"><button class="btn" type="button" data-e="copyDoc">복사</button><button class="btn" type="button" data-e="hwpx">한글 파일로 내려받기</button><span class="grow"></span>
+      <div class="row yp-out"><button class="btn" type="button" data-e="copyDoc">복사</button>${exportButton('data-e="hwpx"')}<span class="grow"></span>
         <button class="btn text" type="button" data-e="docs">다시 만들기 (고친 내용은 사라져요)</button></div></div>
     <div class="yp-card"><h3>품의로 이어 가기</h3><p class="muted">품의 › 새 품의로 넘어가며 행사 정보와 고른 안의 예산 줄을 채워요.</p>
       <div class="row"><button class="btn" type="button" data-e="purchase">품의로 이어 가기</button></div></div>`;
@@ -333,7 +333,7 @@ function resultCardHTML() {
       ${bz === 'result' ? '<p class="muted"><span class="spin"></span> 결과 보고서를 쓰고 있어요…</p>' : ''}
       ${r ? resultHTML(r) : ''}
       ${r && bz !== 'result' ? `<label class="yp-f"><span class="lab">결과 보고서</span><textarea class="field ev-doc" id="evReport" rows="12">${esc(sv.report)}</textarea></label>
-        <div class="row yp-out"><button class="btn" type="button" data-e="reportCopy">복사</button><button class="btn" type="button" data-e="reportHwpx">한글 파일로 내려받기</button></div>
+        <div class="row yp-out"><button class="btn" type="button" data-e="reportCopy">복사</button>${exportButton('data-e="reportHwpx"')}</div>
         <label class="yp-f"><span class="lab">내년 개선 메모 <span class="muted">(다음 해 같은 종류 행사의 「작년 설문 결과」로 불러올 수 있어요)</span></span><textarea class="field" id="evNext" rows="4">${esc(sv.nextMemo)}</textarea></label>` : ''}
       <input type="file" id="evCsv" accept=".csv,.xlsx" hidden></div>`;
 }
@@ -468,18 +468,15 @@ async function runDocs() {
 
 async function downloadDoc() {
   const doc = docDoc(ev, curDoc);
-  const name = `${doc.title.replace(/[\\/:*?"<>|]/g, '_')}.hwpx`;
-  try {
-    const where = await saveFile(name, makeHwpx(doc), 'application/hwp+zip');
-    toast(window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요');
-  } catch (err) { toast('한글 파일을 저장하지 못했어요'); }
+  try { toast(await exportDoc(doc, doc.title), 6000); }
+  catch (err) { toast('파일을 저장하지 못했어요'); }
 }
 async function downloadReport() {
   const sv = survey(), r = sv.result;
   const blocks = [{ type: 'p', text: sv.report }];
   if (r) blocks.push({ type: 'h', text: '문항별 결과' }, { type: 'table', head: true, rows: [['문항', '평균', '응답'], ...r.questions.filter(q => q.type === 'scale').map(q => [q.q, String(q.mean), String(q.counts.reduce((a, b) => a + b, 0))])] });
-  try { await saveFile(`${(ev.name || '행사').replace(/[\\/:*?"<>|]/g, '_')} 결과 보고서.hwpx`, makeHwpx({ title: `${ev.name} 결과 보고서`, blocks }), 'application/hwp+zip'); toast('결과 보고서를 저장했어요'); }
-  catch (err) { toast('한글 파일을 저장하지 못했어요'); }
+  try { toast(await exportDoc({ title: `${ev.name} 결과 보고서`, blocks }, `${ev.name || '행사'} 결과 보고서`), 6000); }
+  catch (err) { toast('파일을 저장하지 못했어요'); }
 }
 function toPurchase() {
   const o = picked();

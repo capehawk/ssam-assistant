@@ -1,7 +1,7 @@
 /* 단원평가 4단계 피드백 (스펙 2.2·3.3): 잘한 점·격려(AI, 글만), 학생별 미리 보기, 결과지 한글 파일·인쇄(한 쪽에 2명), 번호별 복사 */
-import { toast, copyText, saveFile } from '../../../core/ui.js';
+import { toast, copyText } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
-import { makeHwpx } from '../../../core/hwpx.js';
+import { exportButton, exportDoc } from '../../../core/doc-export.js';
 import { getTest, graded, makeTitle, feedbackOf, feedbackText } from './unit-model.js';
 import { feedbackDoc } from './unit-docs.js';
 import { feedbackPrompt, normFeedback } from './unit-ai.js';
@@ -41,7 +41,7 @@ function step4HTML(t) {
   if (!list.length) return '<div class="yp-card"><p class="muted" style="margin:0">먼저 3단계에서 채점해 주세요.</p></div>';
   return `<div class="yp-card">
       <div class="row"><button class="btn primary" type="button" data-un="fbAI"${run ? ' disabled' : ''}>${run ? '<span class="spin"></span>쓰는 중…' : '잘한 점·격려 쓰기'}</button>
-        <button class="btn" type="button" data-un="fbHwpx">결과지 한글 파일</button><button class="btn" type="button" data-un="fbPrint">인쇄</button><button class="btn" type="button" data-un="fbCopyAll">모두 복사</button></div>
+        ${exportButton('data-un="fbHwpx"', { prefix: '결과지 · ' })}<button class="btn" type="button" data-un="fbPrint">인쇄</button><button class="btn" type="button" data-un="fbCopyAll">모두 복사</button></div>
       <p class="muted cls-note">AI에는 번호·점수·평가 내용만 보내요. 학생이 쓴 답과 이름은 보내지 않아요. 결과지는 한 쪽에 2명이라 가운데를 잘라 나눠 주면 돼요.</p>
     </div>
     <div class="un-fbs">${list.map(s => card(t, s)).join('')}</div>
@@ -73,8 +73,7 @@ async function writeFeedback(only) {
   } finally { runId = null; refresh(id); }
 }
 async function saveHwpx(t) {
-  const name = `${makeTitle(t.meta)} 결과지.hwpx`.replace(/[\\/:*?"<>|]/g, '_');
-  try { const where = await saveFile(name, makeHwpx(feedbackDoc(t, graded(t))), 'application/hwp+zip'); toast(`저장했어요: ${where}`); }
+  try { toast(await exportDoc(feedbackDoc(t, graded(t)), `${makeTitle(t.meta)} 결과지`), 6000); }
   catch (e) { toast('파일을 저장하지 못했어요', 5000); }
 }
 async function copy(text) { toast((await copyText(text)) === false ? '복사하지 못했어요' : '복사했어요'); }
