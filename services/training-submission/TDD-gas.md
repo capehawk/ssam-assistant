@@ -1,13 +1,13 @@
-# GAS adapter verification record
+# GAS 어댑터 검증 기록
 
 2026-11-02: `node --test tests/unit/training-service-gas.test.mjs`
 
-- RED before implementation: exit 1, application.js missing (1 failed test file).
-- GREEN after implementation: exit 0, 4/4 assertions groups pass: expiry/revocation, locked authentication/error boundary, chunked record/receipt roundtrip, deterministic file recovery.
-- Review hardening: all executable bundle functions enclosed in TrainingModule_; only doGet/doPost/trainingRequest public. `j:` cell prefix prevents formula interpretation. Grid expansion handles large bounded records. Old evidence references retained for cleanup.
-- `node services/training-submission/build.mjs` succeeds and copies four deployment artifacts.
-- Additional regression checks: 7/7 GAS tests pass, including committed-write/failed-flush receipt recovery, formula-shaped chunk boundary, grid growth and VM inspection showing only doGet/doPost/trainingRequest public. A new grid test initially failed because its fixture did not exceed 26 columns; corrected fixture to 999,980 characters, then 7/7 passed (test-fixture correction, not a production bug/TDD cycle).
-- Service total: 20/20 unit tests pass (13 core + 7 GAS/application).
-- `tests/e2e/training-reviewer.mjs`: 6/6 browser cases pass with real core/application + memory storage behind mock google.script.run. Teacher rejection, text-only rendering, PDF download, response-loss retry, revise/approve/teacher result, logout. Local installed Playwright bridge and browser-cache override used because default sandbox browser cache was absent. These UI tests were added after implementation and are regression/integration tests, not claimed as RED-first TDD.
+- 구현 전 실패(RED): 종료 코드 1, application.js 없음(테스트 파일 1개 실패).
+- 구현 후 통과(GREEN): 종료 코드 0, 4개 검사 그룹 통과. 만료·폐기, 잠금 안 인증과 오류 처리, 분할 기록·요청 처리 기록 읽기/쓰기, 같은 키의 파일 복구를 확인했습니다.
+- 리뷰 보완: 실행 가능한 번들 함수는 `TrainingModule_` 안에 두고 `doGet`/`doPost`/`trainingRequest`만 공개합니다. 셀의 `j:` 접두어로 수식 실행을 방지하고 큰 기록에 맞춰 행·열을 확장합니다. 정리 시 이전 증빙 참조도 보존합니다.
+- `node services/training-submission/build.mjs` 성공: 배포 파일 4개를 생성합니다.
+- 추가 회귀 검사: GAS 테스트 7/7 통과. 저장 후 flush 실패 시 처리 기록 복구, 수식처럼 시작하는 조각, 격자 확장, VM에서 공개 함수 3개만 노출되는지를 확인했습니다. 새 격자 시험은 합성 입력이 26열을 넘지 않아 처음 실패했고 999,980자로 고친 뒤 통과했습니다. 이는 시험 자료 수정이며 제품 결함 수정의 TDD 주기로 주장하지 않습니다.
+- 서버 전체 단위 테스트: 20/20 통과(코어 13개, GAS·인증 계층 7개).
+- `tests/e2e/training-reviewer.mjs`: 실제 코어·인증 계층과 메모리 저장소를 모의 `google.script.run`으로 연결해 화면 6/6 통과. 교사 접근 거절, 텍스트 안전 표시, PDF 내려받기, 응답 유실 재시도, 보완·확인완료·교사 결과 조회, 로그아웃을 확인했습니다. 기본 브라우저 캐시가 없어 설치된 Playwright와 브라우저 경로를 지정했습니다. 이 화면 검사는 구현 후 추가한 통합·회귀 검사입니다.
 
-These are local mocks, not a deployed Google service. Actual GAS authorization, quotas, Drive sharing semantics and HTTP redirect smoke remain unexecuted until personal-account deployment.
+이 검사는 로컬 모의 환경이며 배포된 Google 서비스 시험이 아닙니다. 실제 GAS 승인, 할당량, Drive 공유 상속, HTTP 리디렉션 기본 동작은 개인 계정으로 배포한 뒤 확인해야 합니다.

@@ -76,7 +76,7 @@ function setupDemo_() {
     if (!catalogSheet.getRange('A2').getValue()) catalogSheet.getRange('A1:A2').setValues([['catalog JSON'],[JSON.stringify(TrainingModule_.DEMO_CATALOG)]]);
     if (!submissionSheet.getRange('A1').getValue()) submissionSheet.getRange('A1:B1').setValues([['submissionId','JSON chunks (j: prefix)']]);
     SpreadsheetApp.flush();
-    return 'Demo storage ready. Credentials are configured separately in Script Properties.';
+    return '시연 저장소를 준비했습니다. 인증값 검증 정보는 스크립트 속성에서 별도로 설정하세요.';
   } finally { lock.releaseLock(); }
 }
 

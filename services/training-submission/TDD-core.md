@@ -1,16 +1,16 @@
-# Core test evidence
+# 업무 코어 테스트 근거
 
-Local Node v24.19.0; synthetic inputs only. No Apps Script deployment was exercised.
+환경: 로컬 Node v24.19.0. 합성 입력만 사용했으며 실제 Apps Script 배포는 시험하지 않았습니다.
 
-2026-11-02 (Asia/Seoul):
+2026-11-02(한국 시간):
 
-1. Authored eight behavioral tests in `tests/unit/training-service-core.test.mjs` before implementation.
-2. `node --test tests/unit/training-service-core.test.mjs`: RED, exit 1, missing core module.
-3. Added exported API stub (`execute` returned null) and memory test adapters. Same command: RED, 0 passed / 8 failed. Failures included absent expected storage exceptions and null submission results.
-4. Implemented the pure dependency-injected service. Same command: GREEN, 8 passed / 0 failed, including exact 5 MiB PDF boundary, role/ownership checks, state/revision transitions, old-result idempotency, ambiguous committed writes and evidence reuse after failed writes.
-5. Added supplementary regression assertions for changed ownership on duplicate submit, rejected review requests leaving the stored record unchanged, and mutation-history limits. These are postimplementation regression checks, not a separate claimed RED/GREEN cycle.
-6. Added evidence replacement retention and 1,000,000-character aggregate record limit tests. Same command: RED, 11 passed / 2 failed (missing evidenceHistory and missing expected VALIDATION). Added private evidenceHistory and pre-save size guard. Same command: GREEN, 13 passed / 0 failed. A size rejection after evidence creation may leave an orphan; it must remain until reference-aware adapter cleanup, because deleting on ambiguous writes is unsafe.
+1. 구현 전에 `tests/unit/training-service-core.test.mjs`에 행동 테스트 8개를 작성했습니다.
+2. `node --test tests/unit/training-service-core.test.mjs`: 실패(RED), 종료 코드 1. 코어 모듈이 없었습니다.
+3. 공개 API 틀(`execute`가 null 반환)과 메모리 시험 어댑터를 추가했습니다. 같은 명령에서 0개 통과·8개 실패. 예상한 저장 예외가 발생하지 않거나 제출 결과가 null인 실패를 확인했습니다.
+4. 의존성을 주입받는 순수 업무 서비스를 구현했습니다. 같은 명령에서 통과(GREEN), 8개 통과·0개 실패. 정확히 5 MiB인 PDF 경계, 역할·소유권, 상태·버전 전이, 과거 요청 결과 재반환, 저장 후 예외 발생, 저장 실패 후 증빙 재사용을 포함합니다.
+5. 중복 제출 후 소유권 변경, 검토 거절 시 원본 유지, 변경 이력 한도 회귀 검사를 추가했습니다. 구현 후 추가한 검사이며 별도 실패→통과 개발 주기로 주장하지 않습니다.
+6. 교체된 증빙 보존과 기록 총 1,000,000자 제한 검사를 추가했습니다. 먼저 11개 통과·2개 실패(`evidenceHistory` 없음, 예상한 `VALIDATION` 없음)를 확인했습니다. 비공개 증빙 이력과 저장 전 크기 검사를 추가한 뒤 13개 모두 통과했습니다. 증빙 생성 후 크기 제한으로 거절되면 미참조 파일이 남을 수 있습니다. 저장 여부가 불확실할 때 삭제하면 안 되므로 참조를 확인하는 정리 절차까지 유지합니다.
 
-Authentication expiry/revocation and GAS lock/chunk persistence belong to adapter tests, not the pure service. Memory adapters clone records to model detached storage reads. The evidence store never deletes a file on a failed submission write: a write could have committed before an exception, so retry uses its opaque actor/request/content key. Orphan cleanup belongs to the deployment adapter after checking references.
+인증 만료·폐기와 GAS 잠금·분할 저장은 어댑터 테스트가 담당합니다. 메모리 어댑터는 저장소 조회처럼 원본과 분리된 복제본을 반환합니다. 제출 저장 실패만으로 증빙을 삭제하지 않습니다. 예외 전에 저장이 완료됐을 수 있으므로 재시도에서 사용자·요청·내용 기반 키를 재사용합니다. 미참조 파일 정리는 배포 어댑터에서 참조를 확인한 뒤 수행합니다.
 
-Last usage check at 2026-11-02 01:14 Asia/Seoul: known primary window 12% used / 88% remaining; secondary unavailable. No reset credit or paid overage used.
+이 기록 작성 당시 사용량 확인: 2026-11-02 01:14 한국 시간, 확인 가능한 기본 한도 12% 사용·88% 잔여. 보조 한도는 확인 불가. 사용량 초기화 크레딧이나 추가 결제는 사용하지 않았습니다.
