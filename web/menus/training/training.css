@@ -1,0 +1,13 @@
+.training-page { max-width: 960px; margin: auto; padding: 24px; }
+.training-page fieldset, .training-page form, .tr-record { border: 1px solid var(--line, #c7cdd4); border-radius: 12px; padding: 20px; margin: 18px 0; }
+.training-page label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.training-page input, .training-page select { padding: 9px; border: 1px solid #9aa4b0; border-radius: 6px; color: inherit; background: transparent; min-width: 0; width: 100%; box-sizing: border-box; }
+.tr-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+.tr-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.training-page button { padding: 9px 14px; border-radius: 7px; cursor: pointer; }
+.training-page button:disabled { cursor: default; opacity: .5; }
+.training-page .tr-check { flex-direction: row; align-items: center; }
+.training-page .tr-check input { width: auto; }
+.training-page pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+#tr-message { padding: 12px 0; font-weight: 600; }
+@media(max-width: 600px) { .training-page { padding: 12px; } .tr-fields { grid-template-columns: 1fr; } }

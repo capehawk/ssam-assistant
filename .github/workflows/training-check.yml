@@ -1,0 +1,37 @@
+name: Training submission checks
+on:
+  push:
+    branches: [feature/training-hackathon]
+  pull_request:
+    paths:
+      - 'services/training-submission/**'
+      - 'web/menus/training/**'
+      - 'src-tauri/src/training.rs'
+      - 'src-tauri/src/main.rs'
+      - 'tests/**/training*'
+      - '.github/workflows/training-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  training:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: node services/training-submission/build.mjs
+      - run: git diff --exit-code -- services/training-submission/dist
+      - run: node --test tests/unit/training*.test.mjs
+      - run: node tests/e2e/training.mjs
+      - run: node tests/e2e/training-reviewer.mjs
+      - run: npm run web
+      - run: cargo test --manifest-path src-tauri/Cargo.toml

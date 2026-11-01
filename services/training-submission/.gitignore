@@ -1,0 +1,3 @@
+# This deployment bundle is deliberately reviewable/copyable, unlike app build output.
+!dist/
+!dist/**

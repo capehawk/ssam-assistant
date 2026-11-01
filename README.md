@@ -7,6 +7,8 @@
 
 ## 써 보기
 
+- **연수 제출 시연 (이 브랜치)**: [개인 Google 계정 서버 배포·시연 안내](services/training-submission/README.md)와 [검증 상태](services/training-submission/VERIFICATION.md)를 참고하세요. Windows 설치판용 연결이며 실제 GAS 배포 검증이 필요합니다.
+
 - **웹판(설치 없이)**: https://doguri25.github.io/ssam-assistant/
 - **Windows 앱**: [릴리즈](https://github.com/doguri25/ssam-assistant/releases)에서 `ssam-<버전>-setup.exe`(설치) 또는 `ssam-<버전>-portable.exe`(설치 없이 실행). 앱이 새 버전을 스스로 확인해요.
 - AI는 설정 › AI에서 Claude·Gemini·GPT·업스테이지(Solar) 중 하나의 키를 넣고 [연결 확인]을 눌러요.

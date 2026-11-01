@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_proxy;
+mod training;
 mod bubble;
 mod files;
 mod neis;
@@ -321,6 +322,7 @@ fn main() {
             neis::neis_arm,
             neis::neis_disarm,
             ai_proxy::ai_proxy,
+            training::training_request,
             files::save_download,
             bubble::bubble_config,
             bubble::inbox_take,

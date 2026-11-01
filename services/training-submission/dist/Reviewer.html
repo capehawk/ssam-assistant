@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>연수 제출 확인함</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;background:#f5f7fa;color:#18243a;margin:0}main{max-width:980px;margin:32px auto;padding:24px;background:white;border-radius:16px}h1{margin:0}label{display:block;margin:12px 0}input,textarea,select,button{font:inherit;padding:9px;border:1px solid #aeb9ca;border-radius:7px}input{max-width:90%}button{cursor:pointer;background:#eaf0fa;margin:4px}button:disabled{opacity:.5;cursor:wait}textarea{width:90%;min-height:80px}article{border:1px solid #d4dcea;border-radius:10px;padding:16px;margin:16px 0}small{color:#52627a}#message{white-space:pre-wrap;padding:12px;background:#edf2fa}li{margin:5px 0}.status{font-weight:bold}</style></head>
+<body><main><h1>연수 제출 확인함</h1><p>합성 자료 전용 시연 · 확인은 학교 내부 제출 확인이며 공식 결재가 아닙니다.</p>
+<form id="login"><label>담당자 임시 인증값 <input id="token" type="password" autocomplete="off" required maxlength="256"></label><button type="submit">확인함 열기</button><button type="button" id="logout">인증 지우기</button></form>
+<p><button id="refresh" type="button">결과 새로고침</button><button id="retry" type="button" hidden>결과 미확인 요청 재시도</button></p>
+<p id="message" role="status" aria-live="polite">담당자 인증값을 입력하세요. 인증값은 이 페이지 메모리에만 유지됩니다.</p>
+<div id="queue"></div></main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const labels={submitted:'확인대기',approved:'확인완료',needs_changes:'보완요청'};
+let token='',pending=null,busy=false,generation=0;
+function status(value){$('message').textContent=value;}
+function element(tag,text){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;return el;}
+function controls(value){busy=value;document.querySelectorAll('button').forEach(b=>b.disabled=value);$('retry').hidden=!pending;}
+function call(request){return new Promise((resolve,reject)=>google.script.run.withSuccessHandler(resolve).withFailureHandler(()=>reject(new Error('서버 응답을 확인할 수 없습니다.'))).trainingRequest(request));}
+async function request(action,payload={},mutation=false){
+  const req=mutation?pending:{action,payload,requestId:crypto.randomUUID()};
+  const response=await call({...req,token});
+  if(!response||typeof response.ok!=='boolean')throw new Error('서버 응답 형식이 올바르지 않습니다.');
+  if(!response.ok){const err=new Error(response.error?.message||'처리에 실패했습니다.');err.code=response.error?.code;throw err;}
+  return response.data;
+}
+async function refresh(){
+  if(busy)return;controls(true);const current=generation;
+  try{const rows=await request('reviewQueue');if(current!==generation)return;render(rows);status('최신 확인함을 불러왔습니다. '+rows.length+'건');}
+  catch(e){status(e.message+' 마지막 목록은 최신 여부 미확인입니다.');}
+  finally{controls(false);}
+}
+async function review(record,decision,comment){
+  if(busy)return;
+  if(pending){status('먼저 결과 미확인 요청을 재시도하세요.');return;}
+  if(decision==='needs_changes'&&!comment.trim()){status('보완요청 의견을 입력하세요.');return;}
+  pending={action:'review',requestId:crypto.randomUUID(),payload:{submissionId:record.submissionId,expectedRevision:record.revision,decision,comment}};
+  await retry();
+}
+async function retry(){
+  if(busy||!pending)return;controls(true);
+  try{await request('review',{},true);pending=null;status('검토 결과를 저장했습니다.');}
+  catch(e){
+    // Transport/storage/busy failures may have committed: preserve identical retry.
+    if(e.code&&!['STORAGE_ERROR','BUSY','INTERNAL'].includes(e.code))pending=null;
+    status(e.message+(pending?' 저장 결과 미확인: 같은 요청 재시도 버튼을 누르세요.':' 새로고침 후 확인하세요.'));
+  }finally{controls(false);}
+  if(!pending)await refresh();
+}
+async function evidence(record){
+  if(busy)return;controls(true);
+  try{const file=await request('evidence',{submissionId:record.submissionId});const bytes=Uint8Array.from(atob(file.base64),c=>c.charCodeAt(0));const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));const a=element('a');a.href=url;a.download=record.evidence.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);status('인증된 증빙 PDF를 내려받았습니다.');}
+  catch(e){status(e.message);}finally{controls(false);}
+}
+function render(rows){
+  $('queue').replaceChildren();
+  for(const record of rows){
+    const card=element('article');card.append(element('h2',record.items.map(i=>i.title).join(' / ')));
+    const state=element('p',(labels[record.status]||record.status)+' · '+record.actorId+' · 버전 '+record.revision);state.className='status';card.append(state);
+    card.append(element('small',record.submissionId+' · 변경 '+record.updatedAt));
+    const items=element('ul');record.items.forEach(item=>items.append(element('li',item.provider+' · '+item.completedOn+' · '+item.hours+'시간 · '+item.catalogId)));card.append(items);
+    if(record.comment)card.append(element('p','담당 의견: '+record.comment));
+    const download=element('button','증빙 PDF 내려받기');download.type='button';download.onclick=()=>evidence(record);card.append(download);
+    if(record.status==='submitted'){
+      const label=element('label','검토 의견');const comment=element('textarea');comment.maxLength=2000;label.append(comment);card.append(label);
+      for(const [decision,title] of [['approved','확인완료'],['needs_changes','보완요청']]){const button=element('button',title);button.type='button';button.onclick=()=>review(record,decision,comment.value);card.append(button);}
+    }
+    const details=element('details'),summary=element('summary','처리 이력'),history=element('ul');
+    record.history.forEach(h=>history.append(element('li',h.at+' · '+h.actorId+' · '+(labels[h.action]||h.action)+(h.comment?' · '+h.comment:''))));details.append(summary,history);card.append(details);$('queue').append(card);
+  }
+}
+$('login').onsubmit=e=>{e.preventDefault();if(busy)return;if(pending){status('인증을 바꾸기 전에 결과 미확인 요청을 재시도하세요.');return;}token=$('token').value;$('token').value='';generation++;$('queue').replaceChildren();refresh();};
+$('logout').onclick=()=>{if(busy)return;token='';$('token').value='';pending=null;generation++;$('queue').replaceChildren();controls(false);status('인증과 화면 내용을 지웠습니다. 미확인 요청이 있었다면 재로그인 후 최신 목록을 확인하세요.');};
+$('refresh').onclick=refresh;$('retry').onclick=retry;
+</script></body></html>

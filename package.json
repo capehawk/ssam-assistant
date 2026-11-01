@@ -7,6 +7,8 @@
   "scripts": {
     "web": "node scripts/copy-web.mjs",
     "test": "node --test tests/unit/*.test.mjs",
+    "test:training": "node --test tests/unit/training*.test.mjs",
+    "build:training": "node services/training-submission/build.mjs",
     "e2e": "node tests/e2e/run-all.mjs",
     "tauri": "tauri",
     "samples": "node scripts/make-samples.mjs"
