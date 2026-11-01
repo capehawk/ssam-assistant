@@ -41,3 +41,5 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ## Windows CI
 
 [최초 실행 결과](https://github.com/capehawk/ssam-assistant/actions/runs/41355906916): 커밋 `42b8fe8`의 Windows CI가 통과했습니다. 연수 단위 테스트, 교사·담당자 화면 통합, 배포 파일 일치 검사, 웹 빌드와 Rust 빌드·테스트가 모두 성공했습니다. 실제 GAS 배포·설치형 앱 네트워크 통신 점검은 이 결과에 포함되지 않습니다.
+
+실제 GAS 업로드 확인: 숫자 구분자 표기 때문에 최초 업로드가 파서 오류로 실패했습니다. 1000000 표기로 수정한 뒤 25개 연수 단위 테스트와 실제 코드 업로드가 성공했습니다. 최초 OAuth 승인·저장소 초기화·웹앱 배포·실제 통신 검증은 아직 남아 있습니다.

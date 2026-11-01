@@ -109,7 +109,7 @@ export function createTrainingService({ repository, evidenceStore, clock, idGene
     record.history.push({ action: action === 'review' ? payload.decision : action, actorId: principal.actorId, at, revision: record.revision, comment: record.comment });
     const result = publicRecord(record);
     record.requests.push({ actorId: principal.actorId, requestId, hash: payloadHash, result });
-    if (JSON.stringify(record).length > 1_000_000) reject('VALIDATION', '시연 제출의 저장 한도에 도달했습니다. 새 제출을 이용하세요.');
+    if (JSON.stringify(record).length > 1000000) reject('VALIDATION', '시연 제출의 저장 한도에 도달했습니다. 새 제출을 이용하세요.');
     storage(() => repository.save(record));
     return copy(result);
   }
