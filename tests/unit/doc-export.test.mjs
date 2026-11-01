@@ -27,6 +27,15 @@ test('워드 파일: 담는 파일, 본문에 제목·문단(줄마다)·표 2×
   assert.match(dec(m.get('word/styles.xml')), /맑은 고딕/);
 });
 
+test('워드 스타일: 문단 속성은 정해진 차례(간격 → 정렬 → 개요 수준), Word가 고칠 내용 없이 열게', async () => {
+  const st = dec((await unzip(makeDocx(DOC))).get('word/styles.xml'));
+  for (const ppr of st.match(/<w:pPr>.*?<\/w:pPr>/g)) {
+    const order = [...ppr.matchAll(/<w:(keepNext|pageBreakBefore|spacing|jc|outlineLvl)\b/g)].map(m => m[1]);
+    const want = ['keepNext', 'pageBreakBefore', 'spacing', 'jc', 'outlineLvl'].filter(x => order.includes(x));
+    assert.deepEqual(order, want, ppr);
+  }
+});
+
 test('인쇄용 HTML(PDF): 제목·소제목·문단·표, 쪽 나눔 표시, 글자 이스케이프', () => {
   const h = docHtml(DOC);
   assert.ok(h.includes('<h1>2027학년도 &lt;독서&gt; 운영 계획</h1>'));

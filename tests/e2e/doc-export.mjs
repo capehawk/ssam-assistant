@@ -48,18 +48,38 @@ await run('doc-export', [
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click(b)]);
     assert(dl.suggestedFilename().endsWith('.docx'), dl.suggestedFilename());
   }],
-  ['PDF: 인쇄 창으로 문서만 인쇄(인쇄하는 동안만 문서 칸), 안내', async () => {
-    await page.evaluate(() => { window.__printed = null; window.print = () => { window.__printed = { cls: document.body.classList.contains('printing-doc'), text: document.getElementById('printDoc').textContent }; }; });
+  ['▾ 목록이 떠 있는 동안 화면이 다시 그려져도 고른 형식으로 내려받음', async () => {
+    await tab('class', 'weekly');
+    await page.click(more);
+    await page.evaluate(() => { const m = document.querySelector('section[data-menu="class"] [data-w="hwpx"]'); m.replaceWith(m.cloneNode(true)); });
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#expMenu [data-exp-fmt="docx"]')]);
+    assert(dl.suggestedFilename().endsWith('.docx'), dl.suggestedFilename());
+  }],
+  ['PDF: 인쇄 창으로 문서만 인쇄(인쇄하는 동안만 문서 칸), 안내, 파일 이름은 문서 이름', async () => {
+    await page.evaluate(() => { window.__printed = null; window.print = () => { window.__printed = { cls: document.body.classList.contains('printing-doc'), text: document.getElementById('printDoc').textContent, title: document.title }; }; });
     await tab('class', 'weekly');
     await page.click(more);
     await page.click('#expMenu [data-exp-fmt="pdf"]');
     await page.waitForFunction(() => window.__printed);
     const p = await page.evaluate(() => window.__printed);
     assert(p.cls && p.text.includes('주간학습안내'), JSON.stringify(p).slice(0, 200));
+    assert(p.title.startsWith('3학년 1반 주간학습안내('), '저장할 이름: ' + p.title);
+    // A4 쪽 설정은 내보낸 문서에만(다른 [인쇄]는 가로·여백을 그대로 고를 수 있게)
+    assert(!/@page\s*\{/.test(await page.evaluate(() => document.getElementById('printDocCss').textContent)), '이름 없는 @page');
     assert((await page.textContent(main)).trim() === 'PDF로 저장', await page.textContent(main));
     assert((await page.textContent('body')).includes('PDF로 저장'), '안내');
     await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
     assert(!(await page.evaluate(() => document.body.classList.contains('printing-doc'))), '인쇄가 끝나도 문서 칸이 남음');
+    assert(await page.evaluate(() => document.title) === '쌤비서', '창 제목이 돌아오지 않음: ' + await page.evaluate(() => document.title));
+  }],
+  ['인쇄 창이 안 떴어도(브라우저가 무시) 다음 [인쇄]는 그 화면을 인쇄(문서 칸이 남지 않음)', async () => {
+    await page.evaluate(() => { window.__printed = null; window.print = () => { window.__printed = true; }; }); // 이벤트 없이 무시됨
+    await page.click(more);
+    await page.click('#expMenu [data-exp-fmt="pdf"]');
+    await page.waitForFunction(() => window.__printed);
+    await page.waitForTimeout(3200);
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint'))); // 주간학습안내 [인쇄]·Ctrl+P
+    assert(!(await page.evaluate(() => document.body.classList.contains('printing-doc'))), '문서 칸이 남음');
   }],
   ['다시 한글을 고르면 .hwpx', async () => {
     await page.click(more);

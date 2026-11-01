@@ -72,7 +72,7 @@ function stylesXml() {
     + `<w:docDefaults><w:rPrDefault><w:rPr>${font}<w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="ko-KR" w:eastAsia="ko-KR"/></w:rPr></w:rPrDefault>`
     + '<w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="300" w:lineRule="auto"/><w:jc w:val="both"/></w:pPr></w:pPrDefault></w:docDefaults>'
     + '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
-    + '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:jc w:val="center"/><w:spacing w:after="240"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>'
+    + '<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="240"/><w:jc w:val="center"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/></w:rPr></w:style>'
     + '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="200" w:after="80"/><w:jc w:val="left"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>'
     + `<w:style w:type="table" w:styleId="Grid"><w:name w:val="Table Grid"/><w:tblPr><w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders><w:tblCellMar><w:left w:w="85" w:type="dxa"/><w:right w:w="85" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>`
     + '</w:styles>';
@@ -117,9 +117,9 @@ export function docHtml(doc) {
 }
 const PRINT_CSS = `#printDoc{display:none}
 @media print{
-  @page{size:A4;margin:20mm}
+  @page doc{size:A4;margin:20mm}
   body.printing-doc>*:not(#printDoc){display:none!important}
-  body.printing-doc #printDoc{display:block!important;position:static;color:#000;background:#fff;font:10pt/1.6 'Malgun Gothic','맑은 고딕','Noto Sans KR',sans-serif;word-break:keep-all}
+  body.printing-doc #printDoc{page:doc;display:block!important;position:static;color:#000;background:#fff;font:10pt/1.6 'Malgun Gothic','맑은 고딕','Noto Sans KR',sans-serif;word-break:keep-all}
   body.printing-doc #printDoc,body.printing-doc #printDoc *{visibility:visible!important}
   #printDoc h1{font-size:16pt;text-align:center;margin:0 0 12pt}
   #printDoc h2{font-size:12pt;margin:10pt 0 4pt;break-after:avoid}
@@ -131,20 +131,34 @@ const PRINT_CSS = `#printDoc{display:none}
   #printDoc .nw{white-space:nowrap}
   #printDoc .pd-break{break-before:page}
 }`;
-export function printDoc(doc) {
+let printUntil = 0, savedTitle = null;
+// 인쇄가 끝나면(또는 브라우저가 인쇄 창을 무시해 이벤트가 없었어도 다음 다른 인쇄 전에) 문서 칸·창 제목을 되돌림
+function endPrint() {
+  document.body.classList.remove('printing-doc');
+  if (savedTitle != null) { document.title = savedTitle; savedTitle = null; }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('afterprint', endPrint);
+  window.addEventListener('beforeprint', () => { if (performance.now() > printUntil) endPrint(); });
+}
+/* name: 「PDF로 저장」에 뜨는 파일 이름. 인쇄는 안내가 먼저 보이게 조금 뒤에 */
+export function printDoc(doc, name) {
   if (!document.getElementById('printDocCss')) document.head.append(Object.assign(document.createElement('style'), { id: 'printDocCss', textContent: PRINT_CSS }));
   let box = document.getElementById('printDoc');
   if (!box) { box = Object.assign(document.createElement('div'), { id: 'printDoc' }); document.body.append(box); }
   box.innerHTML = docHtml(doc);
-  document.body.classList.add('printing-doc');
-  const done = () => { document.body.classList.remove('printing-doc'); window.removeEventListener('afterprint', done); };
-  window.addEventListener('afterprint', done);
-  window.print();
+  setTimeout(() => {
+    document.body.classList.add('printing-doc');
+    if (savedTitle == null) savedTitle = document.title;
+    document.title = fileName(name || (doc && doc.title), 'pdf').replace(/\.pdf$/, '');
+    printUntil = performance.now() + 3000;
+    window.print();
+  }, 80);
 }
 
 /* 고른 형식(없으면 기억한 형식)으로 내보내고 알릴 말을 돌려줌 */
 export async function exportDoc(doc, name, f = getFormat()) {
-  if (f === 'pdf') { printDoc(doc); return '인쇄 창에서 「PDF로 저장」을 골라 저장해 주세요.'; }
+  if (f === 'pdf') { printDoc(doc, name); return '인쇄 창에서 「PDF로 저장」을 골라 저장해 주세요.'; }
   const where = f === 'docx'
     ? await saveFile(fileName(name, 'docx'), makeDocx(doc), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
     : await saveFile(fileName(name, 'hwpx'), makeHwpx(doc), 'application/hwp+zip');
@@ -165,6 +179,8 @@ function openMenu(more) {
   closeMenu();
   const main = more.parentElement && more.parentElement.querySelector('[data-exp-main]');
   if (!main) return;
+  // 그 단추를 다시 찾을 이름표: 메뉴가 단 data- 속성들 (목록이 떠 있는 동안 화면이 다시 그려질 수 있음)
+  const sel = '[data-exp-main]' + [...main.attributes].filter(a => a.name.startsWith('data-') && !a.name.startsWith('data-exp-')).map(a => `[${a.name}="${CSS.escape(a.value)}"]`).join('');
   const cur = getFormat(), r = more.getBoundingClientRect();
   const m = Object.assign(document.createElement('div'), { id: 'expMenu', className: 'exp-menu' });
   m.setAttribute('role', 'menu');
@@ -177,7 +193,8 @@ function openMenu(more) {
     if (!b) return;
     setFormat(b.dataset.expFmt);
     closeMenu();
-    main.click(); // 고른 형식으로 바로 내려받기
+    const target = main.isConnected ? main : document.querySelector(sel);
+    if (target) target.click(); // 고른 형식으로 바로 내려받기
   });
   const first = m.querySelector('[aria-checked="true"]') || m.querySelector('button');
   first && first.focus();
