@@ -4,6 +4,7 @@ import { onFlush } from '../../core/store.js';
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
+import { aiRowHTML } from '../../core/ai-roles.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { getSchool } from '../../core/settings.js';
 import { toast, copyText } from '../../core/ui.js';
@@ -108,6 +109,7 @@ function renderMain() {
   const step = plan.step;
   const body = step === 1 ? step1() : step === 2 ? step2() : step === 3 ? step3() : step === 4 ? step4() : step5();
   main.innerHTML = stepsHTML(STEPS, step, plan.maxStep)
+    + (step >= 2 && step <= 4 ? aiRowHTML('plan') : '')
     + (errs[plan.id] ? `<div class="banner err" role="alert"><span class="grow">${esc(errs[plan.id])}</span></div>` : '')
     + body
     + `<div class="row yp-nav">${step > 1 ? '<button class="btn" type="button" data-y="prev">이전</button>' : ''}<span class="grow"></span>${step < 5 ? '<button class="btn primary" type="button" data-y="next">다음</button>' : ''}</div>`

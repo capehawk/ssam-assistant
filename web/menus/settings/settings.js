@@ -10,6 +10,7 @@ import { getYears, snapshot, carryOver, makeBackup, parseBackup, prepYear } from
 import { switchYear, switchError, getArchive, safeLS } from '../../core/year-switch.js';
 import { FULL_MSG, usage, get as sget, set as sset } from '../../core/store.js';
 import { getInboxSettings, setInboxSettings, registerInbox } from '../../core/inbox.js';
+import { TASKS, getRoles, setDefaultReview, resetRoles, rowText, aiOptions, aiValue, aiFromValue, providerEnv } from '../../core/ai-roles.js';
 
 const SSAM = () => window.SSAM || {};
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,6 +41,18 @@ function page(title, desc, body) {
   return `<div class="m-page set-page"><div class="m-head"><h2>${title}</h2>${desc ? `<p class="muted">${desc}</p>` : ''}</div>${body}</div>`;
 }
 const card = (title, body) => `<section class="set-card"><h3>${title}</h3>${body}</section>`;
+/* 기본 검토 AI와 업무별 설정 한눈에 (업무마다 정하는 곳은 각 메뉴의 AI 줄) */
+function rolesCards() {
+  const env = providerEnv();
+  if (env.engine === 'account') return card('업무별 AI', '<p class="muted" style="margin:0">Claude 계정을 쓰는 동안에는 AI 하나로 모든 업무를 해요. 업무별 AI와 검토 AI는 API 키를 넣으면 쓸 수 있어요.</p>');
+  const r = getRoles(), cur = r.review && env.keys[r.review.engine] ? aiValue(r.review) : '';
+  const opts = aiOptions(env).map(o => `<option value="${esc(o.value)}"${o.value === cur ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+  return card('기본 검토 AI', `<p class="muted" style="margin-top:0">업무 메뉴의 AI 줄에서 「검토 AI로 한 번 더 보기」를 켜면, 따로 고르지 않은 업무는 이 AI가 검토해요. 키를 넣은 회사만 고를 수 있어요.</p>
+      <label class="set-f"><span class="lab">기본 검토 AI</span><select class="field" id="setReviewAi"><option value="">검토 안 함</option>${opts}</select></label>`)
+    + card('업무별 설정 한눈에', `<ul class="set-roles" id="setRoleList">${TASKS.map(([t, name]) => `<li><b>${esc(name)}</b><span class="muted">${esc(rowText(t, env))}</span></li>`).join('')}</ul>
+      <p class="muted">업무마다 바꾸는 곳은 각 메뉴 위쪽의 AI 줄 [바꾸기]예요.</p>
+      <div class="row"><button class="btn" type="button" data-set="resetRoles">기본으로 되돌리기</button></div>`);
+}
 /* 떠 있는 버튼: 아무 파일이나 넣으면 쌤비서가 알아서 */
 function inboxCard() {
   const s = getInboxSettings();
@@ -65,7 +78,7 @@ const VIEWS = {
       card('지금 쓰는 AI', `${sharedNote()}<p class="set-big">${esc(ready ? SSAM().ai.engineName() : '아직 정하지 않았어요')}</p>
         <div class="row"><button class="btn primary" type="button" data-set="openAi">AI 바꾸기</button>
           <button class="btn" type="button" data-set="testAi" ${ready && !(aiMsg && aiMsg.busy) ? '' : 'disabled'}>연결 확인</button></div>
-        ${aiMsg ? `<p class="set-msg ${aiMsg.busy ? '' : aiMsg.ok ? 'ok' : 'err'}" role="status">${aiMsg.busy ? '확인하는 중…' : esc(aiMsg.text)}</p>` : ''}`));
+        ${aiMsg ? `<p class="set-msg ${aiMsg.busy ? '' : aiMsg.ok ? 'ok' : 'err'}" role="status">${aiMsg.busy ? '확인하는 중…' : esc(aiMsg.text)}</p>` : ''}`) + rolesCards());
   },
   screen: () => {
     const cur = getTheme();
@@ -302,6 +315,7 @@ document.addEventListener('click', e => {
     const a = b.dataset.set;
     if (a === 'openAi') { aiMsg = null; SSAM().ai.openSettings(); }
     else if (a === 'testAi') testAi();
+    else if (a === 'resetRoles') { resetRoles(); again(); toast('업무별 AI를 기본으로 되돌렸어요'); }
     else if (a === 'rosterFile') box.querySelector('#rosterFile').click();
     else if (a === 'backup') makeBackupFile();
     else if (a === 'restore') box.querySelector('#backupFile').click();
@@ -338,6 +352,7 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const ib = e.target.dataset && e.target.dataset.ibSet;
   if (ib && box && box.contains(e.target)) { setInboxSettings({ [ib]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }); toast('떠 있는 버튼 설정을 바꿨어요'); return; }
+  if (box && e.target.id === 'setReviewAi' && box.contains(e.target)) { setDefaultReview(aiFromValue(e.target.value)); again(); toast('기본 검토 AI를 저장했어요'); return; }
   if (!box || !box.contains(e.target) || !['rosterFile', 'backupFile'].includes(e.target.id)) return;
   const f = e.target.files[0], id = e.target.id; e.target.value = '';
   if (f) (id === 'rosterFile' ? importRoster : restoreFile)(f);

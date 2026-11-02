@@ -70,7 +70,116 @@ export function aiLabel(ai, env = providerEnv()) {
   return `${(env.labels && env.labels[ai.engine]) || ai.engine} ${ai.model}`;
 }
 
-if (globalThis.window) {
+/* ---------- 메뉴의 AI 줄 ---------- */
+const TASK_NAME = Object.fromEntries(TASKS);
+export const aiValue = ai => (ai ? `${ai.engine}|${ai.model}` : '');
+/* 'engine|model' → AI (모르는 회사·빈 값이면 null) */
+export const aiFromValue = v => { v = String(v || ''); const i = v.indexOf('|'); return i > 0 ? normAI({ engine: v.slice(0, i), model: v.slice(i + 1) }) : null; };
+const fromVal = aiFromValue;
+const defaultLabel = env => (env.current && env.current.engine && env.keys[env.current.engine] ? aiLabel(env.current, env) : '');
+
+/* 키를 넣은 회사의 모델들: [{ value: 'engine|model', label }] */
+export function aiOptions(env = providerEnv()) {
+  const out = [];
+  for (const e of ENGINES) if (env.keys[e]) for (const m of env.models[e] || []) out.push({ value: `${e}|${m}`, label: aiLabel({ engine: e, model: m }, env) });
+  return out;
+}
+
+/* 'AI: Claude Sonnet 5.5 · 검토 끔' — 업무에 정한 회사의 키가 없으면 「키가 없어 기본 AI로」 */
+export function rowText(task, env = providerEnv()) {
+  if (env.engine === 'account') return 'AI: Claude 계정 하나로';
+  const r = getRoles(), t = r.tasks[task];
+  if (!t) return '';
+  const main = pick(task, 'main', env);
+  const dflt = defaultLabel(env);
+  let s = `AI: ${main ? aiLabel(main, env) : dflt || '아직 정하지 않았어요'}`;
+  if (t.main && !main) s += ' (키가 없어 기본 AI로)';
+  if (!t.reviewOn) return s + ' · 검토 끔';
+  const rv = pick(task, 'review', env);
+  return s + (rv ? ` · 검토: ${aiLabel(rv, env)}` : ' · 검토: 검토 AI를 골라 주세요');
+}
+
+export const aiRowHTML = task => `<div class="ai-row" data-ai-row="${task}"></div>`;
+const escH = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* 화면에 있는 AI 줄 자리를 모두 채움(글이 같으면 그대로) */
+export function fillRows(root = globalThis.document) {
+  if (!root || !root.querySelectorAll) return;
+  const els = root.querySelectorAll('[data-ai-row]');
+  if (!els.length) return;
+  const env = providerEnv();
+  const texts = {};
+  els.forEach(el => {
+    const task = el.dataset.aiRow;
+    if (!TASK_NAME[task]) return;
+    const text = texts[task] || (texts[task] = rowText(task, env));
+    if (el.dataset.aiV === text) return;
+    el.dataset.aiV = text;
+    el.innerHTML = `<span class="ai-row-t">${escH(text)}</span>${env.engine === 'account' ? '' : `<button class="btn text tiny" type="button" data-ai-edit="${task}" aria-label="${escH(TASK_NAME[task])} AI 바꾸기">바꾸기</button>`}`;
+  });
+}
+
+/* 업무의 AI 창: 이 업무의 AI · 검토 켜기 · 검토 AI */
+export function openRoleSheet(task) {
+  const S = window.SSAM || {};
+  if (!S.openSheet || !TASK_NAME[task]) return;
+  const env = providerEnv(), r = getRoles(), t = r.tasks[task];
+  const opts = aiOptions(env);
+  const dflt = defaultLabel(env), dRv = r.review && env.keys[r.review.engine] ? aiLabel(r.review, env) : '';
+  const optHTML = cur => opts.map(o => `<option value="${escH(o.value)}"${o.value === cur ? ' selected' : ''}>${escH(o.label)}</option>`).join('');
+  const mainV = t.main && env.keys[t.main.engine] ? aiValue(t.main) : '';
+  const rvV = t.review && env.keys[t.review.engine] ? aiValue(t.review) : '';
+  S.openSheet(`<div id="aiRoleSheet" class="ai-role-sheet"><h3>${escH(TASK_NAME[task])} AI</h3>
+    <label class="ar-f"><span class="lab">이 업무의 AI</span>
+      <select class="field" id="arMain"><option value="">기본 AI 따름 (지금: ${escH(dflt || '정하지 않음')})</option>${optHTML(mainV)}</select></label>
+    ${t.main && !env.keys[t.main.engine] ? `<p class="muted warn" style="margin:0">정해 둔 ${escH(aiLabel(t.main, env))}는 키가 없어 기본 AI로 써요.</p>` : ''}
+    <label class="switch"><input type="checkbox" id="arReviewOn"${t.reviewOn ? ' checked' : ''}>검토 AI로 한 번 더 보기</label>
+    <label class="ar-f" id="arReviewF"><span class="lab">검토 AI</span>
+      <select class="field" id="arReview"><option value="">기본 검토 AI 따름 (지금: ${escH(dRv || '정하지 않음')})</option>${optHTML(rvV)}</select></label>
+    <p class="muted" id="arNote" style="margin:0"></p>
+    <p class="muted" style="margin:0">키를 넣은 회사만 고를 수 있어요. 키는 설정 › AI에서 넣어요.</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="arSave">저장</button></div></div>`, sh => {
+    const q = id => sh.querySelector('#' + id);
+    const note = () => {
+      const on = q('arReviewOn').checked;
+      q('arReviewF').hidden = !on;
+      const main = fromVal(q('arMain').value) || (env.current && env.current.engine ? env.current : null);
+      const rv = fromVal(q('arReview').value) || (r.review && env.keys[r.review.engine] ? r.review : null);
+      const out = [];
+      if (on) {
+        out.push('검토를 켜면 AI 사용량이 대략 1.2~1.5배예요.');
+        if (!rv) out.push('검토 AI를 골라 주세요. 고르기 전에는 검토하지 않아요.');
+        else if (task === 'grade' && main && rv.engine !== main.engine) out.push('학생 답안 그림(이름 가림)이 두 회사로 가요.');
+      }
+      q('arNote').textContent = out.join(' ');
+    };
+    ['arMain', 'arReviewOn', 'arReview'].forEach(id => q(id).addEventListener('change', note));
+    note();
+    q('arSave').addEventListener('click', () => {
+      setTaskRole(task, { main: fromVal(q('arMain').value), reviewOn: q('arReviewOn').checked, review: fromVal(q('arReview').value) });
+      S.closeSheet && S.closeSheet();
+      fillRows();
+      S.toast && S.toast(`${TASK_NAME[task]} AI를 저장했어요`);
+    });
+  });
+}
+
+const CSS = `.ai-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px;color:var(--ink3);margin:6px 0}
+.ai-row:empty{display:none}.ai-row-t{font-weight:500}
+.ai-role-sheet{display:flex;flex-direction:column;gap:10px}.ar-f{display:flex;flex-direction:column;gap:4px}.ar-f .field{width:100%;box-sizing:border-box}.ar-f[hidden]{display:none}
+.set-roles{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}.set-roles li{display:flex;gap:10px;flex-wrap:wrap}.set-roles b{min-width:110px}`;
+
+if (globalThis.window && globalThis.document) {
   window.SSAM = window.SSAM || {};
-  window.SSAM.aiRoles = { pick: (task, role) => pick(task, role) };
+  window.SSAM.aiRoles = { pick: (task, role) => pick(task, role), fillRows };
+  if (!document.getElementById('aiRolesCss')) { const st = document.createElement('style'); st.id = 'aiRolesCss'; st.textContent = CSS; document.head.appendChild(st); }
+  let queued = false;
+  const later = () => { if (queued) return; queued = true; Promise.resolve().then(() => { queued = false; fillRows(); }); };
+  new MutationObserver(later).observe(document.documentElement, { childList: true, subtree: true });
+  window.addEventListener('storage', later);
+  later();
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-ai-edit]');
+    if (b) { e.preventDefault(); openRoleSheet(b.dataset.aiEdit); }
+  });
 }

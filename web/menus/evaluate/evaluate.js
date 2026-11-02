@@ -1830,6 +1830,7 @@ function renderPane() {
       <h2>${esc(u.elem || u.unit || '평가요소')}</h2>
     </div>
     ${banner}
+    <div class="ai-row" data-ai-row="writing"></div>
     ${noCrit ? `<div class="banner warn"><span class="grow">이 평가요소에서는 평가기준(상·중·하)을 찾지 못했어요. 성취기준과 평가요소만으로 평어를 만들어요.</span></div>` : ''}
     <details class="info" id="infoBox" ${S.infoOpen ? 'open' : ''}>
       <summary>${ICON.chev}성취기준과 평가기준 보기</summary>
@@ -2825,7 +2826,7 @@ function renderHKSettings() {
   const s = HK.settings;
   const box = $('#hkSet'); if (!box) return;
   const active = document.activeElement && box.contains(document.activeElement) ? document.activeElement.id : null;
-  box.innerHTML = `
+  box.innerHTML = `<div class="ai-row" data-ai-row="writing"></div>
     <div class="hk-opt"><span class="lab">분량 기준</span>
       <div class="seg" data-hkset="unit"><button type="button" data-v="char" aria-pressed="${s.unit === 'char'}">글자 수</button><button type="button" data-v="byte" aria-pressed="${s.unit === 'byte'}">나이스 바이트</button></div></div>
     <div class="hk-opt"><span class="lab">분량</span>
@@ -3775,7 +3776,7 @@ function renderGRSetup() {
   const locked = ['grading', 'ranking', 'writing'].includes(GR.phase);
   const u = grUnit();
   const per = Math.max(1, st.pagesPer | 0), rem = GR.pages.length % per;
-  box.innerHTML = `
+  box.innerHTML = `<div class="ai-row" data-ai-row="grade"></div><div class="ai-row" data-ai-row="writing"></div>
     <div class="gr-step">
       <div class="gr-h"><span class="sn">1</span><b>무엇을 채점할까요</b></div>
       <label class="lab" for="grUnit">평가요소</label>
@@ -4835,7 +4836,7 @@ function renderCCSetup() {
       <button class="btn text tiny" type="button" data-ccadd="${k}">${ICON.plus}활동 더하기</button>
     </div>`;
   };
-  box.innerHTML = `
+  box.innerHTML = `<div class="ai-row" data-ai-row="writing"></div>
     <div class="gr-step">
       <div class="gr-h"><span class="sn">1</span><b>학급 명단</b></div>
       ${rosterHTML()}

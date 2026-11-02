@@ -101,6 +101,63 @@ await run('ai-roles', [
     const msg = await page.evaluate(async () => { const ai = await import('./core/ai.js'); try { await ai.generate('[시험] 채점', { task: 'grade' }); return 'no error'; } catch (e) { return ai.errorMessage(e.code, e); } });
     assert(msg.includes('GPT API') && !msg.includes('Claude'), msg);
   }],
+  ['AI 줄: 단원평가 3단계에 「AI: Claude Sonnet 5.5 · 검토 끔」', async () => {
+    await page.evaluate(() => { localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: 'sk-test' }, remember: true })); localStorage.removeItem('ssam:ai-roles'); });
+    await page.reload(); await page.waitForTimeout(500);
+    await page.click('nav.app-side [data-menu-go="evaluate"]'); await page.click('#menuTabs [data-tab="unit"]');
+    if (await page.locator(`${V} [data-un="back"]`).count()) await page.click(`${V} [data-un="back"]`);
+    await page.click(`${V} [data-un-open="sample-1"]`);
+    await page.click(`${V} .steps [data-step="3"]`);
+    await page.waitForSelector(`${V} [data-ai-row="grade"] .ai-row-t`);
+    const txt = (await page.textContent(`${V} [data-ai-row="grade"] .ai-row-t`)).trim();
+    assert(txt === 'AI: Claude Sonnet 5.5 · 검토 끔', txt);
+  }],
+  ['[바꾸기] → 키 있는 회사 모델만, Opus·검토 켬·검토 Opus → 사용량 안내 → 저장하면 줄이 바뀜', async () => {
+    await page.click(`${V} [data-ai-edit="grade"]`);
+    await page.waitForSelector('#aiRoleSheet #arMain');
+    const vals = await page.$$eval('#arMain option', os => os.map(o => o.value));
+    assert(vals[0] === '' && vals.includes('claude|claude-opus-5-5') && !vals.some(v => v.startsWith('gemini')), vals.join(','));
+    await page.selectOption('#arMain', 'claude|claude-opus-5-5');
+    await page.check('#arReviewOn');
+    await page.selectOption('#arReview', 'claude|claude-opus-5-5');
+    assert((await page.textContent('#arNote')).includes('1.2~1.5배'), await page.textContent('#arNote'));
+    await page.click('#arSave');
+    await page.waitForFunction(() => document.querySelector('.unit-box [data-ai-row="grade"] .ai-row-t').textContent.includes('검토: Claude Opus'));
+    const txt = (await page.textContent(`${V} [data-ai-row="grade"] .ai-row-t`)).trim();
+    assert(txt === 'AI: Claude Opus 5.5 · 검토: Claude Opus 5.5', txt);
+    const r = await page.evaluate(() => JSON.parse(localStorage.getItem('ssam:ai-roles')));
+    assert(r.tasks.grade.main.model === 'claude-opus-5-5' && r.tasks.grade.reviewOn === true, JSON.stringify(r));
+  }],
+  ['같은 업무(채점)인 평가지 채점 화면의 AI 줄도 같은 글, 피드백 줄은 기본', async () => {
+    const fb = await page.evaluate(() => { const x = document.querySelector('[data-ai-row="notes"] .ai-row-t'); return x ? x.textContent : ''; });
+    await page.click('#menuTabs [data-tab="gr"]');
+    await page.waitForSelector('#grSetup [data-ai-row="grade"] .ai-row-t');
+    const txt = (await page.textContent('#grSetup [data-ai-row="grade"] .ai-row-t')).trim();
+    assert(txt === 'AI: Claude Opus 5.5 · 검토: Claude Opus 5.5', txt);
+    assert((await page.textContent('#grSetup [data-ai-row="writing"] .ai-row-t')).trim() === 'AI: Claude Sonnet 5.5 · 검토 끔', '평어 줄');
+    assert(!fb || fb.includes('검토 끔'), fb);
+  }],
+  ['설정 › AI: 기본 검토 AI 고르기·업무별 한눈에 4줄·[기본으로 되돌리기]', async () => {
+    await page.click('nav.app-side [data-menu-go="settings"]'); await page.click('#menuTabs [data-tab="ai"]');
+    await page.waitForSelector('#setReviewAi');
+    await page.selectOption('#setReviewAi', 'claude|claude-haiku-5-5');
+    await page.waitForFunction(() => (JSON.parse(localStorage.getItem('ssam:ai-roles')).review || {}).model === 'claude-haiku-5-5');
+    assert(await page.locator('#setRoleList li').count() === 4, '4줄');
+    assert((await page.textContent('#setRoleList')).includes('채점') && (await page.textContent('#setRoleList')).includes('검토: Claude Opus 5.5'), await page.textContent('#setRoleList'));
+    await page.click('[data-set="resetRoles"]');
+    await page.waitForFunction(() => !(JSON.parse(localStorage.getItem('ssam:ai-roles')).tasks.grade.main));
+    const r = await page.evaluate(() => JSON.parse(localStorage.getItem('ssam:ai-roles')));
+    assert(r.review === null && Object.values(r.tasks).every(x => !x.main && !x.reviewOn && !x.review), JSON.stringify(r));
+    assert((await page.$eval('#setReviewAi', e => e.value)) === '', '기본 검토 AI가 남음');
+    assert(!(await page.textContent('#setRoleList')).includes('Opus'), await page.textContent('#setRoleList'));
+  }],
+  ['업무에 정한 회사의 키를 지우면 AI 줄에 「키가 없어 기본 AI로」', async () => {
+    await setRoles({ review: null, tasks: { plan: { main: { engine: 'gemini', model: 'gemini-3.8-flash' } } } });
+    await page.reload(); await page.waitForTimeout(500);
+    await page.click('nav.app-side [data-menu-go="settings"]'); await page.click('#menuTabs [data-tab="ai"]');
+    await page.waitForSelector('#setRoleList');
+    assert((await page.textContent('#setRoleList')).includes('키가 없어 기본 AI로'), await page.textContent('#setRoleList'));
+  }],
   ['페이지 오류 없음', async () => { const bad = errors.filter(e => !/status of 401/.test(e)); assert(bad.length === 0, bad.join(' | ')); }]
 ]);
 await t.close();

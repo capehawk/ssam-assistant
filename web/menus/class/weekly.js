@@ -2,6 +2,7 @@
    AI 알림은 시작할 때의 주(월요일)에, 비어 있는 칸만 채움 */
 import { onEnter, go } from '../../core/shell.js';
 import * as ai from '../../core/ai.js';
+import { aiRowHTML } from '../../core/ai-roles.js';
 import { toast, copyText } from '../../core/ui.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { listEvents, addDays } from '../../core/calendar.js';
@@ -59,6 +60,7 @@ function render() {
       <button class="btn" type="button" data-w="print">인쇄</button>
       ${exportButton('data-w="hwpx"', { cls: 'primary' })}
     </div>
+    ${aiRowHTML('notes')}
     <div class="yp-card cls-sheet">
       <input class="field cls-w-title" id="clsWTitle" value="${esc(title)}" aria-label="제목">
       <p class="muted cls-w-range">${fmtDay(days[0].date)} ~ ${fmtDay(days[4].date)}</p>

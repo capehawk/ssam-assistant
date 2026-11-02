@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as store from '../../web/core/store.js';
-import { TASKS, getRoles, setTaskRole, setDefaultReview, resetRoles, pick, aiLabel } from '../../web/core/ai-roles.js';
+import { TASKS, getRoles, setTaskRole, setDefaultReview, resetRoles, pick, aiLabel, rowText, aiOptions, aiFromValue } from '../../web/core/ai-roles.js';
 import { isYearKey } from '../../web/core/years.js';
 
 function mem() { const m = new Map(); return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) }; }
@@ -104,4 +104,26 @@ test('aiLabel: 회사 모델이름', () => {
 
 test('ai-roles는 학년도와 상관없음', () => {
   assert.equal(isYearKey('ai-roles'), false);
+});
+
+test('AI 줄 글: 기본·업무 AI·검토 끔/켬·검토 AI 없음·키 없음·Claude 계정', () => {
+  const e = env({ current: { engine: 'claude', model: 'claude-sonnet-5-5' }, labels: { claude: 'Claude', gemini: 'Gemini', openai: 'GPT' }, modelLabels: { 'claude-sonnet-5-5': 'Claude Sonnet 5.5 · 추천', 'claude-opus-5-5': 'Claude Opus 5.5 · 가장 꼼꼼', 'gemini-3.8-flash': 'Gemini 3.8 Flash · 추천' } });
+  resetRoles();
+  assert.equal(rowText('grade', e), 'AI: Claude Sonnet 5.5 · 검토 끔');
+  setTaskRole('grade', { main: OPUS, reviewOn: true, review: OPUS });
+  assert.equal(rowText('grade', e), 'AI: Claude Opus 5.5 · 검토: Claude Opus 5.5');
+  setTaskRole('grade', { review: null });
+  assert.equal(rowText('grade', e), 'AI: Claude Opus 5.5 · 검토: 검토 AI를 골라 주세요');
+  setTaskRole('grade', { main: GEM, reviewOn: false });
+  assert.equal(rowText('grade', e), 'AI: Claude Sonnet 5.5 (키가 없어 기본 AI로) · 검토 끔');
+  assert.equal(rowText('grade', { ...e, engine: 'account' }), 'AI: Claude 계정 하나로');
+});
+
+test('고를 수 있는 AI: 키를 넣은 회사의 모델만, 값은 engine|model', () => {
+  const o = aiOptions(env({ labels: { claude: 'Claude', openai: 'GPT' }, modelLabels: {} }));
+  assert.ok(o.every(x => /^(claude|openai)\|/.test(x.value)), JSON.stringify(o));
+  assert.ok(o.some(x => x.value === 'claude|claude-opus-5-5'));
+  assert.deepEqual(aiFromValue('claude|claude-opus-5-5'), OPUS);
+  assert.equal(aiFromValue(''), null);
+  assert.equal(aiFromValue('zzz|x'), null);
 });

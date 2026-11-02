@@ -2,6 +2,7 @@
    채점을 마친 평가만 모음 */
 import { toast, copyText, saveFile } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
+import { aiRowHTML } from '../../../core/ai-roles.js';
 import { exportButton, exportDoc } from '../../../core/doc-export.js';
 import { studentTotal } from './unit-grade.js';
 import {
@@ -109,6 +110,7 @@ function pyHTML(all) {
       <label class="cls-inline">최상 <input class="field num" type="number" id="unCutTop" min="0" max="100" value="${c.top}"></label>
       <label class="cls-inline">상 <input class="field num" type="number" id="unCutHigh" min="0" max="100" value="${c.high}"></label>
       <label class="cls-inline">중 <input class="field num" type="number" id="unCutMid" min="0" max="100" value="${c.mid}"></label><span class="muted">이상</span></div>
+    ${aiRowHTML('writing')}
     <div class="row"><button class="btn primary" type="button" data-un="pyAI"${R.pyRun ? ' disabled' : ''}>${R.pyRun ? '<span class="spin"></span>쓰는 중…' : '평어 쓰기'}</button><button class="btn" type="button" data-un="pyCopyAll">모두 복사</button>
       <span class="muted">AI에는 번호·수준·평가 내용만 보내요. 점수와 이름은 보내지 않아요.</span></div>
     <ul class="un-pys">${st.students.map(s => `<li class="un-py"><div class="row"><b>${s.no}번</b><span class="muted">평균 ${s.avg}점</span>${lvSel(s)}<span class="grow"></span><button class="btn text" type="button" data-un="pyCopy" data-no="${s.no}">복사</button></div>

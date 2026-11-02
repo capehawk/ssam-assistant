@@ -1,6 +1,7 @@
 /* 단원평가 4단계 피드백 (스펙 2.2·3.3): 잘한 점·격려(AI, 글만), 학생별 미리 보기, 결과지 한글 파일·인쇄(한 쪽에 2명), 번호별 복사 */
 import { toast, copyText } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
+import { aiRowHTML } from '../../../core/ai-roles.js';
 import { exportButton, exportDoc } from '../../../core/doc-export.js';
 import { getTest, graded, makeTitle, feedbackOf, feedbackText } from './unit-model.js';
 import { feedbackDoc } from './unit-docs.js';
@@ -39,7 +40,7 @@ function printHTML(t, list) {
 function step4HTML(t) {
   const list = graded(t), run = runId === t.id;
   if (!list.length) return '<div class="yp-card"><p class="muted" style="margin:0">먼저 3단계에서 채점해 주세요.</p></div>';
-  return `<div class="yp-card">
+  return `${aiRowHTML('notes')}<div class="yp-card">
       <div class="row"><button class="btn primary" type="button" data-un="fbAI"${run ? ' disabled' : ''}>${run ? '<span class="spin"></span>쓰는 중…' : '잘한 점·격려 쓰기'}</button>
         ${exportButton('data-un="fbHwpx"', { prefix: '결과지 · ' })}<button class="btn" type="button" data-un="fbPrint">인쇄</button><button class="btn" type="button" data-un="fbCopyAll">모두 복사</button></div>
       <p class="muted cls-note">AI에는 번호·점수·평가 내용만 보내요. 학생이 쓴 답과 이름은 보내지 않아요. 결과지는 한 쪽에 2명이라 가운데를 잘라 나눠 주면 돼요.</p>

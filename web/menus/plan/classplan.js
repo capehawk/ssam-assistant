@@ -5,6 +5,7 @@ import { onFlush, get } from '../../core/store.js';
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
+import { aiRowHTML } from '../../core/ai-roles.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { toast } from '../../core/ui.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
@@ -105,6 +106,7 @@ function renderMain() {
   const step = plan.step;
   const body = step === 1 ? step1() : step === 2 ? step2() : step === 3 ? step3() : step4();
   main.innerHTML = stepsHTML(STEPS, step, plan.maxStep)
+    + (step === 3 || step === 4 ? aiRowHTML('plan') : '')
     + (errs[plan.id] ? `<div class="banner err" role="alert"><span class="grow">${esc(errs[plan.id])}</span></div>` : '')
     + (notes[plan.id] && step === 3 ? `<div class="banner warn" role="status"><span class="grow">${esc(notes[plan.id])}</span></div>` : '')
     + body

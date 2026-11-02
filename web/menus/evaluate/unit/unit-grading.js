@@ -2,6 +2,7 @@
    스캔 쪽은 이 화면에만 두고 저장하지 않음. 채점은 시작한 평가 id를 붙들고, 결과는 그 평가를 다시 읽어 넣음 */
 import { toast } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
+import { aiRowHTML } from '../../../core/ai-roles.js';
 import * as store from '../../../core/store.js';
 import { ITEM_TYPES, autoJudge, gradeCell, mergeCells, needsCheck, studentTotal } from './unit-grade.js';
 import { getTest, getSet, saveSet, numbersFor, parseNos, renumber, maskOf, listTests } from './unit-model.js';
@@ -283,7 +284,7 @@ function step3HTML(t) {
     const tot = s.status === 'done' ? studentTotal(t, s) : null;
     return `<tr data-strow="${s.no}"><th scope="row"><span class="un-sno">${s.no}번</span>${st}<button class="btn text tiny" type="button" data-un="retry" data-no="${s.no}">${s.status === 'done' ? '다시' : s.status === 'error' ? '다시 시도' : '채점'}</button></th>${cells}<td class="num">${tot ? `${tot.score}/${tot.total}` : ''}</td></tr>`;
   }).join('');
-  return `<div class="yp-card">
+  return `${aiRowHTML('grade')}<div class="yp-card">
       <div class="row">${run ? `<span class="spin"></span><b>채점하는 중 · ${done}/${total}명</b><button class="btn" type="button" data-un="stop">멈추기</button>` : `<button class="btn primary" type="button" data-un="grade">채점 시작</button><span class="muted">${done}/${total}명 채점함</span>`}</div>
       ${up}${scanNote}
       <div class="row"><b id="unPending">확인할 칸 ${pending(t)}개</b><button class="btn text" type="button" data-un="nextChk">다음 확인할 칸</button><span class="grow"></span><button class="btn primary" type="button" data-un="finish">채점 마치기</button></div>
