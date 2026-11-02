@@ -76,13 +76,16 @@ await run('gr-refs', [
     assert(p.includes('참고: 활동지 「물의 여행」 잘함') && p.includes(`${no}번 활동 잘한 점`) && p.includes(`- ${no}번 (`), p.slice(-400));
     await until(async () => (((await cur()) || {}).refs || []).includes('activity:acR'), 3000);
   }],
-  ['한꺼번에 넣기: 정답 글 + 학생 사진 3장(나눌 것 없음 → 카드 없이) → 채점 기준 문서 「한꺼번에 넣은 정답·기준」 하나·학생 3명', async () => {
+  ['한꺼번에 넣기: 정답 파일 + 학생 사진 3장 → 카드(정답·교사용 문서 · 학생 3쪽) → 채점 기준 문서 「한꺼번에 넣은 정답·기준」 하나·학생 3명', async () => {
     await page.click('[data-gr="new"]');
     await page.waitForSelector('#bundleFile-gr', { state: 'attached' });
     await page.setInputFiles('#bundleFile-gr', [{ name: '정답.txt', mimeType: 'text/plain', buffer: Buffer.from('[정답]\n1. 456\n2. 까닭 두 가지') }, ...[1, 2, 3].map(i => ({ name: `평가지${i}.png`, mimeType: 'image/png', buffer: readFileSync(join(FIXTURES, `sheet-${i}.png`)) }))]);
+    await page.waitForSelector('#sheetRoot #bundleCard');
+    const sum = await page.textContent('#sheetRoot #bundleSum');
+    assert(sum.includes('정답·교사용') && sum.includes('학생 3쪽'), sum);
+    await page.click('#sheetRoot #bundleOk');
     await page.waitForFunction(() => document.querySelector('#grCritBox').textContent.includes('한꺼번에 넣은 정답·기준') && document.querySelector('#grSetup').textContent.includes('학생 3명'));
     assert((await page.textContent('#grCritBox')).split('한꺼번에 넣은 정답·기준').length === 2, await page.textContent('#grCritBox'));
-    assert(!(await page.$('#sheetRoot #bundleCard')), '카드');
   }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);

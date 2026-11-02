@@ -231,3 +231,14 @@ test('문제지와 정답이 「교사용」으로 붙은 한 파일도 나눔(�
   assert.ok(paper.includes('3 × 2') && !paper.includes('교사용'), paper);
   assert.ok(key.startsWith('2. 곱셈') && key.includes('교사용') && key.includes('12'), key);
 });
+
+test('문제지 머리가 둘째 쪽에 다시 나와도(쪽 머리) 문제지를 자르지 않음, 표시로 나뉘거나 뒤쪽이 정답이면 나눔', async () => {
+  const { splitCombined: sc } = await import('../../web/menus/evaluate/unit/unit-key.js');
+  const head = '3학년 2학기 과학 1단원 평가';
+  const paper = [head, '1. 물이 끓는 것을 무엇이라고 하나요? (      )', '2. 알맞은 것을 고르시오. (    )\n① 얼음 ② 수증기', head, '3. 구름이 생기는 까닭을 쓰시오.', '4. 비가 내리는 까닭을 쓰시오.'].join('\n');
+  const r = sc(paper);
+  assert.equal(r.key, '');
+  assert.ok(r.paper.includes('4. 비가 내리는'), r.paper);
+  const withKey = [head, '1. 물이 끓는 것을 무엇이라고 하나요? (      )', '2. 알맞은 것을 고르시오. (    )', '교사용', '1. 끓음', '2. ②'].join('\n');
+  assert.ok(sc(withKey).key.includes('끓음') && !sc(withKey).paper.includes('끓음'));
+});

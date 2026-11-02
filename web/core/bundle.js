@@ -35,6 +35,29 @@ export function teacherFile(name, text) {
   const ls = String(text || '').split('\n').filter(l => l.trim()).slice(0, 8);
   return !!ls.length && (MARK.test(ls[0]) || ls.some(l => NAME_TEACHER.test(l)));
 }
+/* 따로 넣은 교사용·정답 파일은 통째로 교사용. 다만 그 파일 안에서 나뉠 때 교사용 쪽이 같은 머리 줄로 다시 시작하거나(학생용 쪽 + 같은 양식의 교사용 쪽)
+   앞쪽(학생용)이 8줄을 넘으면 한 파일에 둘 다 든 것(그대로 나눔) */
+export function teacherOnly(name, text) {
+  if (!teacherFile(name, text)) return false;
+  const d = splitDoc(text);
+  if (d.how === 'none') return true;
+  const head = (String(text).split('\n').find(l => l.trim().length >= 4) || '').trim();
+  const again = !!head && (d.teacher.split('\n').find(l => l.trim()) || '').trim() === head;
+  return !(again || d.student.split('\n').filter(l => l.trim()).length > 8);
+}
+/* 학생 손글씨를 글자 인식한 스캔 묶음인지(복사기 「검색 가능 PDF」): 쪽마다 학생 이름이 적힘(두 쪽 이상), 또는 6쪽 이상에 같은 머리가 되풀이 */
+const FILLED_NAME = /이\s*름\s*[:：]\s*(?!교사용|학생용)[가-힣]{2,4}(?![가-힣])/;
+const headOf = t => String(t || '').trim().split(/\s+/).slice(0, 4).join(' ');
+export function scanLike(pages) {
+  const ps = pages || [];
+  if (ps.filter(p => FILLED_NAME.test(p.text || '')).length >= 2) return true;
+  if (ps.length < 6) return false;
+  const h = headOf(ps[0].text);
+  return !!h && ps.filter(p => headOf(p.text) === h).length >= Math.max(3, Math.ceil(ps.length / 3));
+}
+/* 교사용 글 = 문서에서 나눈 교사용 + 정답·교사용 표시인 쪽의 글 (카드에서 표시를 바꾸면 다시 맞춤) */
+export const teacherOf = b => [b.doc && b.doc.docTeacher, ...(b.pages || []).filter((p, i) => b.roles[i] === 'teacher' && hasText(p)).map(p => p.text)]
+  .filter(t => String(t || '').trim()).join('\n').trim();
 
 /* ---------- 스캔 쪽 표시 ---------- */
 /* 정답·교사용 쪽은 보통 맨 앞이나 맨 뒤: 앞 2쪽·뒤 2쪽 */
@@ -63,9 +86,13 @@ export function normPageRoles(v, k) {
   }
   return out;
 }
-/* 쪽마다 표시: 글자층(인쇄본 PDF 쪽)이 30자 이상이면 정답·교사용, 아니면 AI 답({쪽 번호: 표시}), 아니면 학생 */
+/* 글자 인식된 스캔 쪽 글에 교사용·정답 표시가 있는지(PDF 쪽 글은 줄 없이 이어져 있어 낱말로 봄) */
+export const teacherText = t => /교사용|\(\s*예시\s*\)|예시\s*답안?|모범\s*답안|\[\s*정답\s*\]|정답\s*및\s*해설|채점\s*기준/.test(String(t || ''));
+/* 쪽마다 표시: 글자 인식된 학생 스캔 쪽(ocr)은 교사용·정답 표시가 있을 때만 정답·교사용, 스캔 사이 글자층 쪽(인쇄본)이 30자 이상이면
+   정답·교사용, 아니면 AI 답({쪽 번호: 표시}), 아니면 학생 */
 export function pickRoles(pages, ai) {
   return (pages || []).map((p, i) => {
+    if (p && p.ocr) return teacherText(p.text) ? 'teacher' : 'student';
     if (p && String(p.text || '').replace(/\s/g, '').length >= 30) return 'teacher';
     const r = ai && ai[i];
     return ROLES.includes(r) ? r : 'student';
@@ -90,30 +117,32 @@ async function smallImage(page, mask) {
   return { mime: 'image/jpeg', blob, b64 };
 }
 
-/* 파일 여러 개 → { doc: { student, teacher, how, names }, pages, roles, skipped }
-   한글·txt는 글, PDF·사진은 쪽. 모든 쪽에 글자층이 있는 PDF는 문서로(쪽은 버림), 스캔 사이 글자층 쪽은 정답·교사용 쪽(글은 교사용 글로).
-   글자층 없는 스캔이 3쪽 이상이고 AI가 되면 앞 2쪽·뒤 2쪽을 한 번 보냄(실패하면 모두 학생) */
-export async function readBundle(files, { say = () => {}, mask = null } = {}) {
+/* 파일 여러 개 → { doc: { student, teacher, docTeacher, how, names }, pages, roles, skipped }
+   한글·txt는 글(따로 넣은 교사용·정답 파일은 통째로 교사용), PDF·사진은 쪽. 모든 쪽에 글자층이 있는 PDF는 문서로(쪽은 버림) —
+   다만 글자 인식된 학생 스캔 묶음(scanLike)이거나 학생 스캔을 받는 곳(expect: 'student')이면 쪽으로 두고 쪽 글로 표시(ocr).
+   스캔 사이 글자층 쪽은 정답·교사용 쪽(글은 교사용 글로). 글자층 없는 스캔이 3쪽 이상이고 AI가 되면 앞 2쪽·뒤 2쪽을 한 번 보냄(실패하면 모두 학생) */
+export async function readBundle(files, { say = () => {}, mask = null, expect = '' } = {}) {
   const { readText } = await import('./files.js');
   const ai = await import('./ai.js');
   const list = [...files].sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko', { numeric: true }));
-  const docTexts = [], teacherTexts = [], names = [], skipped = [], pages = [];
+  const docTexts = [], teacherDocs = [], names = [], skipped = [], pages = [];
+  const addDoc = (name, text) => { (teacherOnly(name, text) ? teacherDocs : docTexts).push(text); names.push(name); };
   for (const f of list) {
     if (DOC.test(f.name || '')) {
-      try { say(`「${f.name}」 읽는 중`); docTexts.push(await readText(f)); names.push(f.name); } catch (e) { skipped.push(f.name); }
+      try { say(`「${f.name}」 읽는 중`); addDoc(f.name, await readText(f)); } catch (e) { skipped.push(f.name); }
       continue;
     }
     let r;
     try { r = await SS().files.readPages([f], say); } catch (e) { if (e && e.message === 'PDFJS') throw e; skipped.push(f.name); continue; }
     skipped.push(...(r.skipped || []));
-    if (r.pages.length && r.pages.every(hasText)) { docTexts.push(r.pages.map(p => p.text).join('\n')); names.push(f.name); SS().files.freePages(r.pages); continue; }
-    for (const p of r.pages) { if (hasText(p)) teacherTexts.push(p.text); pages.push(p); }
+    const allText = r.pages.length && r.pages.every(hasText);
+    if (allText && expect !== 'student' && !scanLike(r.pages)) { addDoc(f.name, r.pages.map(p => p.text).join('\n')); SS().files.freePages(r.pages); continue; }
+    // 학생 스캔을 받는 곳이면 글자층 쪽도 학생 스캔(교사용·정답 표시가 있을 때만 정답·교사용)
+    for (const p of r.pages) { if (allText || (expect === 'student' && hasText(p))) p.ocr = true; pages.push(p); }
   }
-  // 학생용·교사용을 따로 넣었으면 교사용 파일을 뒤로(이름 차례면 「교사용」이 「학생용」보다 앞이라 거꾸로 나뉨)
-  const order = docTexts.map((text, i) => ({ text, i, t: teacherFile(names[i], text) ? 1 : 0 })).sort((a, b) => a.t - b.t || a.i - b.i);
-  const d = splitDoc(order.map(x => x.text).join('\n'));
-  const teacher = [d.teacher, ...teacherTexts].filter(s => String(s).trim()).join('\n').trim();
-  const doc = { student: d.student, teacher, how: teacherTexts.length && !d.teacher ? 'marker' : d.how, names };
+  const d = splitDoc(docTexts.join('\n'));
+  const docTeacher = [d.teacher, ...teacherDocs].filter(t => String(t).trim()).join('\n').trim();
+  const doc = { student: d.student, teacher: '', docTeacher, how: d.how, names };
   let aiRoles = null;
   if (pages.length >= 3 && !pages.some(hasText) && ai.ready()) {
     const idx = edgeIdx(pages.length);
@@ -126,7 +155,10 @@ export async function readBundle(files, { say = () => {}, mask = null } = {}) {
       aiRoles = Object.fromEntries(idx.map((pi, k) => [pi, rs[k]]));
     } catch (e) { aiRoles = null; }
   }
-  return { doc, pages, roles: pickRoles(pages, aiRoles), skipped };
+  const b = { doc, pages, roles: pickRoles(pages, aiRoles), skipped };
+  b.doc.teacher = teacherOf(b);
+  if (b.doc.teacher && !d.teacher) b.doc.how = 'marker';
+  return b;
 }
 
 /* ---------- 확인 카드 ---------- */
@@ -162,8 +194,8 @@ export function openBundleCard(b, { what = '' } = {}) {
       sh.addEventListener('click', e => {
         const pg = e.target.closest('[data-bundle-page]');
         if (pg) { const i = +pg.dataset.bundlePage; cur.roles[i] = NEXT[cur.roles[i]] || 'student'; draw(sh); return; }
-        if (e.target.closest('#bundleNoSplit')) { cur.doc = { ...cur.doc, student: [cur.doc.student, cur.doc.teacher].filter(Boolean).join('\n'), teacher: '', how: 'none' }; draw(sh); return; }
-        if (e.target.closest('#bundleOk')) { const v = { ...cur }; SS().closeSheet(); finish(v); }
+        if (e.target.closest('#bundleNoSplit')) { cur.doc = { ...cur.doc, student: [cur.doc.student, cur.doc.docTeacher].filter(Boolean).join('\n'), docTeacher: '', how: 'none' }; cur.doc.teacher = teacherOf(cur); draw(sh); return; }
+        if (e.target.closest('#bundleOk')) { const v = { ...cur, doc: { ...cur.doc } }; v.doc.teacher = teacherOf(v); SS().closeSheet(); finish(v); }
       });
     });
     const root = document.getElementById('sheetRoot');

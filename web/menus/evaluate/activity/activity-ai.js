@@ -91,7 +91,7 @@ export function normGrade(v, items) {
     const ok = MARKS.includes(x.mark);
     got[no] = { read: str(x.read, 120), mark: ok ? x.mark : '', why: str(x.why, 80), sure: ok && x.sure === true };
   }
-  const marks = Object.fromEntries(items.map(it => [it.no, got[it.no] || { read: '', mark: '', why: '읽지 못했어요', sure: false }]));
+  const marks = Object.fromEntries(items.map(it => [it.no, got[it.no] || { read: '', mark: '', why: '읽지 못했어요', sure: false, miss: true }]));
   const o = v && !Array.isArray(v) && typeof v === 'object' ? v : {};
   return { marks, good: str(o.good, 200), next: str(o.next, 200), level: LEVELS.includes(o.level) ? o.level : '', levelWhy: str(o.levelWhy, 160) };
 }
@@ -99,6 +99,8 @@ export function normGrade(v, items) {
 const OBJ = ['choice', 'match', 'short'];
 export function judgeCell(item, cell) {
   const c = { read: String((cell && cell.read) || ''), mark: (cell && cell.mark) || '', why: (cell && cell.why) || '', sure: !!(cell && cell.sure) };
+  // AI 답에 없던 문항: 앱이 맞추지 않고 노란 칸(빈 답 「안 함」으로 세지 않음)
+  if (cell && cell.miss) return { ...c, mark: '', chk: true };
   if (OBJ.includes(item.type) && String(item.answer || '').trim()) {
     if (!c.read.trim()) return { ...c, mark: 'n', chk: !!c.mark && c.mark !== 'n' };
     const pts = autoJudge({ type: item.type, answer: item.answer, points: 1 }, c.read);

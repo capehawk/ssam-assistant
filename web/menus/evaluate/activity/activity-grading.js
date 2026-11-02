@@ -52,7 +52,7 @@ async function putScans(files) {
   const id = a0.id;
   bundleMsg('act3', '읽는 중…');
   let b;
-  try { b = await readBundle(files, { say: m => bundleMsg('act3', m), mask: maskOf(a0).mask }); }
+  try { b = await readBundle(files, { say: m => bundleMsg('act3', m), mask: maskOf(a0).mask, expect: 'student' }); }
   catch (e) { bundleMsg('act3', ''); toast(e && e.message === 'PDFJS' ? 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진으로 올려 주세요.' : '파일을 읽지 못했어요.', 6000); return; }
   bundleMsg('act3', '');
   if (needsCard(b)) { const r = await openBundleCard(b, { what: '학생 활동지' }); if (!r) { SS().files.freePages(b.pages); return; } b = r; }

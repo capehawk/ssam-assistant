@@ -30,6 +30,18 @@ const read = (n, withDoc) => page.evaluate(async ([n, withDoc, KOR]) => {
   window.__b = await B.readBundle(files);
   return { how: window.__b.doc.how, teacher: window.__b.doc.teacher.slice(0, 30), roles: window.__b.roles, need: B.needsCard(window.__b), pages: window.__b.pages.length };
 }, [n, withDoc, KOR]);
+// 글자층 PDF 만들기(복사기 글자 인식·인쇄본): 쪽마다 html, img가 있으면 그림만 있는 쪽
+const pdfOf = async pagesHtml => {
+  const pg = await t.ctx.newPage();
+  await pg.setContent(`<!doctype html><meta charset="utf-8"><style>section{page-break-after:always;height:900px;font:16px sans-serif}</style>${pagesHtml.map(h => `<section>${h}</section>`).join('')}`);
+  const b = await pg.pdf({ format: 'A4' }); await pg.close(); return [...b];
+};
+const readFiles = (files, opts = {}) => page.evaluate(async ([files, opts]) => {
+  const B = await import('./core/bundle.js');
+  const fs = files.map(f => new File([f.bytes ? new Uint8Array(f.bytes) : f.text], f.name, { type: f.bytes ? 'application/pdf' : 'text/plain' }));
+  window.__b = await B.readBundle(fs, opts);
+  return { student: window.__b.doc.student, teacher: window.__b.doc.teacher, how: window.__b.doc.how, roles: window.__b.roles, need: B.needsCard(window.__b), pages: window.__b.pages.length };
+}, [files, opts]);
 const card = () => page.evaluate(async () => { const B = await import('./core/bundle.js'); window.__r = 'wait'; B.openBundleCard(window.__b, { what: '활동지' }).then(r => { window.__r = r; }); });
 
 await run('bundle', [
@@ -71,6 +83,39 @@ await run('bundle', [
     const n0 = calls.length;
     const r = await read(2, false);
     assert(!r.need && calls.length === n0 && r.pages === 2, JSON.stringify(r));
+  }],
+  ['교사용 파일만 따로 넣으면 통째로 교사용(학생용 칸을 머리 줄로 덮지 않음), 「정답」 파일도, 이름에 정답이 든 합본은 나눔', async () => {
+    const T = ['[과학] 3-2-4-03 물은 어디로 갈까? (50~51쪽)', '물의 여행', '반 번 이름: 교사용', '1. 바다 → 구름 → 비'].join('\n');
+    let r = await readFiles([{ name: '물의 여행(교사용).txt', text: T }]);
+    assert(r.student === '' && r.teacher.includes('바다 → 구름') && r.teacher.includes('물의 여행'), JSON.stringify(r));
+    r = await readFiles([{ name: '물의여행_정답.txt', text: '물의 여행 정답\n1. 수증기\n2. 구름\n3. 비' }]);
+    assert(r.student === '' && r.teacher.includes('수증기'), JSON.stringify(r));
+    const C = ['과학 1단원 평가', ...Array.from({ length: 10 }, (_, i) => `${i + 1}. 문제 ${i + 1}을 풀어 보세요.`), '정답 및 해설', '1. ①', '2. ②'].join('\n');
+    r = await readFiles([{ name: '과학 평가(정답 포함).txt', text: C }]);
+    assert(r.student.includes('10. 문제 10') && r.teacher.startsWith('정답 및 해설'), JSON.stringify(r).slice(0, 200));
+  }],
+  ['글자 인식된 학생 스캔 PDF(쪽마다 이름이 적힘)는 문서가 아니라 학생 쪽, 학생 스캔을 받는 곳(expect)이면 2쪽이어도 학생 쪽, 인쇄본 활동지 PDF는 문서', async () => {
+    const stu = ['김하늘', '이바다', '박구름'].map((n, i) => `<p>물의 여행 그리기</p><p>3학년 2반 ${i + 1}번 이름: ${n}</p><p>1. 바다에서 증발해 구름이 됩니다 그리고 비가 내려요</p>`);
+    let r = await readFiles([{ name: '스캔.pdf', bytes: await pdfOf(stu) }]);
+    assert(r.pages === 3 && r.roles.every(x => x === 'student') && !r.student && !r.teacher && !r.need, JSON.stringify(r).slice(0, 300));
+    const two = ['<p>물의 여행 그리기</p><p>1. 바다에서 증발해 구름이 됩니다 그리고 비가 내려요 많이</p>', '<p>물의 여행 그리기</p><p>1. 구름이 되어 비로 내려 바다로 돌아갑니다 다시 또</p>'];
+    r = await readFiles([{ name: '스캔.pdf', bytes: await pdfOf(two) }], { expect: 'student' });
+    assert(r.pages === 2 && r.roles.every(x => x === 'student') && !r.teacher, JSON.stringify(r).slice(0, 300));
+    const printed = ['<p>물의 여행 그리기 (12~13쪽)</p><p>반 번 이름:</p><p>1. 물이 여행하는 길을 그려 봅시다.</p>', '<p>물의 여행 그리기 (12~13쪽)</p><p>반 번 이름: 교사용</p><p>1. 바다 구름 비를 화살표로 이은 그림</p>'];
+    r = await readFiles([{ name: '물의 여행.pdf', bytes: await pdfOf(printed) }]);
+    assert(r.pages === 0 && r.student.includes('그려 봅시다') && r.teacher.includes('화살표'), JSON.stringify(r).slice(0, 300));
+  }],
+  ['스캔 사이 글자층 쪽을 카드에서 학생으로 바꾸면 그 쪽 글은 교사용 글에서 빠짐', async () => {
+    const dot = 'data:image/png;base64,' + (await page.screenshot({ clip: { x: 0, y: 0, width: 120, height: 160 } })).toString('base64');
+    const r = await readFiles([{ name: '묶음.pdf', bytes: await pdfOf(['<p>교사용 예시 답: 바다에서 증발한 물이 햇볕을 받아 구름이 되고 다시 비로 내려 바다로 갑니다.</p>', `<img src="${dot}" width="300">`, `<img src="${dot}" width="320">`]) }]);
+    assert(r.pages === 3 && r.roles[0] === 'teacher' && r.teacher.includes('예시 답'), JSON.stringify(r).slice(0, 300));
+    await card();
+    await page.waitForSelector('#sheetRoot #bundleCard');
+    await page.click('#sheetRoot [data-bundle-page="0"]'); await page.click('#sheetRoot [data-bundle-page="0"]');
+    await page.click('#sheetRoot #bundleOk');
+    await page.waitForFunction(() => window.__r && window.__r !== 'wait');
+    const v = await page.evaluate(() => ({ roles: window.__r.roles, teacher: window.__r.doc.teacher }));
+    assert(v.roles[0] === 'student' && !v.teacher.includes('예시 답'), JSON.stringify(v));
   }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);

@@ -54,7 +54,7 @@ test('채점 답 다듬기: 기준에 없는 번호·모르는 표시 버림, �
   assert.deepEqual(Object.keys(r.marks).map(Number), [1, 2, 3, 4]);
   assert.deepEqual(r.marks[1], { read: '③', mark: 'o', why: '', sure: true });
   assert.deepEqual(r.marks[2], { read: '증발', mark: '', why: '', sure: false });
-  assert.deepEqual(r.marks[4], { read: '', mark: '', why: '읽지 못했어요', sure: false });
+  assert.deepEqual(r.marks[4], { read: '', mark: '', why: '읽지 못했어요', sure: false, miss: true });
   assert.deepEqual([r.good, r.next, r.level, r.levelWhy], ['잘 그림', '구름도', 'ok', '대체로']);
   assert.equal(normGrade({ level: 'great' }, ITEMS).level, '');
 });
@@ -74,4 +74,13 @@ test('검토: 머리, 노란 칸만, 답은 그 번호만', () => {
   const p = reviewPrompt({ meta, items: ITEMS }, [{ no: 3, read: '설명', mark: 't', why: '구름 없음' }]);
   assert.ok(p.startsWith('[활동지 검토]') && p.includes('[3]') && !p.includes('[4] 그림'), p);
   assert.deepEqual(normReview({ items: [{ no: 3, mark: 'o', why: '구름도 있음' }, { no: 4, mark: 'o', why: '' }, { no: 3, mark: 'z' }] }, [3]), [{ no: 3, mark: 'o', why: '구름도 있음' }]);
+});
+
+test('AI가 빠뜨린 고르기·빈칸 문항은 안 함이 아니라 노란 칸(읽지 못함)', () => {
+  const r = normGrade({ items: [{ no: 3, read: '설명', mark: 't', why: '', sure: true }] }, ITEMS);
+  const c1 = judgeCell(ITEMS[0], r.marks[1]), c2 = judgeCell(ITEMS[1], r.marks[2]);
+  assert.equal(c1.mark, ''); assert.equal(c1.chk, true);
+  assert.equal(c2.mark, ''); assert.equal(c2.chk, true);
+  // AI가 읽고 빈 답이라고 한 것은 그대로 안 함
+  assert.deepEqual(judgeCell(ITEMS[1], { read: '', mark: 'n', why: '', sure: true }).mark, 'n');
 });

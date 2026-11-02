@@ -3295,7 +3295,8 @@ async function readPdfPages(file, onPage) {
       await p.render({ canvasContext: g, viewport: vp }).promise;
       const page = await canvasToPage(c, `${file.name} ${i}쪽`);
       // 글자층(인쇄본 PDF 쪽): 한꺼번에 넣기에서 정답·교사용 쪽을 가리는 데 씀
-      try { const tc = await p.getTextContent(); page.text = tc.items.map(it => it.str || '').join(' ').replace(/\s+/g, ' ').trim().slice(0, 2000); } catch (e) { page.text = ''; }
+      // 줄은 살림(「이름: 교사용」·「(예시)」 같은 줄 표시로 나누게)
+      try { const tc = await p.getTextContent(); page.text = pdfPageText(tc.items, v0.width, v0.height, false, p.rotate || 0).replace(/[ \t]+/g, ' ').replace(/ *\n+ */g, '\n').trim().slice(0, 2000); } catch (e) { page.text = ''; }
       out.push(page);
       p.cleanup();
       onPage && onPage(i, doc.numPages);

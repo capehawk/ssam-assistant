@@ -184,8 +184,9 @@ export function splitCombined(text) {
   const i = lines.findIndex(l => /^\s*(\|\s*)?정답(\s*및\s*해설지?)?\s*(\||$)/.test(l));
   if (i < 0) {
     // 「교사용」·「(예시)」·「[정답]」 같은 표시나 같은 머리가 다시 나오는 한 파일도 나눔 (한꺼번에 넣기 규칙)
+    // 같은 머리가 다시 나오는 것만으로는(쪽 머리일 수 있음) 뒤쪽이 정답으로 읽힐 때만 나눔
     const d = splitDoc(src);
-    return d.teacher ? { paper: d.student, key: d.teacher } : { paper: src, key: '' };
+    return d.teacher && (d.how === 'marker' || parseKey(d.teacher)) ? { paper: d.student, key: d.teacher } : { paper: src, key: '' };
   }
   const paper = lines.slice(0, i).join('\n').trim(), key = lines.slice(i).join('\n').trim();
   return Object.keys(parsePaper(paper).questions).length >= 2 ? { paper, key } : { paper: '', key: src.trim() };
