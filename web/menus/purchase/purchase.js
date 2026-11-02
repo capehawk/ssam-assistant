@@ -211,7 +211,7 @@ async function makeDraft() {
     const v = await ai.generateJSON(draftPrompt(form, r.total), {
       valid: x => x && typeof x.title === 'string' && x.title.trim() && typeof x.intro === 'string' && x.intro.trim()
     });
-    st.draft = { title: v.title.trim(), reason: composeReason({ intro: v.intro.trim(), ...st.form }) };
+    st.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: st.form }), edited: false };
     save();
     document.dispatchEvent(new CustomEvent('ssam:purchase-draft', { detail: { form: getForm(), draft: getDraft() } }));
   } catch (e) {
@@ -253,7 +253,7 @@ document.addEventListener('click', e => {
   const cp = e.target.closest('[data-copy]');
   if (cp && st.draft) {
     const k = cp.dataset.copy;
-    const text = k === 'calc' ? itemsTSV(st.form.items) : st.draft[k] || '';
+    const text = k === 'calc' ? itemsTSV(st.form.items, st.form.type) : st.draft[k] || '';
     copyText(text).then(ok => toast(ok ? (k === 'calc' ? '표를 복사했어요. 에듀파인·엑셀에 붙여넣으세요' : '복사했어요') : '복사하지 못했어요'));
     return;
   }

@@ -19,11 +19,22 @@ export const TYPES = [
       [['다과', '1인분', 4, 8000], ['자료 인쇄', 'A4 컬러', 40, 300]]) }
 ];
 
-export const emptyItem = () => ({ name: '', spec: '', qty: '', price: '' });
+export const emptyItem = () => ({ name: '', spec: '', unit: '', qty: '', price: '', vendor: '' });
+
+/* 붙임 서류: 지출품의서 1부는 늘 1번(여기에 없음). on = 처음에 체크 (조사: 스펙 3장) */
+export const ATTACH = {
+  goods: [{ id: 'quote', label: '견적서', on: true }, { id: 'quote2', label: '비교 견적서', on: false }, { id: 'bizreg', label: '사업자등록증 사본', on: false }, { id: 'bankbook', label: '통장 사본', on: false }],
+  lecturer: [{ id: 'card', label: '강사 카드(이력)', on: true }, { id: 'lesson', label: '강의 계획서', on: false }, { id: 'check', label: '성범죄·아동학대 전력 조회 동의서', on: true }],
+  event: [{ id: 'plan', label: '행사 계획서', on: true }, { id: 'quote', label: '견적서', on: true }],
+  meeting: [{ id: 'plan', label: '협의회 계획', on: true }, { id: 'list', label: '참석 예정자 명단', on: false }]
+};
+const attachOf = type => ATTACH[type] || ATTACH.goods;
 
 export function emptyForm(type = 'goods') {
-  return { type, project: '', purpose: '', date: '', target: '', place: '', budget: '', budgetUnknown: false, total: '', memo: '', items: [emptyItem()] };
+  return { type, project: '', purpose: '', date: '', target: '', place: '', budget: '', budgetUnknown: false, total: '', memo: '', items: [emptyItem()],
+    vat: true, income: 'other', attach: attachOf(type).filter(a => a.on).map(a => a.id), attachMore: [] };
 }
+export const defaultUnit = type => (type === 'lecturer' ? '시간' : type === 'meeting' ? '명' : '개');
 
 const blank = v => String(v == null ? '' : v).trim() === '';
 const won = n => Number(n).toLocaleString('ko-KR');
@@ -64,6 +75,86 @@ export function findPersonal(text) {
 }
 
 const TEXT_FIELDS = ['project', 'purpose', 'date', 'target', 'place', 'budget', 'memo'];
+const unitOf = (it, type) => (blank(it.unit) ? defaultUnit(type) : String(it.unit).trim());
+
+/* 금액 한글 읽기: 75000 → 금칠만오천원 */
+const DIG = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'], SMALL = ['', '십', '백', '천'], BIG = ['', '만', '억', '조'];
+export function koreanWon(n) {
+  let v = Math.max(0, Math.floor(toNumber(n)));
+  if (!v) return '금영원';
+  let out = '', g = 0;
+  while (v > 0) {
+    const part = v % 10000;
+    if (part) {
+      let w = '';
+      String(part).padStart(4, '0').split('').forEach((d, i) => { if (d !== '0') w += DIG[+d] + SMALL[3 - i]; });
+      out = w + BIG[g] + out;
+    }
+    v = Math.floor(v / 10000); g++;
+  }
+  return `금${out}원`;
+}
+
+/* 산출 근거 한 줄: 비커(500ml) 4,500원 × 8개 = 36,000원 */
+export function basisLine(it, type) {
+  const name = String(it.name || '').trim() + (blank(it.spec) ? '' : `(${String(it.spec).trim()})`);
+  return `${name} ${won(toNumber(it.price))}원 × ${won(toNumber(blank(it.qty) ? 1 : it.qty))}${unitOf(it, type)} = ${won(itemAmount({ qty: blank(it.qty) ? 1 : it.qty, price: it.price }))}원`;
+}
+
+/* 공급가액(부가세 뺀 값): 포함이면 ÷1.1, 원 아래 버림. 2천만 원 이하면 1인 견적 (참고) */
+export const SOLO_LIMIT = 20000000;
+export const supplyValue = (total, vat) => (vat ? Math.floor(Math.round(toNumber(total) * 10) / 11) : Math.floor(toNumber(total)));
+export function quoteNote(total, vat) {
+  const sv = supplyValue(total, vat), solo = sv <= SOLO_LIMIT;
+  return { solo, supply: sv, text: solo
+    ? `공급가액 ${won(sv)}원 · 1인 견적으로 수의계약할 수 있어요(학교 지침이 비교 견적을 요구하면 2곳) · 행정실 확인`
+    : `공급가액 ${won(sv)}원 · 2인 이상 견적·계약 절차를 행정실에 확인해 주세요` };
+}
+
+/* 강사 수당 원천징수(참고): 기타소득 125,000원 넘으면 8.8%, 사업소득 3.3%, 10원 아래 버림 */
+export const INCOME = [['other', '기타소득(일시 강의)'], ['business', '사업소득(계속·반복 강의)'], ['staff', '교직원(기타수당)']];
+export function withholding(amount, income) {
+  const a = Math.round(toNumber(amount));
+  if (income === 'staff') return { tax: null, net: null, note: '근로소득으로 행정실에서 계산해요' };
+  const rate = income === 'business' ? 0.033 : (a > 125000 ? 0.088 : 0);
+  const tax = Math.floor(a * rate / 10) * 10;
+  return { tax, net: a - tax, note: income === 'business' ? '사업소득 3.3%' : a > 125000 ? '기타소득 8.8%' : '기타소득 125,000원 이하 · 떼지 않음' };
+}
+
+/* 협의회: 인원 × 1인 단가 × 횟수 → 품목 줄 하나 */
+export function meetingItem({ people, price, times = 1 }) {
+  const n = Math.max(1, Math.round(toNumber(people))), m = Math.max(1, Math.round(toNumber(times) || 1));
+  return { name: '협의회 다과비', spec: `${n}명 × ${m}회`, unit: '명', qty: String(n * m), price: String(Math.round(toNumber(price))), vendor: '' };
+}
+const perPerson = it => toNumber(it.price);
+
+/* 예산 과목 추천 (참고, AI 없음) */
+const EDU = /교구|실험|재료|교재|체험|학습|만들기|키트|교육/, SUPPLY = /소모품|인쇄|사무|토너|용지|복사|문구|파일|테이프|건전지|잉크/;
+const DURABLE = /노트북|태블릿|프린터|책상|의자|카메라|TV|티비|모니터|컴퓨터|빔|프로젝터|복합기|냉장고|청소기/i;
+const FOOD = /식사|간식|도시락|식비|다과|음료|급식|중식|석식/;
+export function budgetHints(form) {
+  const f = form || {}, items = cleanItems(f.items);
+  if (f.type === 'meeting') return ['업무추진비'];
+  if (f.type === 'lecturer') return [f.income === 'staff' ? '기타수당' : '운영수당'];
+  if (f.type === 'event') return items.some(it => FOOD.test(it.name)) ? ['교육운영비', '업무추진비'] : ['교육운영비'];
+  const out = [];
+  if (items.some(it => DURABLE.test(it.name) && toNumber(it.price) >= 300000)) out.push('자산취득비');
+  if (items.some(it => EDU.test(it.name))) out.push('교육운영비');
+  if (items.some(it => SUPPLY.test(it.name))) out.push('일반수용비');
+  return out.length ? out.slice(0, 2) : ['일반수용비', '교육운영비'];
+}
+
+/* 붙임 줄들: 지출품의서 1부 → 체크한 서류 → 직접 더한 것 */
+export function attachLines(form) {
+  const f = form || {}, type = f.type || 'goods';
+  const on = Array.isArray(f.attach) ? f.attach : [];
+  const more = Array.isArray(f.attachMore) ? f.attachMore.map(x => String(x).trim()).filter(Boolean) : [];
+  return ['지출품의서 1부', ...attachOf(type).filter(a => on.includes(a.id)).map(a => `${a.label} 1부`), ...more.map(x => (/\d+\s*부$/.test(x) ? x : `${x} 1부`))];
+}
+export function attachText(lines) {
+  if (lines.length === 1) return `붙임  ${lines[0]}.  끝.`;
+  return lines.map((l, i) => `${i ? '      ' : '붙임  '}${i + 1}. ${l}.`).join('\n') + '  끝.';
+}
 
 /* 확인 목록 (P-6·P-7). missing·personal은 칸 이름 */
 export function checkPurchase(form, { limit } = {}) {
@@ -72,7 +163,8 @@ export function checkPurchase(form, { limit } = {}) {
   const missing = ['purpose', 'date', 'target'].filter(k => blank(f[k]));
   if (!items.length) missing.push('items');
   const personal = TEXT_FIELDS.filter(k => findPersonal(f[k]));
-  if ((Array.isArray(f.items) ? f.items : []).some(it => it && (findPersonal(it.name) || findPersonal(it.spec)))) personal.push('items');
+  if ((Array.isArray(f.items) ? f.items : []).some(it => it && ['name', 'spec', 'unit', 'vendor'].some(k => findPersonal(it[k])))) personal.push('items');
+  if ((Array.isArray(f.attachMore) ? f.attachMore : []).some(x => findPersonal(x))) personal.push('attach');
   const total = sumItems(f.items);
   const warnings = [], oks = [];
   if (!blank(f.total)) {
@@ -82,37 +174,55 @@ export function checkPurchase(form, { limit } = {}) {
   }
   if (f.budgetUnknown || blank(f.budget)) warnings.push('예산 과목 · 행정실 확인 필요');
   if (limit > 0 && total > limit) warnings.push(`별도 계약 절차 확인 필요 (합계 ${won(total)}원 > 기준 ${won(limit)}원)`);
+  const cap = arguments[1] && arguments[1].meetCap > 0 ? arguments[1].meetCap : 40000;
+  if (f.type === 'meeting') { const over = items.find(it => perPerson(it) > cap); if (over) warnings.push(`1인 단가 ${won(perPerson(over))}원이 협의회 상한 ${won(cap)}원보다 커요 · 행정실 확인`); }
+  if (f.type === 'event' && items.some(it => FOOD.test(it.name))) warnings.push('행사성 식비는 업무추진비로 따로 품의하는지 행정실 확인');
   if (!personal.length) oks.push('주민번호·계좌번호가 들어 있지 않아요');
   return { missing, personal, warnings, oks, total, canDraft: !missing.length && !personal.length };
 }
 
-/* 산출 내역을 탭으로 나눈 글로 (에듀파인·엑셀에 붙여넣기). 숫자는 쉼표 없이 */
-export function itemsTSV(items) {
-  const rows = cleanItems(items).map(it => [it.name, it.spec, toNumber(it.qty), toNumber(it.price), itemAmount(it)].join('\t'));
-  return ['품명\t규격\t수량\t단가\t금액', ...rows, `합계\t\t\t\t${sumItems(items)}`].join('\n');
+const hasVendor = items => cleanItems(items).some(it => !blank(it.vendor));
+/* 산출 내역을 탭으로 나눈 글로 (에듀파인·엑셀에 붙여넣기). 숫자는 쉼표 없이. 구입처가 있으면 구입처 열 */
+export function itemsTSV(items, type = 'goods') {
+  const v = hasVendor(items);
+  const rows = cleanItems(items).map(it => [it.name, it.spec, unitOf(it, type), toNumber(it.qty), toNumber(it.price), itemAmount(it), ...(v ? [String(it.vendor || '').trim()] : [])].join('\t'));
+  return [`품명\t규격\t단위\t수량\t단가\t금액${v ? '\t구입처' : ''}`, ...rows, `합계\t\t\t\t\t${sumItems(items)}${v ? '\t' : ''}`].join('\n');
 }
 
-/* 품의 사유: 첫 문장 + 가. 목적 / 나. 일시 / 다. 대상 / 라. 장소(있을 때) */
-export function composeReason({ intro, purpose, date, target, place }) {
-  const lines = [['가', '목적', purpose], ['나', '일시', date], ['다', '대상', target], ['라', '장소', place]]
-    .filter(([, , v]) => !blank(v)).map(([k, l, v]) => `${k}. ${l}: ${String(v).trim()}`);
-  return `${String(intro || '').trim()}\n\n${lines.join('\n')}`;
+/* 품의 사유의 앱이 만드는 부분: 가~ 줄(빈 칸 빼고 다시 매김) + 붙임 (스펙 4.5) */
+const KO = '가나다라마바사아자차카타파하';
+export function reasonTail(form) {
+  const f = form || {}, type = f.type || 'goods', items = cleanItems(f.items);
+  const total = sumItems(f.items);
+  const basis = items.slice(0, items.length > 3 ? 1 : 3).map(it => basisLine(it, type)).join(', ') + (items.length > 3 ? ` 외 ${items.length - 1}건` : '');
+  const budget = f.budgetUnknown || blank(f.budget) ? '' : f.budget;
+  const rows = [['목적', f.purpose], ['일시', f.date], ['대상', f.target], ['장소', f.place],
+    ['소요 예산', items.length ? `금${won(total)}원(${koreanWon(total)})` : ''], ['예산 과목', budget], ['산출 근거', items.length ? basis : '']]
+    .filter(([, v]) => !blank(v)).map(([l, v], i) => `${KO[i]}. ${l}: ${String(v).trim()}`);
+  return `${rows.join('\n')}\n\n${attachText(attachLines(f))}`;
+}
+/* 품의 사유: AI가 쓴 첫 문장 + 앱이 만드는 부분 */
+export function composeReason({ intro, form }) {
+  return `${String(intro || '').trim()}\n\n${reasonTail(form)}`;
 }
 
 /* 한글 파일(.hwpx)로 내보낼 문서: 제목, 1. 품의 사유, 2. 산출 내역 표, 예산 과목 */
 export function purchaseDoc(form, draft) {
   const f = form || {}, d = draft || {};
   const items = cleanItems(f.items);
-  const rows = [['품명', '규격', '수량', '단가', '금액'],
-    ...items.map(it => [it.name, it.spec, String(toNumber(it.qty)), won(toNumber(it.price)), won(itemAmount(it))]),
-    ['합계', '', '', '', won(sumItems(f.items))]];
+  const type = f.type || 'goods', v = hasVendor(f.items);
+  const rows = [['품명', '규격', '단위', '수량', '단가', '금액', ...(v ? ['구입처'] : [])],
+    ...items.map(it => [it.name, it.spec, unitOf(it, type), String(toNumber(it.qty)), won(toNumber(it.price)), won(itemAmount(it)), ...(v ? [String(it.vendor || '').trim()] : [])]),
+    ['합계', '', '', '', '', won(sumItems(f.items)), ...(v ? [''] : [])]];
   const budget = f.budgetUnknown || blank(f.budget) ? '행정실 확인 필요' : String(f.budget).trim();
   return {
     title: String(d.title || f.project || '품의').trim(),
     blocks: [
       { type: 'h', text: '1. 품의 사유' }, { type: 'p', text: d.reason || '' },
       { type: 'h', text: '2. 산출 내역' }, { type: 'table', head: true, rows },
-      { type: 'p', text: `예산 과목: ${budget}` }
+      { type: 'p', text: `산출 근거: ${items.map(it => basisLine(it, type)).join(' / ')}` },
+      { type: 'p', text: `예산 과목: ${budget}` },
+      { type: 'p', text: attachText(attachLines(f)) }
     ]
   };
 }

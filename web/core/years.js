@@ -40,7 +40,7 @@ const parse = t => { try { return JSON.parse(t); } catch (e) { return null; } };
    classSetup: 2월에 새 학년도 준비를 미리 넣었으면 학급 명단·학급 정보·시간표·진도표도 (진도 위치는 처음부터, 체크·주간학습안내는 비움) */
 export function carryOver(snap, newYear, { classSetup = false } = {}) {
   const out = {};
-  for (const k of ['yearplans', 'yearplan:current', 'events', 'event:current', 'classplans', 'classplan:current', 'purchaseLimit']) if (typeof snap[k] === 'string') out[k] = snap[k];
+  for (const k of ['yearplans', 'yearplan:current', 'events', 'event:current', 'classplans', 'classplan:current', 'purchaseLimit', 'purchaseMeetCap', 'purchase:templates']) if (typeof snap[k] === 'string') out[k] = snap[k];
   for (const k of Object.keys(snap)) if ((k === 'neis' || k.startsWith('neis:')) && typeof snap[k] === 'string') out[k] = snap[k];
   const pf = parse(snap.prefs);
   if (isObj(pf) && isObj(pf.settings)) out.prefs = JSON.stringify({ current: null, settings: pf.settings });

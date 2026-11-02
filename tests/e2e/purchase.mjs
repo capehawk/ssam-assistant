@@ -68,7 +68,7 @@ await run('purchase', [
     await page.click(`${P} [data-copy="calc"]`);
     await page.waitForTimeout(150);
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    assert(clip === '품명\t규격\t수량\t단가\t금액\n비커\t500ml\t2\t3000\t6000\n시험관\t\t10\t500\t5000\n합계\t\t\t\t11000', '클립보드: ' + JSON.stringify(clip));
+    assert(clip === '품명\t규격\t단위\t수량\t단가\t금액\n비커\t500ml\t개\t2\t3000\t6000\n시험관\t\t개\t10\t500\t5000\n합계\t\t\t\t\t11000', '클립보드: ' + JSON.stringify(clip));
   }],
   ['메모에 주민번호가 있으면 막고 알려 줌', async () => {
     const before = prompts.length;
