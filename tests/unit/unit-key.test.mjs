@@ -224,3 +224,10 @@ test('「정답」 머리 없이 번호가 늘어선 글·표 줄(계획서의 �
   assert.equal(parseKey('올해 할 일\n1. 사과 2. 배 3. 감 4. 귤'), null);
   assert.equal(parseKey('정답\n1. 사과 2. 배 3. 감 4. 귤').items.length, 4);
 });
+
+test('문제지와 정답이 「교사용」으로 붙은 한 파일도 나눔(한꺼번에 넣기 규칙)', () => {
+  const t = ['2. 곱셈', '1. 3 × 2 = □', '2. 4 × 2 = □', '3. 알맞은 수를 쓰세요.', '2. 곱셈', '이름: 교사용', '1. 6', '2. 8', '3. 12'].join('\n');
+  const { paper, key } = splitCombined(t);
+  assert.ok(paper.includes('3 × 2') && !paper.includes('교사용'), paper);
+  assert.ok(key.startsWith('2. 곱셈') && key.includes('교사용') && key.includes('12'), key);
+});

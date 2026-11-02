@@ -1,5 +1,6 @@
 /* 단원평가: 정답지(「문항 이원 분류 및 모범 답안」 표)와 평가지 글을 AI 없이 읽기 (스펙 1, 3.1)
    글은 core/files.js의 readText 결과: 표는 줄마다 「칸 | 칸」 */
+import { splitDoc } from '../../../core/bundle.js';
 
 const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩';
 const SYMBOLS = '㉮㉯㉰㉱㉲㉳㉴㉵㉶㉷㉸㉹㉺㉻㉠㉡㉢㉣㉤㉥㉦㉧㉨㉩㉪㉫㉬㉭';
@@ -181,7 +182,11 @@ export function parseKey(text) {
 export function splitCombined(text) {
   const src = String(text || ''), lines = src.split('\n');
   const i = lines.findIndex(l => /^\s*(\|\s*)?정답(\s*및\s*해설지?)?\s*(\||$)/.test(l));
-  if (i < 0) return { paper: src, key: '' };
+  if (i < 0) {
+    // 「교사용」·「(예시)」·「[정답]」 같은 표시나 같은 머리가 다시 나오는 한 파일도 나눔 (한꺼번에 넣기 규칙)
+    const d = splitDoc(src);
+    return d.teacher ? { paper: d.student, key: d.teacher } : { paper: src, key: '' };
+  }
   const paper = lines.slice(0, i).join('\n').trim(), key = lines.slice(i).join('\n').trim();
   return Object.keys(parsePaper(paper).questions).length >= 2 ? { paper, key } : { paper: '', key: src.trim() };
 }
