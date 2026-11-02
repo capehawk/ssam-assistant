@@ -53,6 +53,65 @@ pub fn save_download(name: String, bytes: Vec<u8>) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// 쪽지 붙임 파일 하나 (화면에서 받은 이름·내용)
+#[derive(serde::Deserialize)]
+pub struct NoteFile {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// 저장한 폴더와 파일 경로들 (넘긴 차례대로)
+#[derive(serde::Serialize, Debug)]
+pub struct NoteSaved {
+    pub dir: String,
+    pub paths: Vec<String>,
+}
+
+/// `base/쌤비서 쪽지 붙임/<폴더 이름>` (폴더 이름에 쓸 수 없는 글자는 `_`)
+pub fn note_dir(base: &Path, folder: &str) -> PathBuf {
+    base.join("쌤비서 쪽지 붙임").join(safe_name(folder))
+}
+
+/// 쪽지 붙임을 폴더에 씀. 같은 이름에 같은 내용이면 그 파일을 다시 쓰고(다시 눌러도 늘지 않게), 다르면 「이름 (2)」
+pub fn save_note_files(base: &Path, folder: &str, files: Vec<NoteFile>) -> Result<NoteSaved, String> {
+    let dir = note_dir(base, folder);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("붙임 폴더를 만들지 못했어요: {e}"))?;
+    let mut paths = Vec::new();
+    for f in files {
+        let name = safe_name(&f.name);
+        let same = dir.join(&name);
+        let path = if std::fs::read(&same).map(|b| b == f.bytes).unwrap_or(false) {
+            same
+        } else {
+            let p = unique_path(&dir, &name);
+            std::fs::write(&p, &f.bytes).map_err(|e| format!("붙임 파일을 저장하지 못했어요: {e}"))?;
+            p
+        };
+        paths.push(path.to_string_lossy().into_owned());
+    }
+    Ok(NoteSaved { dir: dir.to_string_lossy().into_owned(), paths })
+}
+
+/// 쪽지 붙임을 다운로드 폴더의 「쌤비서 쪽지 붙임/<날짜 제목>」에 모음
+#[tauri::command]
+pub fn note_save_attachments(folder: String, files: Vec<NoteFile>) -> Result<NoteSaved, String> {
+    save_note_files(&downloads_dir(), &folder, files)
+}
+
+/// 파일들을 클립보드에 파일로 넣음(탐색기에서 Ctrl+C 한 것처럼) — 쪽지 창 첨부 칸에 Ctrl+V
+#[tauri::command]
+pub fn note_copy_files(paths: Vec<String>) -> Result<(), String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| format!("클립보드를 열지 못했어요: {e}"))?;
+    cb.set().file_list(&paths).map_err(|e| format!("파일을 클립보드에 넣지 못했어요: {e}"))
+}
+
+/// 붙임 폴더를 탐색기로 엶
+#[tauri::command]
+pub fn note_open_dir(app: tauri::AppHandle, dir: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(dir, None::<&str>).map_err(|e| format!("폴더를 열지 못했어요: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +133,18 @@ mod tests {
         std::fs::write(dir.join("품의 (2).hwpx"), b"x").unwrap();
         assert_eq!(unique_path(&dir, "품의.hwpx"), dir.join("품의 (3).hwpx"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn note_dirs() {
+        let base = std::env::temp_dir().join(format!("ssam-note-test-{}", std::process::id()));
+        assert_eq!(note_dir(&base, "2026-11-12 AI: 연수?"), base.join("쌤비서 쪽지 붙임").join("2026-11-12 AI_ 연수_"));
+        // 같은 이름: 내용이 같으면 그 파일을 다시 쓰고, 다르면 (2)
+        let saved = save_note_files(&base, "2026-11-12 연수", vec![NoteFile { name: "계획.hwpx".into(), bytes: b"a".to_vec() }]).unwrap();
+        let again = save_note_files(&base, "2026-11-12 연수", vec![NoteFile { name: "계획.hwpx".into(), bytes: b"a".to_vec() }, NoteFile { name: "계획.hwpx".into(), bytes: b"b".to_vec() }]).unwrap();
+        assert_eq!(again.paths[0], saved.paths[0]);
+        assert!(again.paths[1].ends_with("계획 (2).hwpx"), "{}", again.paths[1]);
+        assert_eq!(again.dir, saved.dir);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -35,6 +35,36 @@ function persist() {
   if (hasContent(x)) pushMessage({ id: x.id, title: x.title, kind: x.again ? 'again' : x.m.kind, m: x.m, len: x.len, attachNames: x.attach.map(a => a.name) });
 }
 
+/* ---------- 붙임 파일 (Windows 앱): 다운로드 폴더에 모아 클립보드 파일 복사·폴더 열기 (스펙 4.5) ---------- */
+const T = () => (globalThis.window && window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null);
+const filesHTML = () => `<div class="row" id="msgFiles">${T()
+  ? '<button class="btn" type="button" data-msg="copyFiles">붙임 파일 복사</button><button class="btn text" type="button" data-msg="openDir">폴더 열기</button>'
+  : '<span class="muted">Windows 앱에서는 붙임 파일 복사(쪽지 창에 Ctrl+V)·폴더 열기가 돼요. 웹판에서는 파일을 쪽지 창에 직접 넣어 주세요.</span>'}</div>`;
+const today = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
+const extOf = n => (/(\.[^.]+)$/.exec(String(n || '')) || ['', ''])[1];
+/* 체크한 붙임 중 파일이 있는 것을 「날짜 제목」 폴더에 저장 → { dir, paths } | null */
+async function saveAttachments() {
+  const x = cur(), core = T();
+  const picked = x.attach.map((a, i) => ({ a, f: M.files[i] })).filter(p => p.a.on && p.f);
+  if (!picked.length) { toast(x.attach.some(a => a.on) ? '붙임 파일이 이 화면에 없어요. 파일을 다시 넣어 주세요(최근 쪽지는 이름만 남아요).' : '체크한 붙임이 없어요.', 6000); return null; }
+  const files = [];
+  for (const { a, f } of picked) files.push({ name: `${a.name}${extOf(f.name)}`, bytes: Array.from(new Uint8Array(await f.arrayBuffer())) });
+  const folder = `${today()} ${String(x.m.title || '쪽지').trim()}`.slice(0, 80);
+  try { return await core.invoke('note_save_attachments', { folder, files }); }
+  catch (e) { toast(String(e || '붙임 파일을 저장하지 못했어요'), 6000); return null; }
+}
+async function copyFiles() {
+  const saved = await saveAttachments();
+  if (!saved) return;
+  try { await T().invoke('note_copy_files', { paths: saved.paths }); toast(`붙임 파일 ${saved.paths.length}개를 복사했어요. 이음 쪽지 창의 첨부 칸에서 Ctrl+V 해 보세요. 안 되면 [폴더 열기]로 끌어 놓으세요.`, 8000); }
+  catch (e) { toast(String(e || '파일을 클립보드에 넣지 못했어요. [폴더 열기]로 끌어 놓아 주세요.'), 7000); }
+}
+async function openDir() {
+  const saved = await saveAttachments();
+  if (!saved) return;
+  try { await T().invoke('note_open_dir', { dir: saved.dir }); } catch (e) { toast(String(e || '폴더를 열지 못했어요'), 6000); }
+}
+
 /* ---------- 그리기 ---------- */
 const field = (k, label, v, type = 'text', ph = '') => `<label class="yp-f"><span class="lab">${label}</span><input class="field" data-mf="${k}" type="${type}" value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off"></label>`;
 function fieldsHTML(m) {
@@ -70,7 +100,7 @@ export function render() {
             <button class="btn text" type="button" data-msg="pick">파일 고르기</button>
             <input type="file" id="msgFile" multiple hidden accept=".hwp,.hwpx,.pdf,.txt,.png,.jpg,.jpeg,.webp"><span class="muted" id="msgState" role="status">${esc(M.msg)}</span></div>
           <p class="muted" style="margin:0">명단·전화번호가 적힌 줄은 빼고 AI로 보내요.</p></div>
-        <h3>붙임</h3>${attachHTML(x)}<div class="row" id="msgFiles"></div>
+        <h3>붙임</h3>${attachHTML(x)}${filesHTML()}
         <h3>칸</h3>${fieldsHTML(x.m)}
       </section>
       <section class="pc-card"><h3>쪽지</h3>
@@ -168,6 +198,8 @@ document.addEventListener('click', e => {
   else if (a === 'read') readAll();
   else if (a === 'new') { d = blankDraft(); M.files = []; clearDraft(); render(); }
   else if (a === 'resync') { compose(true); persist(); render(); }
+  else if (a === 'copyFiles' && T()) copyFiles();
+  else if (a === 'openDir' && T()) openDir();
   else if (a === 'copyTitle' || a === 'copyBody' || a === 'copyAll') {
     const text = a === 'copyTitle' ? x.title : a === 'copyBody' ? x.body : `${x.title}\n\n${x.body}`;
     copyText(text).then(ok => toast(ok ? '복사했어요. 이음 쪽지 창에 붙여 넣으세요' : '복사하지 못했어요'));
