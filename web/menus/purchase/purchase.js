@@ -7,7 +7,9 @@ import { copyText, toast } from '../../core/ui.js';
 import { getPurchaseLimit, getMeetCap } from '../../core/settings.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, reasonTail, purchaseDoc, toNumber, findPersonal,
-  defaultUnit, quoteNote, withholding, INCOME, meetingItem, budgetHints, ATTACH, basisLine } from './rules.js';
+  defaultUnit, quoteNote, withholding, INCOME, meetingItem, budgetHints, ATTACH, basisLine, draftMemo } from './rules.js';
+import { aiRowHTML, pick } from '../../core/ai-roles.js';
+import { reviewJSON, purchaseReviewPrompt, normPurchaseReview, opinionHTML, REVIEW_FAIL } from '../../core/ai-review.js';
 import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor } from './intake.js';
 import { pushRecent, newId, listRecent, deleteRecent, listTemplates, saveTemplate, renameTemplate, deleteTemplate, templateForm } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
@@ -35,12 +37,14 @@ function normForm(v) {
   f.items = items.length ? items : [emptyItem()];
   return f;
 }
-/* 초안: 제목, AI가 쓴 첫 문장(intro), 사유 전체, 선생님이 사유를 손으로 고쳤는지(edited) */
+/* 초안: 제목, AI가 쓴 첫 문장(intro), 사유 전체, 선생님이 사유를 손으로 고쳤는지(edited), 검토 의견(rv) */
 const firstPara = r => String(r || '').split(/\n\s*\n/)[0].trim();
+const normRv = v => (Array.isArray(v) ? v.filter(x => x && (x.field === 'title' || x.field === 'intro') && typeof x.fix === 'string' && x.fix.trim())
+  .map(x => ({ field: x.field, problem: String(x.problem || ''), fix: x.fix, ...(x.done === 'review' || x.done === 'main' ? { done: x.done } : {}) })) : []);
 function normDraft(d) {
   if (!(d && typeof d === 'object' && typeof d.title === 'string')) return null;
   const reason = String(d.reason == null ? '' : d.reason);
-  return { title: d.title, reason, intro: typeof d.intro === 'string' ? d.intro : firstPara(reason), edited: d.intro == null ? true : !!d.edited, ...(Array.isArray(d.rv) ? { rv: d.rv } : {}) };
+  return { title: d.title, reason, intro: typeof d.intro === 'string' ? d.intro : firstPara(reason), edited: d.intro == null ? true : !!d.edited, ...(normRv(d.rv).length ? { rv: normRv(d.rv) } : {}) };
 }
 function load() {
   const v = get(CUR_KEY, null);
@@ -49,6 +53,7 @@ function load() {
 
 let st = load();
 let box = null, curTab = 'new', busy = false, msg = '', tried = false;
+let rvBusy = null, rvFail = null; // 지금 검토 중인·검토하지 못한 초안
 const save = () => set(CUR_KEY, st);
 const checks = () => checkPurchase(st.form, { limit: getPurchaseLimit(), meetCap: getMeetCap() });
 
@@ -190,12 +195,17 @@ function renderDraft() {
   if (!card) return;
   const d = st.draft;
   const copyBtn = (k, label) => `<button class="btn text pc-copy" type="button" data-copy="${k}">${label}</button>`;
+  const mark = f => (openRv(f) ? ' rv-mark' : '');
   card.innerHTML = `<h3 id="pcDraftH">에듀파인에 붙여넣을 초안</h3>
+    ${aiRowHTML('purchase')}
     ${msg ? `<div class="banner err" id="pcMsg" role="alert"><span class="grow">${esc(msg)}</span></div>` : ''}
-    ${d ? `<div class="pc-out"><div class="pc-out-h"><label class="lab" for="pcTitle">제목</label>${copyBtn('title', '복사')}</div>
-        <input class="field" id="pcTitle" data-d="title" value="${esc(d.title)}" autocomplete="off"></div>
+    ${d ? `<div id="pcRvState">${rvStateHTML()}</div>
+      <div class="pc-out"><div class="pc-out-h"><label class="lab" for="pcTitle">제목</label>${copyBtn('title', '복사')}</div>
+        <input class="field${mark('title')}" id="pcTitle" data-d="title" value="${esc(d.title)}" autocomplete="off">
+        <div id="pcRvTitle">${rvHTML('title')}</div></div>
       <div class="pc-out"><div class="pc-out-h"><label class="lab" for="pcReason">품의 사유</label>${copyBtn('reason', '복사')}</div>
-        <textarea class="field" id="pcReason" data-d="reason" rows="12">${esc(d.reason)}</textarea>
+        <textarea class="field${mark('intro')}" id="pcReason" data-d="reason" rows="12">${esc(d.reason)}</textarea>
+        <div id="pcRvIntro">${rvHTML('intro')}</div>
         <div id="pcResyncBox">${resyncHTML()}</div></div>
       <div class="pc-out"><div class="pc-out-h"><span class="lab">산출 내역</span>${copyBtn('calc', '표 복사')}</div>
         <div class="pc-calc-wrap" id="pcCalcWrap">${calcHTML()}</div></div>
@@ -203,6 +213,50 @@ function renderDraft() {
     : `<p class="muted pc-empty">${busy ? '<span class="spin"></span> AI가 제목과 품의 사유를 쓰고 있어요…' : '왼쪽 메모를 채우고 [초안 만들기]를 누르면 제목·품의 사유·산출 내역을 써요. 금액과 합계는 앱이 계산해요.'}</p>`}
     <div id="pcChecksBox">${checksHTML()}</div>`;
 }
+
+/* ---------- 검토 AI (업무별 AI › 품의에서 켰을 때) ---------- */
+const RV_LABEL = { title: '제목', intro: '품의 사유 첫 문장' };
+const openRv = f => (st.draft && st.draft.rv ? st.draft.rv.find(x => x.field === f && !x.done) : null);
+function rvHTML(f) {
+  const r = openRv(f);
+  if (!r) return '';
+  return opinionHTML({ title: RV_LABEL[f], main: f === 'title' ? st.draft.title : firstPara(st.draft.reason), alt: r.fix, why: r.problem, use: f, keep: f });
+}
+const rvStateHTML = () => (st.draft && rvBusy === st.draft ? '<p class="muted rv-busy"><span class="spin"></span> 검토 AI가 제목과 첫 문장을 살펴보고 있어요. 초안은 그대로 고칠 수 있어요…</p>' : '')
+  + (st.draft && rvFail === st.draft ? `<p class="rv-fail" role="status">${REVIEW_FAIL} 초안은 그대로 쓸 수 있어요.</p>` : '');
+function updateRv() {
+  if (!box) return;
+  const s = box.querySelector('#pcRvState');
+  if (s) s.innerHTML = rvStateHTML();
+  for (const [f, at, inp] of [['title', '#pcRvTitle', '#pcTitle'], ['intro', '#pcRvIntro', '#pcReason']]) {
+    const el = box.querySelector(at); if (el) el.innerHTML = rvHTML(f);
+    const i = box.querySelector(inp); if (i) i.classList.toggle('rv-mark', !!openRv(f));
+  }
+}
+/* 손으로 고친 칸의 아직 고르지 않은 의견은 지움 */
+function dropRv(f) {
+  if (!openRv(f)) return;
+  st.draft.rv = st.draft.rv.filter(x => x.field !== f || x.done);
+  updateRv();
+}
+/* 초안 뒤 한 번: 메인에 보낸 메모와 제목·첫 문장을 검토 AI가 봄. 검토 중에 고친 칸·바뀐 초안의 의견은 버림 */
+async function runReview(memo) {
+  const d = st.draft;
+  if (!d || !pick('purchase', 'review')) return;
+  const sent = { title: d.title, intro: d.intro };
+  rvBusy = d; rvFail = null; updateRv();
+  const v = await reviewJSON('purchase', purchaseReviewPrompt(memo, sent), { valid: x => Array.isArray(x) || !!(x && Array.isArray(x.items)) });
+  if (rvBusy === d) rvBusy = null;
+  if (v && v.error) rvFail = d;
+  else if (v && st.draft === d) {
+    const now = { title: d.title, intro: firstPara(d.reason) };
+    d.rv = normPurchaseReview(v).filter(x => now[x.field] === sent[x.field] && x.fix !== sent[x.field]);
+    save();
+  }
+  if (curTab === 'new' && box && box.isConnected) updateRv();
+}
+/* 사유의 첫 문단만 바꿈 (가~붙임은 그대로) */
+const replaceFirst = (reason, s) => { const m = /\n\s*\n/.exec(reason); return m ? s + reason.slice(m.index) : s; };
 
 /* 입력이 바뀌면 금액·합계·확인 목록·산출 내역만 고쳐 그림 (입력 칸은 다시 그리지 않음 — 한글 입력이 끊기지 않게) */
 function live() {
@@ -263,17 +317,10 @@ function renderItems(focusRow) {
 }
 
 /* ---------- 초안 만들기 ---------- */
-function draftPrompt(f, total) {
+function draftPrompt(f) {
   const t = typeOf(f.type);
-  const its = cleanItems(f.items);
-  // 강사 수당은 강사 칸 글(이름일 수 있음)을 보내지 않음
-  const items = f.type === 'lecturer'
-    ? `외부 강사 ${its.length}명, 모두 ${won(its.reduce((n, it) => n + toNumber(it.qty), 0))}시간`
-    : its.map(it => `${it.name}${it.spec ? `(${it.spec})` : ''} ${won(toNumber(it.qty))}${String(it.unit || '').trim() || '개'} × ${won(toNumber(it.price))}원`).join(', ');
-  const line = (k, v) => (String(v || '').trim() ? `- ${k}: ${String(v).trim()}\n` : '');
   return '학교 행정 문서(에듀파인 품의)를 돕는 도우미예요. 아래 메모로 품의의 제목과 품의 사유 첫 문장을 써 주세요.\n\n'
-    + line('종류', t.label) + line('사업명', f.project) + line('목적', f.purpose) + line('일시', f.date) + line('대상', f.target) + line('장소', f.place)
-    + line('품목', items) + `- 합계: ${won(total)}원\n` + line('그 밖의 메모', f.memo)
+    + draftMemo(f)
     + '\n규칙:\n'
     + '- title: 한 줄, 30자 안쪽. 무엇을 왜 하는지 드러나게 씁니다. 예) 5학년 과학 실험 재료(용해와 용액) 구입\n'
     + `- intro: 한 문장. 「…을(를) 다음과 같이 ${VERB[t.id]}하고자 합니다.」 꼴로 씁니다. 금액·날짜는 쓰지 않습니다.\n`
@@ -298,13 +345,15 @@ async function makeDraft() {
   setBusyUI();
   try {
     const form = getForm();
-    const v = await ai.generateJSON(draftPrompt(form, r.total), {
+    const v = await ai.generateJSON(draftPrompt(form), {
+      task: 'purchase',
       valid: x => x && typeof x.title === 'string' && x.title.trim() && typeof x.intro === 'string' && x.intro.trim()
     });
     st.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: st.form }), edited: false };
     save();
     keepRecent();
     document.dispatchEvent(new CustomEvent('ssam:purchase-draft', { detail: { form: getForm(), draft: getDraft() } }));
+    runReview(draftMemo(form));
   } catch (e) {
     msg = ai.errorMessage(e && e.code, e);
   }
@@ -333,6 +382,7 @@ document.addEventListener('input', e => {
   else if (el.dataset.d && st.draft) {
     st.draft[el.dataset.d] = el.value;
     if (el.dataset.d === 'reason') { st.draft.edited = true; const rb = box.querySelector('#pcResyncBox'); if (rb) rb.innerHTML = resyncHTML(); }
+    dropRv(el.dataset.d === 'title' ? 'title' : 'intro');
     save(); return;
   }
   else if (el.dataset.attach) {
@@ -355,6 +405,15 @@ document.addEventListener('click', e => {
   if (bh) { st.form.budget = bh.dataset.budgetHint; st.form.budgetUnknown = false; save(); const el = box.querySelector('#pcBudget'); if (el) el.value = st.form.budget; const u = box.querySelector('#pcBudgetUnknown'); if (u) u.checked = false; live(); return; }
   const ad = e.target.closest('[data-attach-del]');
   if (ad) { st.form.attachMore.splice(+ad.dataset.attachDel, 1); save(); rerenderAttach(); return; }
+  const ru = e.target.closest('[data-rv-use]'), rk = e.target.closest('[data-rv-keep]');
+  if ((ru || rk) && st.draft) {
+    const f = ru ? ru.dataset.rvUse : rk.dataset.rvKeep, r = openRv(f);
+    if (!r) return;
+    if (ru && f === 'title') st.draft.title = r.fix;
+    else if (ru) { st.draft.intro = r.fix; st.draft.reason = st.draft.edited ? replaceFirst(st.draft.reason, r.fix) : composeReason({ intro: r.fix, form: st.form }); }
+    st.draft.rv = st.draft.rv.map(x => (x === r ? { ...x, done: ru ? 'review' : 'main' } : x));
+    save(); renderDraft(); return;
+  }
   const cp = e.target.closest('[data-copy]');
   if (cp && st.draft) {
     const k = cp.dataset.copy;

@@ -16,11 +16,23 @@ const env = (over = {}) => ({
   ...over
 });
 
-test('업무 4개', () => {
-  assert.deepEqual(TASKS.map(t => t[0]), ['grade', 'writing', 'plan', 'notes']);
+test('업무 5개(품의가 5번째)', () => {
+  assert.deepEqual(TASKS.map(t => t[0]), ['grade', 'writing', 'plan', 'notes', 'purchase']);
+  assert.equal(TASKS[4][1], '품의');
 });
 
-test('처음: 업무 4개 모두 기본, 검토 꺼짐, 기본 검토 AI 없음', () => {
+test('예전 ai-roles(품의 칸 없음)도 읽힘: 다른 업무는 그대로, 품의는 기본', () => {
+  store.set('ai-roles', { review: OPUS, tasks: { grade: { main: OPUS, reviewOn: true, review: null }, writing: {}, plan: {}, notes: {} } });
+  const r = getRoles();
+  assert.deepEqual(r.tasks.grade, { main: OPUS, reviewOn: true, review: null });
+  assert.deepEqual(r.tasks.purchase, { main: null, reviewOn: false, review: null });
+  assert.equal(pick('purchase', 'main', env()), null);
+  setTaskRole('purchase', { main: { engine: 'claude', model: 'claude-haiku-5-5' } });
+  assert.equal(pick('purchase', 'main', env()).model, 'claude-haiku-5-5');
+  assert.equal(pick('plan', 'main', env()), null);
+});
+
+test('처음: 업무 5개 모두 기본, 검토 꺼짐, 기본 검토 AI 없음', () => {
   resetRoles();
   const r = getRoles();
   assert.equal(r.review, null);

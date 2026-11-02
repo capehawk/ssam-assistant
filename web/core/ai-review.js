@@ -161,6 +161,30 @@ export function normNotesReview(v, allowed) {
   return out;
 }
 
+/* ---------- 품의 ---------- */
+/* memo: 초안 AI에 보낸 메모 줄(rules.draftMemo — 강사 칸 글 없음), draft: { title, intro } */
+export function purchaseReviewPrompt(memo, draft) {
+  return [
+    '[품의 검토]',
+    '당신은 학교 에듀파인 품의 초안을 결재 전에 한 번 더 살펴보는 교사입니다.',
+    '', '[메모]', String(memo || '').trim().slice(0, 4000),
+    '', '[초안]', `title: ${str(draft && draft.title, 200)}`, `intro: ${str(draft && draft.intro, 600)}`,
+    '', '[살펴볼 것] 메모에 없는 사실을 지어냄, 제목·문장에 금액이나 날짜를 씀, 종류와 맞지 않는 말(물품은 구입, 강사 수당은 지급, 행사·협의회는 운영), 사람 이름·전화번호 같은 개인정보, 제목이 30자를 넘음',
+    '', '[규칙] 고칠 것이 있는 칸(title, intro)만 고릅니다. fix는 고친 글 전체입니다. intro는 「…다음과 같이 …하고자 합니다.」 한 문장입니다. 문제가 없으면 빈 목록을 냅니다.',
+    '', '[출력] JSON 하나만 출력합니다.',
+    '{"items":[{"field":"title 또는 intro","problem":"무엇이 문제인지 짧게","fix":"고친 글"}]}'
+  ].join('\n');
+}
+export function normPurchaseReview(v) {
+  const seen = new Set(), out = [];
+  for (const x of listOf(v, 'items')) {
+    const field = String((x && x.field) || ''), problem = str(x && x.problem, 160), fix = str(x && x.fix, field === 'title' ? 80 : 400).replace(/\s*\n\s*/g, ' ');
+    if (!(field === 'title' || field === 'intro') || seen.has(field) || !problem || !fix) continue;
+    seen.add(field); out.push({ field, problem, fix });
+  }
+  return out;
+}
+
 /* ---------- 평가지 채점(옛 화면) ---------- */
 const LV_ORDER = ['top', 'high', 'mid', 'low'];
 /* 「읽기 어려움」 학생 + 나눈 수준이 바뀌는 바로 위·아래 학생 */

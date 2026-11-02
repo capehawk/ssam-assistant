@@ -189,6 +189,17 @@ export function itemsTSV(items, type = 'goods') {
   return [`품명\t규격\t단위\t수량\t단가\t금액${v ? '\t구입처' : ''}`, ...rows, `합계\t\t\t\t\t${sumItems(items)}${v ? '\t' : ''}`].join('\n');
 }
 
+/* 초안 AI(와 검토 AI)에 보내는 메모 줄. 강사 수당은 강사 칸 글(이름일 수 있음)을 보내지 않고 사람 수·시간만 */
+export function draftMemo(form) {
+  const f = form || {}, type = TYPES.find(t => t.id === f.type) || TYPES[0], its = cleanItems(f.items);
+  const items = type.id === 'lecturer'
+    ? `외부 강사 ${its.length}명, 모두 ${won(its.reduce((n, it) => n + toNumber(it.qty), 0))}시간`
+    : its.map(it => `${it.name}${it.spec ? `(${it.spec})` : ''} ${won(toNumber(it.qty))}${String(it.unit || '').trim() || '개'} × ${won(toNumber(it.price))}원`).join(', ');
+  const line = (k, v) => (String(v || '').trim() ? `- ${k}: ${String(v).trim()}\n` : '');
+  return line('종류', type.label) + line('사업명', f.project) + line('목적', f.purpose) + line('일시', f.date) + line('대상', f.target) + line('장소', f.place)
+    + line('품목', items) + `- 합계: ${won(sumItems(f.items))}원\n` + line('그 밖의 메모', f.memo);
+}
+
 /* 품의 사유의 앱이 만드는 부분: 가~ 줄(빈 칸 빼고 다시 매김) + 붙임 (스펙 4.5) */
 const KO = '가나다라마바사아자차카타파하';
 export function reasonTail(form) {

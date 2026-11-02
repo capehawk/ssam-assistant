@@ -93,6 +93,18 @@ test('피드백·알림 검토: 머리, 번호·점수만(이름 없음), 답 �
   assert.deepEqual(v, [{ key: '3', field: 'cheer', problem: '점수 숫자', fix: '다시 봐요.' }]);
 });
 
+test('품의 검토: 머리, 메모·제목·첫 문장, 강사 칸 글 없음, 답 읽기는 title·intro만(칸마다 하나)', async () => {
+  const { draftMemo } = await import('../../web/menus/purchase/rules.js');
+  const memo = draftMemo({ type: 'lecturer', project: '진로 특강', purpose: '진로 탐색', date: '2026-11-20', target: '6학년', place: '강당', memo: '', items: [{ name: '김강사', spec: '', unit: '시간', qty: '2', price: '100000' }] });
+  assert.ok(!memo.includes('김강사') && memo.includes('강사 1명') && memo.includes('합계: 200,000원'), memo);
+  const p = R.purchaseReviewPrompt(memo, { title: '6학년 진로 특강 강사 수당 지급', intro: '진로 특강 강사 수당을 다음과 같이 지급하고자 합니다.' });
+  assert.ok(p.startsWith('[품의 검토]') && p.includes('진로 특강') && p.includes('6학년 진로 특강 강사 수당 지급') && p.includes('다음과 같이 지급하고자 합니다.'), p);
+  assert.ok(!p.includes('김강사'));
+  const v = R.normPurchaseReview({ items: [{ field: 'intro', problem: '금액을 씀', fix: '진로 특강을 다음과 같이 운영하고자 합니다.' }, { field: 'intro', problem: '둘째', fix: 'x' }, { field: 'reason', problem: 'p', fix: 'f' }, { field: 'title', problem: '', fix: 'f' }] });
+  assert.deepEqual(v, [{ field: 'intro', problem: '금액을 씀', fix: '진로 특강을 다음과 같이 운영하고자 합니다.' }]);
+  assert.deepEqual(R.normPurchaseReview([{ field: 'title', problem: '30자 넘음', fix: '진로 특강 강사 수당' }]), [{ field: 'title', problem: '30자 넘음', fix: '진로 특강 강사 수당' }]);
+});
+
 test('평가지 채점: 읽기 어려움 학생과 수준 경계 위·아래만, 10점 이상이면 다름', () => {
   const S = (id, no, score, level, x = {}) => ({ id, no, score, level, status: 'done', ...x });
   const list = [S('a', 1, 92, 'top'), S('b', 2, 75, 'high'), S('c', 3, 74, 'mid'), S('d', 4, 60, 'mid'), S('e', 5, 40, 'mid', { unreadable: true }), S('f', 6, 50, 'mid', { skip: true })];
