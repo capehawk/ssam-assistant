@@ -7,22 +7,29 @@ import { makeHwpx } from '../../core/hwpx.js';
 import { copyText, saveFile, toast } from '../../core/ui.js';
 import { getPurchaseLimit } from '../../core/settings.js';
 import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, purchaseDoc, toNumber, findPersonal } from './rules.js';
-import { readQuote } from './quote.js';
+import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor } from './intake.js';
+import { pushRecent, newId } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
 import { registerInbox } from '../../core/inbox.js';
 
 const CUR_KEY = 'purchase:current';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const won = n => Number(n).toLocaleString('ko-KR');
+const SS = () => window.SSAM;
 const typeOf = id => TYPES.find(t => t.id === id) || TYPES[0];
-const LABEL = { project: '사업명', purpose: '목적', date: '일시', target: '대상', place: '장소', budget: '예산 과목', memo: '메모', items: '품목' };
+const LABEL = { project: '사업명', purpose: '목적', date: '일시', target: '대상', place: '장소', budget: '예산 과목', memo: '메모', items: '품목', attach: '붙임' };
 const VERB = { goods: '구입', lecturer: '지급', event: '운영', meeting: '운영' };
 
 /* 저장된 값이 망가져 있어도 쓸 수 있는 모양으로 */
 function normForm(v) {
   const base = emptyForm(v && TYPES.some(t => t.id === v.type) ? v.type : 'goods');
   const f = { ...base };
-  if (v && typeof v === 'object') for (const k of Object.keys(base)) if (k !== 'items' && v[k] != null) f[k] = k === 'budgetUnknown' ? !!v[k] : String(v[k]);
+  if (v && typeof v === 'object') for (const k of Object.keys(base)) {
+    if (k === 'items' || v[k] == null) continue;
+    if (k === 'budgetUnknown' || k === 'vat') f[k] = !!v[k];
+    else if (k === 'attach' || k === 'attachMore') f[k] = Array.isArray(v[k]) ? v[k].map(String) : base[k];
+    else f[k] = String(v[k]);
+  }
   const items = v && Array.isArray(v.items) ? v.items.filter(i => i && typeof i === 'object').map(i => ({ ...emptyItem(), ...Object.fromEntries(Object.keys(emptyItem()).map(k => [k, i[k] == null ? '' : String(i[k])])) })) : [];
   f.items = items.length ? items : [emptyItem()];
   return f;
@@ -62,12 +69,15 @@ function field(key, label, { req, ph, wide, area } = {}) {
 function itemRow(it, i) {
   const inp = (f, ph, mode) => `<input class="field" data-item="${i}" data-f="${f}" value="${esc(it[f])}" placeholder="${ph}" aria-label="${i + 1}번째 품목 ${ph}" autocomplete="off"${mode ? ` inputmode="${mode}"` : ''}>`;
   const amt = cleanItems([it]).length ? won(itemAmount(cleanItems([it])[0])) : '';
-  return `<div class="pc-irow" data-row="${i}">${inp('name', '품명')}${inp('spec', '규격')}${inp('qty', '수량', 'decimal')}${inp('price', '단가', 'numeric')}`
+  return `<div class="pc-irow${fresh.has(it) ? ' new' : ''}" data-row="${i}">${inp('name', '품명')}${inp('spec', '규격')}${inp('unit', '단위')}${inp('qty', '수량', 'decimal')}${inp('price', '단가', 'numeric')}`
+    + (showVendor() ? inp('vendor', '구입처') : '')
     + `<span class="pc-amt num" data-amt="${i}">${amt}</span>`
     + `<button class="icon-btn pc-del" type="button" data-pc="delItem" data-i="${i}" aria-label="${i + 1}번째 품목 빼기" title="빼기">×</button></div>`;
 }
-const itemsHTML = () => '<div class="pc-irow pc-ihead" aria-hidden="true"><span>품명</span><span>규격</span><span>수량</span><span>단가(원)</span><span>금액</span><span></span></div>'
+const showVendor = () => st.form.items.some(it => String(it.vendor || '').trim());
+const itemsHTML = () => `<div class="pc-irow pc-ihead" aria-hidden="true"><span data-h="name">품명</span><span data-h="spec">규격</span><span data-h="unit">단위</span><span data-h="qty">수량</span><span data-h="price">단가(원)</span>${showVendor() ? '<span data-h="vendor">구입처</span>' : ''}<span data-h="amt">금액</span></div>`
   + st.form.items.map(itemRow).join('');
+let fresh = new Set(); // 방금 넣은 품목 줄 (잠깐 노랗게)
 
 function render() {
   if (!box) return;
@@ -79,6 +89,13 @@ function render() {
     <div class="pc-grid">
       <section class="pc-card" aria-labelledby="pcMemoH">
         <h3 id="pcMemoH">메모</h3>
+        <div class="pc-intake" id="pcIntakeBox">
+          <label class="lab" for="pcIntake">아무거나 넣기</label>
+          <textarea class="field" id="pcIntake" rows="3" placeholder="엑셀·견적서 파일, 장바구니 캡처, 대충 쓴 글(예: A4 용지 5박스 2만원)을 여기에 붙여넣거나 끌어 놓으세요"></textarea>
+          <div class="row"><button class="btn tonal" type="button" data-pc="intake">넣기</button><button class="btn text" type="button" data-pc="intakeFile">파일 고르기</button>
+            <input type="file" id="pcIntakeFile" accept=".xlsx,.csv,.hwp,.hwpx,.txt,.pdf,.png,.jpg,.jpeg,.webp" hidden><span class="muted" id="pcIntakeMsg" role="status"></span></div>
+          <p class="muted pc-intake-note">글은 앱이 먼저 읽고, 못 읽은 줄과 캡처·사진은 AI가 읽어요. 이미 쓴 칸은 덮지 않아요.</p>
+        </div>
         <div class="pc-fields">
           ${field('project', '사업명', { ph: '예) ' + ex.project, wide: true })}
           ${field('purpose', '목적', { req: true, ph: '예) ' + ex.purpose, wide: true })}
@@ -91,8 +108,8 @@ function render() {
             <label class="switch pc-unknown"><input type="checkbox" id="pcBudgetUnknown" data-k="budgetUnknown" ${st.form.budgetUnknown ? 'checked' : ''}>모르겠어요 · 행정실 확인</label></div></div>
         </div>
         <div class="pc-sub"><span class="lab">품목 <b class="req" aria-hidden="true">*</b></span></div>
-        <div class="pc-items" id="pcItems">${itemsHTML()}</div>
-        <div class="row pc-iact"><button class="btn text" type="button" data-pc="addItem">+ 품목 더하기</button><span class="pc-quote-slot"><button class="btn text" type="button" data-pc="quote">견적서 넣기</button><input type="file" id="pcQuoteFile" accept=".xlsx,.csv,.hwp,.hwpx,.txt,.pdf,.png,.jpg,.jpeg,.webp" hidden></span><span class="grow"></span><b class="pc-sum num" id="pcSum">합계 ${won(sumItems(st.form.items))}원</b></div>
+        <div class="pc-items${showVendor() ? ' has-vendor' : ''}" id="pcItems">${itemsHTML()}</div>
+        <div class="row pc-iact"><button class="btn text" type="button" data-pc="addItem">+ 품목 더하기</button><span class="grow"></span><b class="pc-sum num" id="pcSum">합계 ${won(sumItems(st.form.items))}원</b></div>
         ${field('memo', '메모 (선택)', { ph: '그 밖에 초안에 넣을 내용', wide: true, area: true })}
         <div class="row pc-go"><button class="btn primary" type="button" data-pc="draft" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'}</button></div>
       </section>
@@ -171,7 +188,7 @@ function markBad(r) {
 
 function renderItems(focusRow) {
   const el = box.querySelector('#pcItems');
-  if (el) el.innerHTML = itemsHTML();
+  if (el) { el.innerHTML = itemsHTML(); el.classList.toggle('has-vendor', showVendor()); }
   live();
   if (focusRow != null) { const f = box.querySelector(`[data-item="${focusRow}"][data-f="name"]`); if (f) f.focus(); }
 }
@@ -267,39 +284,110 @@ document.addEventListener('click', e => {
     save(); renderItems();
   } else if (a === 'draft') makeDraft();
   else if (a === 'hwpx') downloadHwpx();
-  else if (a === 'quote') box.querySelector('#pcQuoteFile').click();
+  else if (a === 'intake') { const t = box.querySelector('#pcIntake').value; if (!t.trim()) { toast('넣을 글을 쓰거나 붙여넣어 주세요. 파일·캡처는 끌어 놓거나 붙여넣으면 바로 읽어요.'); return; } runIntake({ text: t }); }
+  else if (a === 'intakeFile') box.querySelector('#pcIntakeFile').click();
 });
 document.addEventListener('change', e => {
-  if (!box || e.target.id !== 'pcQuoteFile' || !box.contains(e.target)) return;
-  const f = e.target.files[0]; e.target.value = '';
-  if (f) addQuote(f);
+  if (!box || e.target.id !== 'pcIntakeFile' || !box.contains(e.target)) return;
+  const fs = [...e.target.files]; e.target.value = '';
+  intakeFiles(fs);
+});
+/* 넣기 칸: 그림·파일을 붙여넣거나 끌어 놓으면 바로 읽음 (글 붙여넣기는 칸에 들어가고 [넣기]로) */
+document.addEventListener('paste', e => {
+  if (!box || curTab !== 'new' || !e.target.closest || !e.target.closest('#pcIntakeBox')) return;
+  const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+  if (!files.length) return;
+  e.preventDefault();
+  intakeFiles(files);
+});
+document.addEventListener('dragover', e => { if (box && curTab === 'new' && e.target.closest && e.target.closest('#pcIntakeBox')) { e.preventDefault(); e.target.closest('#pcIntakeBox').classList.add('over'); } });
+document.addEventListener('dragleave', e => { const b = e.target.closest && e.target.closest('#pcIntakeBox'); if (b) b.classList.remove('over'); });
+document.addEventListener('drop', e => {
+  const b = box && curTab === 'new' && e.target.closest && e.target.closest('#pcIntakeBox');
+  if (!b) return;
+  e.preventDefault(); b.classList.remove('over');
+  const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+  if (files.length) intakeFiles(files);
+  else { const t = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (t) runIntake({ text: t }); }
 });
 
 /* 견적서를 못 읽은 까닭: 키 없음 · 파일(형식·암호·손상) · PDF 도구 · 그 밖은 AI 오류(키·한도·연결) */
 function quoteError(e) {
   const code = e && e.code;
-  if (code === 'NO_AI') return '사진·PDF 견적서는 AI가 읽어요. 설정 › AI에서 키를 넣어 주세요.';
+  if (code === 'NO_AI') return '캡처·사진·PDF 견적서는 AI가 읽어요. 설정 › AI에서 키를 넣어 주세요. 글로 쓰면 AI 없이도 읽어요.';
   if (isFileCode(code)) return `${fileMessage(code)} 엑셀·CSV로 저장해 넣거나 직접 입력해도 돼요.`;
   if (e && e.message === 'PDFJS') return 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진·엑셀로 넣어 주세요.';
   return code ? ai.errorMessage(code, e) : '견적서를 읽지 못했어요. 엑셀·CSV로 저장해 넣거나 직접 입력해 주세요.';
 }
-/* 견적서의 품목을 품목 표에 넣음: 빈 줄을 먼저 채우고 모자라면 더함. 초안은 만들지 않음 */
-export async function addQuote(file) {
+/* ---------- 아무거나 넣기 (스펙 4.0) ---------- */
+let intakeBusy = false;
+const hasItems = () => st.form.items.some(it => String(it.name || '').trim());
+const setIntakeMsg = m => { const el = box && box.querySelector('#pcIntakeMsg'); if (el) el.innerHTML = m; };
+/* 품목이 있으면 더할지 바꿀지 물어봄 → 'add' | 'replace' | null */
+function askMerge(n) {
+  return new Promise(res => {
+    SS().openSheet(`<h3>품목 ${n}개가 있어요</h3><p class="muted" style="margin:0">읽은 품목을 지금 품목 아래에 더할까요, 지금 품목을 바꿀까요?</p>
+      <div class="row" style="justify-content:flex-end"><button class="btn" type="button" id="pcMergeCancel">그만두기</button><button class="btn" type="button" id="pcMergeReplace">바꾸기</button><button class="btn primary" type="button" id="pcMergeAdd">더하기</button></div>`, sh => {
+      const done = v => { SS().closeSheet(); res(v); };
+      sh.querySelector('#pcMergeAdd').addEventListener('click', () => done('add'));
+      sh.querySelector('#pcMergeReplace').addEventListener('click', () => done('replace'));
+      sh.querySelector('#pcMergeCancel').addEventListener('click', () => done(null));
+    });
+  });
+}
+/* 구입처가 둘 이상이면 나눌지 물어봄. 나누면 첫 구입처만 남기고 나머지는 최근 작성에 새 품의로 */
+function askVendors(vs) {
+  SS().openSheet(`<h3>구입처가 ${vs.length}곳이에요</h3><p class="muted" style="margin:0">${vs.map(esc).join('·')} · 구입처별로 품의를 나눌까요? 나누면 지금 품의에는 「${esc(vs[0])}」 품목만 남고, 나머지는 「최근 작성」에 새 품의로 들어가요.</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn" type="button" id="pcVendorOne">한 품의로</button><button class="btn primary" type="button" id="pcVendorSplit">구입처별로 나누기</button></div>`, sh => {
+    sh.querySelector('#pcVendorOne').addEventListener('click', () => { SS().closeSheet(); toast('한 품의로 두었어요. 품목마다 구입처를 적어 두었어요.'); });
+    sh.querySelector('#pcVendorSplit').addEventListener('click', () => {
+      SS().closeSheet();
+      const parts = splitByVendor(st.form);
+      parts.slice(1).forEach((p, i) => pushRecent({ id: newId(), at: Date.now() + i, form: { ...p, project: `${String(p.project || '물품 구입').trim()} (${vs[i + 1]})` }, draft: null }));
+      st.form = normForm(parts[0]); st.draft = null; save(); render();
+      toast(`나머지 ${parts.length - 1}곳은 「최근 작성」에 새 품의로 넣었어요`, 6000);
+    });
+  });
+}
+async function runIntake(input) {
+  if (intakeBusy) return 0;
+  intakeBusy = true; setIntakeMsg('<span class="spin"></span> 읽는 중…');
   let r;
-  try { r = await readQuote(file); }
-  catch (e) {
-    toast(quoteError(e), 6000);
+  try { r = await readIntake(input); }
+  catch (e) { intakeBusy = false; setIntakeMsg(''); toast(quoteError(e), 6000); return 0; }
+  intakeBusy = false; setIntakeMsg('');
+  if (!r.items.length && !Object.keys(r.fields).length) {
+    toast(r.missed && r.missed.length ? `품목을 읽지 못했어요(못 읽은 줄 ${r.missed.length}개). 「품명 수량 금액」처럼 써 주세요. 예) A4 용지 5박스 2만원` : '품목을 찾지 못했어요. 직접 입력해 주세요.', 6000);
     return 0;
   }
-  if (!r.items.length) { toast('견적서에서 품목을 찾지 못했어요. 직접 입력해 주세요.', 6000); return 0; }
-  const rows = r.items.map(it => ({ name: it.name, spec: it.spec, qty: String(it.qty), price: String(it.price) }));
-  const items = st.form.items.slice();
-  for (const it of rows) { const i = items.findIndex(x => !x.name && !x.spec && !x.qty && !x.price); if (i >= 0) items[i] = it; else items.push(it); }
-  st.form.items = items;
+  let how = 'add';
+  if (r.items.length && hasItems()) { how = await askMerge(cleanItems(st.form.items).length); if (!how) return 0; }
+  st.form = fillEmpty(st.form, r.fields);
+  st.form.items = mergeItems(st.form.items, r.items, how);
+  fresh = new Set(r.items);
+  if (input.text != null) { const ta = box && box.querySelector('#pcIntake'); if (ta) ta.value = ''; }
   save();
   if (curTab === 'new' && box && box.isConnected) render();
-  toast(`견적서에서 품목 ${rows.length}개를 넣었어요${r.by === 'ai' ? '(AI가 읽었어요. 금액을 확인해 주세요)' : ''}.`, 6000);
-  return rows.length;
+  setTimeout(() => { fresh = new Set(); if (box) box.querySelectorAll('.pc-irow.new').forEach(el => el.classList.remove('new')); }, 3000);
+  const ship = r.items.filter(it => it.name === '배송비').length;
+  toast(`품목 ${r.items.length}개${ship ? '(배송비 포함)' : ''}를 넣었어요${r.missed && r.missed.length ? ` · 못 읽은 줄 ${r.missed.length}개` : ''}${r.by === 'ai' ? ' · AI가 읽었어요. 금액을 확인해 주세요' : ''}`, 6000);
+  const vs = vendorsOf(st.form.items);
+  if (vs.length >= 2) askVendors(vs);
+  return r.items.length;
+}
+async function intakeFiles(files) { for (const f of files) await runIntake({ file: f }); }
+/* 떠 있는 버튼으로 넣은 견적서·캡처: 같은 넣기(품목은 더함, 묻지 않음) */
+export async function addQuote(file) {
+  let r;
+  try { r = await readIntake({ file }); }
+  catch (e) { toast(quoteError(e), 6000); return 0; }
+  if (!r.items.length) { toast('견적서에서 품목을 찾지 못했어요. 직접 입력해 주세요.', 6000); return 0; }
+  st.form = fillEmpty(st.form, r.fields);
+  st.form.items = mergeItems(st.form.items, r.items, 'add');
+  save();
+  if (curTab === 'new' && box && box.isConnected) render();
+  toast(`견적서에서 품목 ${r.items.length}개를 넣었어요${r.by === 'ai' ? '(AI가 읽었어요. 금액을 확인해 주세요)' : ''}.`, 6000);
+  return r.items.length;
 }
 
 /* 떠 있는 버튼: 견적서 → 품의 › 새 품의 품목. 쓰던 품의가 있으면 더할지 새로 할지 고름 */

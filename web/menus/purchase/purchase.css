@@ -15,7 +15,19 @@
 .field.bad{border-color:var(--err);box-shadow:0 0 0 1px var(--err)}
 .pc-sub{margin-top:2px}
 .pc-items{display:flex;flex-direction:column;gap:6px}
-.pc-irow{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.3fr) minmax(0,.7fr) minmax(0,1fr) minmax(64px,.9fr) 36px;gap:6px;align-items:center}
+/* 품목 한 줄 = 두 줄: 품명·규격·빼기 / 단위·수량·단가·(구입처)·금액 */
+.pc-irow{display:grid;grid-template-columns:64px 64px minmax(0,1fr) minmax(0,1fr) 92px 32px;grid-template-areas:"name name name name spec del" "unit qty price price amt amt";gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line2)}
+.pc-items.has-vendor .pc-irow{grid-template-areas:"name name name name spec del" "unit qty price vendor amt amt"}
+.pc-irow [data-f="name"],.pc-irow [data-h="name"]{grid-area:name}.pc-irow [data-f="spec"],.pc-irow [data-h="spec"]{grid-area:spec}
+.pc-irow [data-f="unit"],.pc-irow [data-h="unit"]{grid-area:unit}.pc-irow [data-f="qty"],.pc-irow [data-h="qty"]{grid-area:qty}
+.pc-irow [data-f="price"],.pc-irow [data-h="price"]{grid-area:price}.pc-irow [data-f="vendor"],.pc-irow [data-h="vendor"]{grid-area:vendor}
+.pc-irow .pc-amt,.pc-irow [data-h="amt"]{grid-area:amt}.pc-irow .pc-del,.pc-irow [data-h="del"]{grid-area:del}
+.pc-ihead{border-bottom:0;padding-bottom:0}
+.pc-irow.new .field{background:#fff8d9;border-color:#e0b400;transition:background .6s}
+.pc-intake{display:flex;flex-direction:column;gap:6px;border:1.5px dashed var(--line);border-radius:12px;padding:10px 12px;margin-bottom:14px;background:var(--surface2)}
+.pc-intake.over{border-color:var(--accent);background:var(--accent-soft)}
+.pc-intake .field{width:100%;box-sizing:border-box;resize:vertical}
+.pc-intake .row{margin:0}.pc-intake-note{margin:0}
 .pc-irow .field{min-width:0;width:100%;box-sizing:border-box;padding-left:8px;padding-right:8px}
 .pc-ihead span{font-size:12.5px;color:var(--ink3);font-weight:600}
 .pc-amt{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:14px}
@@ -48,9 +60,9 @@
   .pc-fields{grid-template-columns:minmax(0,1fr)}
   .pc-card{padding:16px}
   .pc-ihead{display:none}
-  .pc-irow{grid-template-columns:minmax(0,1.3fr) minmax(0,.8fr) minmax(0,1fr) 36px;padding-bottom:8px;border-bottom:1px solid var(--line)}
-  .pc-irow [data-f="name"]{grid-column:1/-1}
-  .pc-irow .pc-amt{grid-column:1/-2;text-align:left}
+  .pc-irow{grid-template-columns:52px 52px minmax(0,1fr) minmax(0,1fr) 32px;grid-template-areas:"name name name name del" "spec spec spec spec spec" "unit qty price price price" "amt amt amt amt amt"}
+  .pc-items.has-vendor .pc-irow{grid-template-areas:"name name name name del" "spec spec vendor vendor vendor" "unit qty price price price" "amt amt amt amt amt"}
+  .pc-irow .pc-amt{text-align:left}
   .pc-irow .pc-amt:not(:empty)::before{content:'금액 '}
-  .pc-irow .pc-del{grid-row:2;grid-column:4}
 }
+.pc-intake textarea.field{min-height:76px;height:76px}
