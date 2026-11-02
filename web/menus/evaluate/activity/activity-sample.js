@@ -27,3 +27,21 @@ export function sampleActivity() {
   ];
   return a;
 }
+
+/* samples/활동지-예시.hwpx: 지어낸 과학 활동지 한 파일에 학생용 쪽 + 교사용 쪽(예시 답). 한꺼번에 넣기·떠 있는 버튼 시연용 */
+const HEAD = '1. 물의 여행 > [2차시] 물의 여행 그리기 (교과서 12~13쪽)';
+const page = (teacher = false) => [
+  { type: 'p', text: '과학 3-2' },
+  { type: 'p', text: `3학년     반     번   이름:${teacher ? ' 교사용' : ''}` },
+  { type: 'p', text: '※ 물이 여행하는 길을 생각하며 물음에 답해 봅시다.' },
+  { type: 'p', text: `1. 물이 하늘로 올라가는 까닭을 고르세요.  (${teacher ? ' ② ' : '      '})` },
+  { type: 'p', text: '① 바람이 불어서   ② 햇볕을 받아 증발해서   ③ 땅이 흔들려서' },
+  { type: 'p', text: `2. 물이 수증기가 되는 것을 무엇이라고 하나요?  (${teacher ? ' 증발 ' : '              '})` },
+  { type: 'p', text: '3. 물의 여행을 설명해 봅시다.' },
+  { type: 'table', rows: [['설명'], [teacher ? '(예시) 바다의 물이 햇볕을 받아 증발해 구름이 되고, 비로 내려 다시 바다로 갑니다.' : '']] },
+  { type: 'p', text: '4. 물이 여행하는 길을 그려 봅시다.' },
+  { type: 'table', rows: [['그림'], [teacher ? '(예시) 바다 → 구름 → 비를 화살표로 이은 그림' : '']] }
+];
+export function sampleSheetDoc() {
+  return { title: HEAD, blocks: [...page(false), { type: 'break' }, { type: 'p', text: HEAD }, ...page(true)] };
+}

@@ -1,6 +1,7 @@
 /* 평가 › 활동지 (스펙 4장): 목록과 1단계(활동지 넣기)·2단계(기준 확인). 3·4단계는 activity-grading.js, 5단계·모아 보기는 activity-results.js가
    registerStep·registerView로 붙임. 학생 이름은 저장·전송하지 않음(번호만) */
-import { onEnter } from '../../../core/shell.js';
+import { onEnter, go } from '../../../core/shell.js';
+import { registerInbox } from '../../../core/inbox.js';
 import { stepsHTML } from '../../../core/steps.js';
 import * as ai from '../../../core/ai.js';
 import { toast } from '../../../core/ui.js';
@@ -268,6 +269,22 @@ document.addEventListener('change', e => {
   else if (el.dataset.meta === 'date') { a.meta.date = el.value; a.meta.term = termOf(el.value, getSchool().breaks); commitAct(a); render(); }
 });
 document.addEventListener('focusout', () => setTimeout(() => { if (pendingRefresh && !editing() && visible()) { pendingRefresh = false; render(); } }, 0));
+
+/* 떠 있는 버튼: 수업 활동지 글 → 새 활동지 1단계. 머리(교과·차시·제목)가 같은 파일(학생용·교사용)은 활동지 하나로, 다른 활동지는 따로 */
+const sameSheet = (f, texts) => { const m = readMeta((texts && texts.get(f)) || ''); return [m.subject, m.lesson, m.title].some(Boolean) ? [m.subject, m.lesson, m.title].join('|') : f.name; };
+function sheetGroups(files, texts) {
+  const g = new Map();
+  for (const f of files) { const k = sameSheet(f, texts); if (!g.has(k)) g.set(k, []); g.get(k).push(f); }
+  return [...g.values()];
+}
+registerInbox('activity', {
+  act: (files, ctx) => { const n = sheetGroups(files, ctx && ctx.texts).length; return n > 1 ? `새 활동지 ${n}개로 넣기(학생용·교사용 나누기)` : '새 활동지로 넣기(학생용·교사용 나누기)'; },
+  async run(files, v, opts) {
+    go('evaluate', 'activity');
+    for (const group of sheetGroups(files, opts && opts.texts)) { startNew(); await putFiles(group); }
+    return '';
+  }
+});
 
 onEnter('evaluate', (tab, section) => {
   if (!box || !section.contains(box)) { box = document.createElement('div'); box.className = 'act-box'; section.append(box); }

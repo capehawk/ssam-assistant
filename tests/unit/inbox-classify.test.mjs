@@ -78,3 +78,27 @@ test('글자가 있는 답안 스캔 PDF(복사기 글자 인식): 이름 칸이
   assert.equal(kind('단원평가 답안.pdf', paper), 'unit-scan');
   assert.equal(kind('국어 2단원.hwp', paper), 'unit-paper');
 });
+
+/* 수업 활동지(지어낸 글): [N차시]·교과서 N쪽·반 번 이름 칸·활동 안내(◉·※ …봅시다) 중 둘 이상, 정답 표 없음 */
+const ACT_SOC = ['1. 이웃과 함께 > [5차시] 서로 돕는 마을 (교과서 30~31쪽)', '이웃을 돕는 방법 알아보기', '사회 3-2', '반     번   이름:', '※ 이웃을 도운 경험을 적어 봅시다.', '(1) 이웃을 도운 경험 | ➡ | '].join('\n');
+const ACT_SCI = ['[과학] 3-2-1-02 물은 어디로 갈까? (12~13쪽)', '물의 여행 그리기', '◉ 물이 여행하는 길을 그려 봅시다.', '번호 | 그림', '1 | '].join('\n');
+const ACT_MATH = ['4. 분수', '[5차시] 진분수와 가분수를 알아볼까요', '교과서 94~95쪽', '수학', '학년       반       번   이름:', '1. □ 안에 알맞은 수를 써넣으세요.', '1/5 | ', '2. 진분수를 모두 찾아 ○표 하세요.', '3/4 | 5/3 | 2/7'].join('\n');
+test('수업 활동지: 차시·교과서 쪽·이름 칸·활동 안내 중 둘 이상 → 활동지, 교사용 쪽이 같이 있어도', () => {
+  assert.deepEqual(KINDS.find(k => k[0] === 'activity'), ['activity', '수업 활동지', '활동지 평가로 넣기']);
+  assert.equal(kind('서로 돕는 마을.hwp', ACT_SOC), 'activity');
+  assert.equal(kind('물의 여행.hwpx', ACT_SCI), 'activity');
+  assert.equal(kind('분수.hwp', ACT_MATH), 'activity');
+  // 학생용 다음 같은 양식의 교사용(「이름: 교사용」·(예시)) — 같은 문제가 두 번 나와도 학생 답안 묶음이 아님
+  const both = ACT_MATH + '\n' + ACT_MATH.replace('이름:', '이름: 교사용').replace('1/5 | ', '1/5 | 1');
+  assert.equal(kind('분수(교사용 포함).hwp', both), 'activity');
+  assert.equal(kind('서로 돕는 마을.hwp', ACT_SOC + '\n(예시)\n' + ACT_SOC.replace('➡ | ', '➡ | 무거운 짐을 들어 드렸어요.')), 'activity');
+});
+test('수업 활동지가 아닌 것은 그대로: 단원평가 정답지·문제지·합본, 이름이 적힌 학생 활동지는 답안 스캔', () => {
+  assert.equal(kind('국어 정답.hwp', fx('unit-key.txt')), 'unit-key');
+  assert.equal(kind('과학 중간평가.hwp', fx('unit-combined.txt')), 'unit-key');
+  assert.equal(kind('국어 2단원.hwp', fx('unit-paper.txt')), 'unit-paper');
+  assert.equal(kind('작년.hwp', fx('classplan-last.txt')), 'class-plan');
+  assert.equal(kind('스캔.pdf', ACT_MATH.replace('이름:', '이름: 김하늘')), 'unit-scan');
+  // 활동 안내 한 가지만 있는 단원평가 문제지는 문제지
+  assert.equal(kind('도덕 5단원.hwp', fx('unit-paper-inline.txt')), 'unit-paper');
+});

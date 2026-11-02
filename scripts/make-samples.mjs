@@ -36,6 +36,11 @@ console.log('samples/단원평가-정답지-예시.hwpx');
 writeFileSync(new URL('단원평가지-예시.hwpx', out), makeHwpx(samplePaperDoc()));
 console.log('samples/단원평가지-예시.hwpx');
 
+// 수업 활동지 예시: 학생용 쪽 + 교사용 쪽(예시 답) 한 파일
+const { sampleSheetDoc } = await import('../web/menus/evaluate/activity/activity-sample.js');
+writeFileSync(new URL('활동지-예시.hwpx', out), makeHwpx(sampleSheetDoc()));
+console.log('samples/활동지-예시.hwpx');
+
 // 단원평가 예시 답안 PDF: 학생 4명 × 1쪽 (지어낸 이름·답, 이름 칸 가리기와 AI 채점 시연용)
 const { SAMPLE_QUESTIONS, SAMPLE_PASSAGE, SAMPLE_ANSWERS } = await import('../web/menus/evaluate/unit/unit-sample.js');
 const { chromium } = await import('playwright');

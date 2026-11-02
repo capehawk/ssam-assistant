@@ -29,6 +29,13 @@ export function splitDoc(text) {
   return { student: src, teacher: '', how: 'none' };
 }
 
+/* 파일 하나가 정답·교사용인지: 이름에 교사용·정답·해설·예시·모범 답안, 첫 줄이 표시, 앞 8줄 안에 「이름: 교사용」 */
+export function teacherFile(name, text) {
+  if (/교사용|정답|해설|예시|모범\s*답안|채점\s*기준/.test(String(name || ''))) return true;
+  const ls = String(text || '').split('\n').filter(l => l.trim()).slice(0, 8);
+  return !!ls.length && (MARK.test(ls[0]) || ls.some(l => NAME_TEACHER.test(l)));
+}
+
 /* ---------- 스캔 쪽 표시 ---------- */
 /* 정답·교사용 쪽은 보통 맨 앞이나 맨 뒤: 앞 2쪽·뒤 2쪽 */
 export function edgeIdx(n) {
@@ -102,7 +109,9 @@ export async function readBundle(files, { say = () => {}, mask = null } = {}) {
     if (r.pages.length && r.pages.every(hasText)) { docTexts.push(r.pages.map(p => p.text).join('\n')); names.push(f.name); SS().files.freePages(r.pages); continue; }
     for (const p of r.pages) { if (hasText(p)) teacherTexts.push(p.text); pages.push(p); }
   }
-  const d = splitDoc(docTexts.join('\n'));
+  // 학생용·교사용을 따로 넣었으면 교사용 파일을 뒤로(이름 차례면 「교사용」이 「학생용」보다 앞이라 거꾸로 나뉨)
+  const order = docTexts.map((text, i) => ({ text, i, t: teacherFile(names[i], text) ? 1 : 0 })).sort((a, b) => a.t - b.t || a.i - b.i);
+  const d = splitDoc(order.map(x => x.text).join('\n'));
   const teacher = [d.teacher, ...teacherTexts].filter(s => String(s).trim()).join('\n').trim();
   const doc = { student: d.student, teacher, how: teacherTexts.length && !d.teacher ? 'marker' : d.how, names };
   let aiRoles = null;

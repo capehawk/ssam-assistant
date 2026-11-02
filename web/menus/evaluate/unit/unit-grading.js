@@ -541,13 +541,17 @@ async function legacyGrade(files) {
   await L.grPages(files);
   return '';
 }
+/* 기준을 확정한 활동지(활동지 탭이 SSAM.activityInbox로 알려 줌) → 받는 곳 「활동지 채점 · …」, 값은 'act:' + id */
+const acts = () => { const A = SS().activityInbox; try { return A ? A.list() : []; } catch (e) { return []; } };
 registerInbox('unit-scan', {
-  act: () => (keyed().length ? '단원평가 답안으로 넣고 채점하기' : '평가 › 평가지 채점에 넣기 (정답지를 넣은 단원평가가 없어요)'),
+  act: () => { const k = keyed().length, a = acts().length; return k && a ? '고른 평가(단원평가·활동지)에 답안으로 넣기' : k ? '단원평가 답안으로 넣고 채점하기' : a ? '활동지 채점에 학생 활동지로 넣기' : '평가 › 평가지 채점에 넣기 (정답지를 넣은 단원평가가 없어요)'; },
   fields: () => {
-    const l = keyed();
-    return l.length ? [{ key: 'test', label: '채점할 단원평가', type: 'select', options: l.map(s => [s.id, testLabel(s)]), value: l[0].id, required: true, ask: l.length > 1 }] : [];
+    const l = keyed(), al = acts();
+    const opts = [...l.map(s => [s.id, testLabel(s)]), ...al.map(([id, label]) => ['act:' + id, '활동지 채점 · ' + label])];
+    return opts.length ? [{ key: 'test', label: al.length ? '채점할 평가' : '채점할 단원평가', type: 'select', options: opts, value: opts[0][0], required: true, ask: opts.length > 1 }] : [];
   },
   async run(files, v) {
+    if (v.test && String(v.test).startsWith('act:') && SS().activityInbox) return SS().activityInbox.put(String(v.test).slice(4), files);
     if (!v.test || !getTest(v.test)) return legacyGrade(files);
     go('evaluate', 'unit');
     openTest(v.test, 2);

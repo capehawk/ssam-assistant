@@ -1,11 +1,13 @@
 /* 떠 있는 버튼: 넣은 파일이 무엇인지 AI 없이 판단 (스펙 2026-10-30-inbox-button 3).
    글에서 근거마다 점수를 더해 가장 높은 종류. 사진·스캔은 이름으로만(학생 이름이 보일 수 있어 AI로 보내지 않음) */
 import { parseKey, parsePaper } from '../menus/evaluate/unit/unit-key.js';
+import { splitDoc } from './bundle.js';
 
 /* [종류, 이름, 기본 할 일] — 차례가 곧 실행 차례 */
 export const KINDS = [
   ['unit-key', '단원평가 정답지', '새 단원평가로 넣기'],
   ['unit-paper', '단원평가 문제지', '단원평가 평가지로 넣기'],
+  ['activity', '수업 활동지', '활동지 평가로 넣기'],
   ['unit-scan', '학생 답안 스캔', '채점하기'],
   ['eval-plan', '교과 평가계획', '교과 평어 평가계획으로 넣기'],
   ['class-plan', '작년 학급운영계획', '올해 학급운영계획 만들기'],
@@ -24,6 +26,13 @@ const order = k => KINDS.findIndex(x => x[0] === k);
 
 const EVENT = /(운동회|체육\s*대회|학예회|발표회|축제|현장\s*체험\s*학습|체험\s*학습|수련\s*활동|입학식|졸업식|행사)/;
 const YEAR_PARTS = [/목적/, /방침/, /세부\s*(추진|운영)/, /추진\s*(일정|계획)/, /예산/, /기대\s*효과/];
+/* 수업 활동지 머리(활동지 스펙 6장): [5차시]·3-2-1-02 차시 번호, 교과서·국어책 N~M쪽·(N~M쪽), 반 번 이름 칸, 활동 안내(◉·※ …봅시다) */
+const ACT_SIGNS = [
+  ['차시', /\[\s*\d+\s*(?:[~-]\s*\d+\s*)?차시\s*\]|(?:^|[\s\]])\d-\d-\d{1,2}-\d{2}(?=\s|$)/m],
+  ['교과서 쪽', /(?:교과서|[가-힣]{1,3}책|수익|실험\s*관찰)\s*\d+\s*(?:[~-]\s*\d+\s*)?쪽|\(\s*\d+\s*[~-]\s*\d+\s*쪽\s*\)/],
+  ['이름 칸', /반\s+번\s+이\s*름/],
+  ['활동 안내', /활동\s*[0-9①-⑩]|^\s*[◉※●▶■◆]\s*.*(?:봅시다|보세요|봐요)/m]
+];
 
 /* { name, text, scan } → { kind, why, alts } */
 export function classify({ name = '', text = '', scan = false } = {}) {
@@ -48,9 +57,15 @@ export function classify({ name = '', text = '', scan = false } = {}) {
   // 글자 인식이 된 학생 답안 스캔(복사기 PDF 등): 이름에 답안·스캔, 이름 칸이 채워짐, 같은 문제가 여러 번(반 전체를 한 파일로)
   // — 문제지로 잘못 보면 학생 이름·답이 평가지 글로 저장되고 채점 AI로 감
   if (/답안|스캔|scan/i.test(n)) add('unit-scan', 12, '파일 이름에 「답안」이 있어요.');
-  if (/(이\s*름|성\s*명)\s*[:：]\s*[가-힣]{2,4}(?![가-힣])/.test(t)) add('unit-scan', 12, '이름이 적힌 학생 답안이에요.');
+  // 「이름: 교사용」은 학생 이름이 아님(활동지 교사용 쪽)
+  if (/(이\s*름|성\s*명)\s*[:：]\s*(?!교사용|학생용)[가-힣]{2,4}(?![가-힣])/.test(t)) add('unit-scan', 12, '이름이 적힌 학생 답안이에요.');
   const q1 = parsePaper(t).questions[1];
-  if (q1 && q1.length >= 8 && t.split(q1).length > 2) add('unit-scan', 12, '같은 문제지가 여러 장 들어 있어요(학생 답안 묶음).');
+  // 교사용·(예시)·정답 표시로 나뉘는 글이면 같은 문제가 두 번 나와도 학생 답안 묶음이 아님(학생용 + 교사용)
+  if (q1 && q1.length >= 8 && t.split(q1).length > 2 && splitDoc(t).how !== 'marker') add('unit-scan', 12, '같은 문제지가 여러 장 들어 있어요(학생 답안 묶음).');
+
+  // 수업 활동지: 머리 표시가 둘 이상이고 정답 표(번호-정답 3줄 이상)가 없을 때. 표시 하나에 3점(문제지 7점을 넘으려면 셋)
+  const top40 = lines.slice(0, 40).join('\n'), signs = ACT_SIGNS.filter(([, re]) => re.test(top40)).map(([w]) => w);
+  if (signs.length >= 2 && !(key && key.items.length >= 3)) add('activity', 3 * signs.length, `수업 활동지예요(${signs.join('·')}).`);
 
   if (/성취\s*기준/.test(t) && /평가\s*(요소|기준|방법)/.test(t)) add('eval-plan', 4, '성취기준과 평가 기준이 있어요.');
   if (/평가\s*계획/.test(head)) add('eval-plan', 3, '제목에 「평가 계획」이 있어요.');

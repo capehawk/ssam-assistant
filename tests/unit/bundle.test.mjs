@@ -68,3 +68,14 @@ test('확인 카드: 나눌 것이 없으면(학생 스캔만) 필요 없음', (
   assert.equal(needsCard({ doc: { teacher: '' }, roles: ['teacher', 'student'] }), true);
   assert.deepEqual(ROLE_NAME, { teacher: '정답·교사용', blank: '빈 활동지', student: '학생' });
 });
+
+test('teacherFile: 따로 넣은 교사용 파일 알아보기(이름·첫 줄 표시·앞쪽 「이름: 교사용」), 학생용·합본은 아님', async () => {
+  const { teacherFile } = await import('../../web/core/bundle.js');
+  assert.equal(teacherFile('분수(교사용).hwp', '4. 분수'), true);
+  assert.equal(teacherFile('국어 정답.hwp', ''), true);
+  assert.equal(teacherFile('a.txt', '[정답]\n1. ③'), true);
+  assert.equal(teacherFile('a.txt', '4. 분수\n[5차시] 진분수\n교과서 94~95쪽\n학년 반 번 이름: 교사용\n1. □'), true);
+  assert.equal(teacherFile('분수(학생용).hwp', '4. 분수\n[5차시] 진분수\n학년 반 번 이름:\n1. □'), false);
+  const long = ['4. 분수', ...Array.from({ length: 10 }, (_, i) => `${i + 1}. 문제`), '이름: 교사용', '1. 답'].join('\n');
+  assert.equal(teacherFile('분수.hwp', long), false);
+});

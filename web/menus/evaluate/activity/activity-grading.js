@@ -8,9 +8,10 @@ import { reviewJSON, opinionHTML, REVIEW_FAIL } from '../../../core/ai-review.js
 import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle, bundleMsg } from '../../../core/bundle.js';
 import { readNos, openNoCheck, openNoWait, rosterAllowed, byNoOrder } from '../../../core/student-no.js';
 import { numbersFor } from '../unit/unit-model.js';
-import { getActivity, getSet, saveSet } from './activity-model.js';
+import { go } from '../../../core/shell.js';
+import { getActivity, getSet, saveSet, listActivities } from './activity-model.js';
 import { gradePrompt, validGrade, normGrade, judgeCell, reviewPrompt, normReview, MARK, LEVEL } from './activity-ai.js';
-import { A, registerStep, curAct, commitAct, refresh, render, goStep, esc, SS, getBox, visible } from './activity.js';
+import { A, registerStep, curAct, commitAct, refresh, render, goStep, esc, SS, getBox, visible, openActivity } from './activity.js';
 
 /* 세션 상태: 올린 학생 쪽은 한 활동지에만 붙음. idx[i] = i번째 학생의 쪽 번호들. 채점은 한 번에 한 활동지만 */
 const G = { id: null, pages: [], idx: [], run: null, running: new Map(), nosOk: false };
@@ -62,6 +63,23 @@ async function putScans(files) {
   loadPages(id, stu);
 }
 onBundle('act3', files => { if (A.view === 'act' && A.step === 3) putScans(files); });
+/* 떠 있는 버튼의 학생 답안 스캔 → 「활동지 채점」(단원평가 받는 곳이 SSAM.activityInbox로 부름): 기준을 확정하고 아직 확정(마침)하지 않은 활동지,
+   늦은 것 먼저. 예시 활동지는 그것만 있을 때만. 고르면 그 활동지 3단계에 스캔을 넣음(이름 칸·학생 나눔을 보고 채점) */
+function gradable() {
+  const l = listActivities().filter(s => !s.done).map(s => getActivity(s.id)).filter(a => a && a.confirmed && a.items.length), real = l.filter(a => !a.meta.sample);
+  return real.length ? real : l;
+}
+SS().activityInbox = {
+  list: () => gradable().map(a => [a.id, [a.meta.title || '활동지', a.meta.subject, a.meta.date, a.students.some(s => s.status === 'done') ? `${a.students.filter(s => s.status === 'done').length}명 채점함` : '채점 전'].filter(Boolean).join(' · ')]),
+  async put(id, files) {
+    if (!getActivity(id)) return '그 활동지를 찾지 못했어요.';
+    if (busy(id)) return '그 활동지를 채점하는 중이에요. 끝난 뒤에 다시 넣어 주세요.';
+    go('evaluate', 'activity');
+    openActivity(id, 3);
+    await putScans(files);
+    return '';
+  }
+};
 
 function openMask(a) {
   const shots = a.students.map((s, i) => ({ s, pg: pagesFor(a, i) })).filter(x => !x.s.skip && x.pg.length).map(x => ({ url: G.pages[x.pg[0]].url, label: `${x.s.no}번 첫 쪽` }));
