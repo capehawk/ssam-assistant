@@ -11,6 +11,7 @@ import { toast, copyText, saveFile } from '../../core/ui.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { openPurchase } from '../purchase/purchase.js';
 import { stepsHTML } from '../../core/steps.js';
+import { rvBoxHTML, runPlanReview, onRvClick, markDone, dropOpen, hasOpen, clearState } from './plan-review.js';
 import { listEvents as listCalendar, setEvents, removeEvents, dayIssues, suggestDates, weekday, isDate } from '../../core/calendar.js';
 import { summarize, formText } from '../../core/survey.js';
 import { qrPng } from '../../core/qr.js';
@@ -286,15 +287,15 @@ function step3() {
         <td><button class="icon-btn" type="button" data-roledel="${i}" aria-label="이 줄 빼기">×</button></td></tr>`).join('')}</tbody></table></div>
       <div class="row"><button class="btn text" type="button" data-e="roleAdd">+ 줄 더하기</button></div>`;
   } else {
-    body = `<textarea class="field ev-doc" data-docf="${curDoc}" rows="14" aria-label="${DOCS.find(x => x[0] === curDoc)[1]}">${esc(d[curDoc])}</textarea>`;
+    body = `<textarea class="field ev-doc${hasOpen(ev, curDoc) ? ' rv-mark' : ''}" data-docf="${curDoc}" rows="14" aria-label="${DOCS.find(x => x[0] === curDoc)[1]}">${esc(d[curDoc])}</textarea>`;
     if (curDoc === 'safety') body += `<label class="yp-f"><span class="lab">우천 시 대체 일정${ev.outdoor ? ' <b class="req" aria-hidden="true">*</b> <span class="muted">(야외 행사는 있어야 확정할 수 있어요)</span>' : ''}</span>
-      <textarea class="field" id="evRain" rows="3" placeholder="예) 비가 오면 강당에서 학년별로 나누어 운영">${esc(d.rain)}</textarea></label>`;
+      <textarea class="field${hasOpen(ev, 'rain') ? ' rv-mark' : ''}" id="evRain" rows="3" placeholder="예) 비가 오면 강당에서 학년별로 나누어 운영">${esc(d.rain)}</textarea></label>`;
     if (curDoc === 'letter') {
       const miss = letterMissing(d.letter);
       body += `<div id="evLetterBox">${letterBoxHTML(miss)}</div><div class="ev-qr" id="evLetterQr">${letterQrHTML()}</div>`;
     }
   }
-  return `${refNotesHTML(ev.refNotes.docs, ev.refNotes.stale)}<div class="yp-card">${tabs}${body}
+  return `${refNotesHTML(ev.refNotes.docs, ev.refNotes.stale)}<div id="evRvBox">${rvBox()}</div><div class="yp-card">${tabs}${body}
       <div class="row yp-out"><button class="btn" type="button" data-e="copyDoc">복사</button>${exportButton('data-e="hwpx"')}<span class="grow"></span>
         <button class="btn text" type="button" data-e="docs">다시 만들기 (고친 내용은 사라져요)</button></div></div>
     <div class="yp-card"><h3>품의로 이어 가기</h3><p class="muted">품의 › 새 품의로 넘어가며 행사 정보와 고른 안의 예산 줄을 채워요.</p>
@@ -463,9 +464,36 @@ async function runDocs() {
   try {
     const v = await ai.generateJSON(docsPrompt(ev), { task: 'plan', valid: x => x && !Array.isArray(x) && typeof x === 'object' && (typeof x.letter === 'string' || typeof x.plan === 'string') });
     const t = x => (Array.isArray(x) ? x.filter(y => typeof y === 'string').join('\n') : typeof x === 'string' ? x : '');
-    apply(id, e => { e.docs = { plan: t(v.plan), safety: t(v.safety), letter: t(v.letter), rain: t(v.rain), roles: normRoles(v.roles, e.staff.filter(x => x.name.trim())), done: false }; e.refNotes = { ...e.refNotes, docs: normRefNotes(v.refNotes), stale: false }; if (e.status === 'final') e.status = 'draft'; });
+    apply(id, e => { e.docs = { plan: t(v.plan), safety: t(v.safety), letter: t(v.letter), rain: t(v.rain), roles: normRoles(v.roles, e.staff.filter(x => x.name.trim())), done: false }; e.rv = []; e.refNotes = { ...e.refNotes, docs: normRefNotes(v.refNotes), stale: false }; if (e.status === 'final') e.status = 'draft'; });
+    clearState(id);
+    finish(id, 'docs');
+    reviewDocs(id);
+    return;
   } catch (err) { errs[id] = ai.errorMessage(err && err.code, err); }
   finish(id, 'docs');
+}
+/* 검토 AI: 계획서·안전 점검표·가정통신문(·우천 시 대체 일정)을 한 번 봄 */
+const DOC_LABEL = { ...Object.fromEntries(DOCS), rain: '우천 시 대체 일정' };
+function reviewDocs(id) {
+  const e = getEvent(id);
+  if (!e) return;
+  const keys = ['plan', 'safety', 'letter', ...(e.outdoor ? ['rain'] : [])];
+  runPlanReview(id, {
+    title: `${e.name || '행사'} (${kindName(e.kind)}, ${e.date || '날짜 미정'}, ${e.place || '장소 미정'})`,
+    sections: keys.map(k => ({ key: k, label: DOC_LABEL[k], text: e.docs[k] })),
+    guide: '',
+    current: () => { flushSave(); const x = getEvent(id); return x && x.docs; },
+    save: items => apply(id, x => { x.rv = items; }),
+    update: () => updateRv(id)
+  });
+}
+const rvBox = () => rvBoxHTML(ev, { text: k => ev.docs[k] || '', label: k => DOC_LABEL[k] || k });
+function updateRv(id) {
+  if (!visible() || ev.id !== id || ev.step !== 3) return;
+  const b = box.querySelector('#evRvBox');
+  if (b) b.innerHTML = rvBox();
+  box.querySelectorAll('textarea[data-docf]').forEach(t => t.classList.toggle('rv-mark', hasOpen(ev, t.dataset.docf)));
+  const r = box.querySelector('#evRain'); if (r) r.classList.toggle('rv-mark', hasOpen(ev, 'rain'));
 }
 
 async function downloadDoc() {
@@ -566,8 +594,10 @@ document.addEventListener('input', e => {
   else if (el.dataset.tt != null) { const t = picked() && picked().timetable[+el.dataset.tt]; if (t) t[el.dataset.f] = el.value; }
   else if (el.dataset.docf) {
     ev.docs[el.dataset.docf] = el.value;
+    // 손으로 고친 문서의 검토 의견은 사라짐
+    if (hasOpen(ev, el.dataset.docf)) { ev.rv = dropOpen(ev.rv, el.dataset.docf); updateRv(ev.id); }
     if (el.dataset.docf === 'letter') { ev.docs.done = false; const b = box.querySelector('#evLetterBox'); if (b) b.innerHTML = letterBoxHTML(letterMissing(el.value)); }
-  } else if (el.id === 'evRain') ev.docs.rain = el.value;
+  } else if (el.id === 'evRain') { ev.docs.rain = el.value; if (hasOpen(ev, 'rain')) { ev.rv = dropOpen(ev.rv, 'rain'); updateRv(ev.id); } }
   else if (el.id === 'evForm') { survey().formUrl = el.value; const q = box.querySelector('#evQr'); if (q) q.innerHTML = qrHTML(); }
   else if (el.id === 'evReport') survey().report = el.value;
   else if (el.id === 'evNext') survey().nextMemo = el.value;
@@ -625,6 +655,15 @@ document.addEventListener('change', e => {
 document.addEventListener('click', e => {
   if (!box || !box.contains(e.target) || curTab !== 'event') return;
   flushSave();
+  if (onRvClick(e, box, {
+    use: sec => {
+      const r = (ev.rv || []).find(x => x.section === sec && !x.done);
+      if (!r) return;
+      ev.docs = { ...ev.docs, [sec]: r.fix, ...(sec === 'letter' ? { done: false } : {}) }; ev.rv = markDone(ev.rv, sec, 'review'); unconfirm();
+      persist(); renderMain();
+    },
+    keep: sec => { ev.rv = markDone(ev.rv, sec, 'main'); persist(); renderMain(); }
+  })) return;
   const item = e.target.closest('[data-ev]');
   if (item) { const x = getEvent(item.dataset.ev); if (x) { ev = x; saved = true; setCurrentEvent(x.id); render(); } return; }
   const st = e.target.closest('[data-step]');

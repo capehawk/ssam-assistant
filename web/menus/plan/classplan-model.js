@@ -3,6 +3,7 @@
 import { stripNames } from '../../core/privacy.js';
 import { get, set } from '../../core/store.js';
 import { getSchool } from '../../core/settings.js';
+import { normRv } from './plan-rv.js';
 
 const LIST_KEY = 'classplans', CUR_KEY = 'classplan:current';
 export const MAX_SRC = 60000, MAX_BODY = 1500, MAX_EVAL = 20000;
@@ -117,7 +118,7 @@ export function newPlan() {
     id: 'cp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     year: getSchool().year, grade: int(info.grade, 1, 6), room: int(info.room, 1, 30), boys: null, girls: null, motto: '',
     sources: { lastPlan: '', guide: '' }, sourceNames: { lastPlan: [], guide: [] },
-    outline: [], attach: [], guide: null, draft: null, monthly: [], evalRows: [],
+    outline: [], attach: [], guide: null, draft: null, rv: [], monthly: [], evalRows: [],
     status: 'draft', step: 1, maxStep: 1, updatedAt: 0
   };
 }
@@ -151,6 +152,7 @@ function normPlan(v) {
   p.attach = normAttach(v.attach);
   p.guide = v.guide == null ? null : normGuide(v.guide, p.outline);
   p.draft = isObj(v.draft) ? Object.fromEntries(Object.entries(v.draft).filter(([k, t]) => typeof t === 'string' && p.outline.some(x => x.id === k))) : null;
+  p.rv = p.draft ? normRv(v.rv).filter(x => p.outline.some(o => o.id === x.section)) : [];
   p.monthly = normMonthly(v.monthly);
   p.evalRows = normEvalRows(v.evalRows);
   p.status = v.status === 'final' ? 'final' : 'draft';
