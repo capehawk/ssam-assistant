@@ -33,3 +33,5 @@
 .ac-good{text-align:left !important;min-width:160px}
 .el-box{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
 .el-sheet{display:flex;flex-direction:column;gap:8px}
+.gr-refs{display:flex;flex-direction:column;gap:4px;margin:6px 0;padding:8px 10px;border:1px solid var(--line,#e4e6eb);border-radius:8px}
+.gr-refs-none{margin:6px 0;font-size:12.5px}

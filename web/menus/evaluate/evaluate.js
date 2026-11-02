@@ -3147,7 +3147,8 @@ const GR = {
   // byNo·noBox: 적힌 번호로 학생 맞추기(걷은 순서와 상관없이, core/student-no.js) · 번호 칸 { x, y, w, h }
   // mix: 평어 내용 — 'plan' 평가계획 위주 · 'mix' 섞어서(기본) · 'sheet' 평가지 위주
   phase: 'setup',     // setup | grading | ranking | writing | done
-  queue: [], running: new Map(), err: '', loading: '', view: 'no', calibrated: false, history: [], showRes: false
+  queue: [], running: new Map(), err: '', loading: '', view: 'no', calibrated: false, history: [], showRes: false,
+  refs: [], refsAll: false  // refs: 평어에 참고할 단원평가·활동지 ['activity:<id>' | 'unit:<id>'] (활동지 스펙 4.8)
 };
 const LV_KEYS = ['top', 'high', 'mid', 'low'];
 // 나이스에 차례로 붙여넣기 상태 (아래 「전체복사」 부분에서 씀)
@@ -3161,7 +3162,7 @@ const GRStore = {
   body() {
     return {
       kind: 'gr', title: (grUnit() && (grUnit().elem || grUnit().unit)) || GR.title, unitId: GR.unitId, criteria: GR.criteria, critDocs: GR.critDocs.map(d => ({ name: d.name, text: d.text })), createdAt: GR.createdAt || Date.now(),
-      settings: { ...GR.settings, mask: GR.settings.mask.map(r => ({ ...r })) }, calibrated: GR.calibrated,
+      settings: { ...GR.settings, mask: GR.settings.mask.map(r => ({ ...r })) }, calibrated: GR.calibrated, refs: GR.refs.slice(),
       // 채점에서 뺀 학생도 번호 자리를 지키도록 저장 (나이스에 차례로 붙여넣을 때 칸이 밀리지 않게)
       students: GR.students.map(s => ({
         id: s.id, no: s.no, n: s.pages.length, skip: s.skip ? 1 : 0, score: s.score ?? null, level: s.level || null, manual: s.manual ? 1 : 0,
@@ -3572,6 +3573,37 @@ const GR_MIX = {
     rule: '그 학생의 근거와 잘한 점이 구체적으로 드러나게 씁니다.'
   }
 };
+/* 평어에 참고할 단원평가·활동지(체크한 것만): 그 학생 한 줄 */
+const grRefList = () => GR.refs.map(k => ({ kind: k.slice(0, k.indexOf(':')), id: k.slice(k.indexOf(':') + 1) }));
+function grRefLine(no) {
+  const R = window.SSAM && window.SSAM.evalRefs;
+  const L = R && GR.refs.length ? R.lines(grRefList(), no) : '';
+  return L ? `\n  참고: ${L}` : '';
+}
+/* 평가요소에 이어 둔 단원평가·활동지 목록(최근 5개 → 더보기), 기본 체크 안 함 */
+function grRefsHTML(u) {
+  const R = window.SSAM && window.SSAM.evalRefs;
+  if (!u || !R) return '';
+  const list = R.linked({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') });
+  if (!list.length) return '<p class="muted gr-refs-none">이 평가요소에 이어 둔 단원평가·활동지가 없어요. 단원평가·활동지에서 「교과 평어에 참고하기」를 켜면 여기에 나와요.</p>';
+  const show = GR.refsAll ? list : list.slice(0, 5);
+  return `<div class="gr-refs" id="grRefs"><span class="lab">참고할 단원평가·활동지 <span class="muted">(체크한 것만 평어를 쓸 때 참고해요)</span></span>
+    ${show.map(r => { const k = `${r.kind}:${r.id}`; return `<label class="switch"><input type="checkbox" data-gr-ref="${esc(k)}"${GR.refs.includes(k) ? ' checked' : ''}>${r.kind === 'unit' ? '단원평가' : '활동지'} 「${esc(r.title)}」 <span class="muted">${esc(r.date)}</span></label>`; }).join('')}
+    ${list.length > show.length ? `<button class="btn text tiny" type="button" data-gr-ref-more>더보기 (${list.length - show.length}개)</button>` : ''}</div>`;
+}
+/* 한꺼번에 넣기(gr-bundle.js가 나눠 줌): 정답·기준 글 → 정답표 문서, 정답·교사용·빈 쪽 → 정답표 그림, 학생 쪽 → 평가지 */
+function grPutBundle(b) {
+  if (['grading', 'ranking', 'writing'].includes(GR.phase)) { toast('채점하는 중에는 넣을 수 없어요. 끝나거나 멈춘 뒤에 넣어 주세요.', 5000); return; }
+  const crit = b.pages.filter((p, i) => b.roles[i] !== 'student'), stu = b.pages.filter((p, i) => b.roles[i] === 'student');
+  const text = String(b.doc.teacher || b.doc.student || '').trim();
+  if (stu.length && (GR.id || GR.students.some(s => s.status === 'done' || s.text))) grNew(false);
+  if (text) GR.critDocs.push({ name: '한꺼번에 넣은 정답·기준', text: text.slice(0, CRIT_DOC_MAX) });
+  const room = Math.max(0, CRIT_IMG_MAX - GR.critImgs.length);
+  if (crit.length) GR.critImgs.push(...crit.slice(0, room));
+  if (stu.length) { GR.pages.push(...stu); grBuildStudents(); }
+  GR._critCache = null; renderGR(); GRStore.save();
+  toast([text && '정답·기준 문서', crit.length && `정답표 그림 ${Math.min(room, crit.length)}쪽`, stu.length && `학생 ${GR.students.length}명`].filter(Boolean).join(' · ') + '을 넣었어요', 5000);
+}
 function grWritePrompt(lv, group, avoid) {
   const [lo, hi] = grLength();
   const mode = GR_MIX[GR.settings.mix] ? GR.settings.mix : 'mix';
@@ -3597,7 +3629,8 @@ function grWritePrompt(lv, group, avoid) {
     `6. 학생마다 시작하는 말, 핵심 표현, 서술어를 다르게 써서 서로 겹치지 않게 합니다.`,
     `7. ${pronounRule()}`,
     ``, `[학생]`,
-    ...group.map(who),
+    ...(GR.refs.length ? ['', '[참고: 단원평가·활동지] 학생 줄 아래 「참고:」는 같은 평가 영역의 다른 평가 결과입니다. 그 학생다운 평어를 쓰는 데만 참고하고, 점수·평가 이름은 쓰지 않습니다.', ''] : []),
+    ...group.map(s => who(s) + grRefLine(s.no)),
     avoid.length ? `\n[이미 쓴 평어] 아래와 표현이 겹치지 않게 씁니다.\n${avoid.slice(-30).map(t => '- ' + t).join('\n')}` : '',
     ``, `[출력] JSON 배열 하나만 출력합니다. 예: [{"no": ${group[0].no}, "text": "평어"}]`
   ].filter(x => x !== '').join('\n');
@@ -3927,12 +3960,14 @@ function renderGRSetup() {
   box.innerHTML = `<div class="ai-row" data-ai-row="grade"></div><div class="ai-row" data-ai-row="writing"></div>
     <div class="gr-step">
       <div class="gr-h"><span class="sn">1</span><b>무엇을 채점할까요</b></div>
+      ${!locked && window.SSAM.bundleBoxHTML ? window.SSAM.bundleBoxHTML('gr', '정답·채점 기준 문서와 학생 평가지 스캔을 한꺼번에 넣으면 알아서 나눠요') : ''}
       <label class="lab" for="grUnit">평가요소</label>
       <select class="field" id="grUnit" ${locked ? 'disabled' : ''}>
         <option value="">${S.plan ? '직접 입력' : '직접 입력 (교과 평어 탭에서 평가계획을 넣으면 고를 수 있어요)'}</option>
         ${grUnitOptions()}
       </select>
       ${u ? `<p class="muted gr-crit">${esc(u.subject)} · ${esc(u.unit || '')}<br>상: ${esc(u.crit.high || '-')}</p>` : `<input class="field" id="grTitle" placeholder="수행평가 제목 (예: 3학년 수학 곱셈 서술형)" value="${esc(GR.title)}" ${locked ? 'disabled' : ''} autocomplete="off">`}
+      ${grRefsHTML(u)}
       <div class="crit-box" id="grCritBox">
       <label class="lab" for="grCrit">채점 기준·정답 <span class="muted">(있으면 넣기)</span></label>
       <textarea class="field" id="grCrit" rows="3" placeholder="예) 1번 정답 456, 풀이식이 있으면 만점 / 2번 까닭을 두 가지 이상 쓰면 상" ${locked ? 'disabled' : ''}>${esc(GR.criteria)}</textarea>
@@ -4240,7 +4275,7 @@ async function grOpenHistory(id) {
   const b = await GRStore.get(id);
   if (!b) { toast('채점 기록을 불러오지 못했어요'); return; }
   grNew(false);
-  GR.id = id; GR.title = b.title || ''; GR.unitId = b.unitId || ''; GR.criteria = b.criteria || ''; GR.critDocs = (b.critDocs || []).map(d => ({ name: String(d.name || ''), text: String(d.text || '') })); GR.createdAt = b.createdAt || 0; GR.calibrated = !!b.calibrated;
+  GR.id = id; GR.title = b.title || ''; GR.unitId = b.unitId || ''; GR.refs = Array.isArray(b.refs) ? b.refs.filter(x => typeof x === 'string') : []; GR.criteria = b.criteria || ''; GR.critDocs = (b.critDocs || []).map(d => ({ name: String(d.name || ''), text: String(d.text || '') })); GR.createdAt = b.createdAt || 0; GR.calibrated = !!b.calibrated;
   if (b.settings) { const { except, ...rest } = b.settings; Object.assign(GR.settings, rest); GR.settings.ratio = { ...GR.settings.ratio, ...(b.settings.ratio || {}) }; }
   let fixed = 0;
   GR.students = (b.students || []).map(s => {
@@ -4271,7 +4306,7 @@ document.addEventListener('click', async e => {
     const a = b.dataset.gr;
     if (a === 'start') grStart();
     else if (a === 'stop') { grStop(); toast('멈췄어요. 채점한 결과는 그대로 있어요.'); }
-    else if (a === 'new') { grNew(false); GR.title = ''; GR.criteria = ''; GR.critImgs = []; GR.critDocs = []; renderGR(); }
+    else if (a === 'new') { grNew(false); GR.title = ''; GR.criteria = ''; GR.critImgs = []; GR.critDocs = []; GR.refs = []; GR.refsAll = false; renderGR(); }
     else if (a === 'mask') openGRMask();
     else if (a === 'noBox') openGRNoBox();
     else if (a === 'reverse') { GR.pages.reverse(); grBuildStudents(); renderGR(); toast('쪽 순서를 거꾸로 바꿨어요'); }
@@ -4332,6 +4367,17 @@ document.addEventListener('click', async e => {
   }
   const dz = t.closest('#grDrop');
   if (dz && dz.getAttribute('aria-disabled') !== 'true') { const fs = await grPickFiles('.pdf,image/*', true); grAddPages(fs); }
+});
+/* 참고할 단원평가·활동지 체크·더보기 */
+document.addEventListener('change', e => {
+  if (S.mode !== 'gr' || !evalShown() || !e.target.dataset || !e.target.dataset.grRef) return;
+  const k = e.target.dataset.grRef;
+  GR.refs = e.target.checked ? [...new Set([...GR.refs, k])] : GR.refs.filter(x => x !== k);
+  GRStore.save();
+});
+document.addEventListener('click', e => {
+  if (S.mode !== 'gr' || !evalShown() || !e.target.closest || !e.target.closest('[data-gr-ref-more]')) return;
+  GR.refsAll = true; renderGRSetup();
 });
 document.addEventListener('keydown', e => {
   if (S.mode !== 'gr' || !evalShown()) return;
@@ -5563,6 +5609,8 @@ window.SSAM = {
     grBusy: () => GR.running.size > 0 || ['grading', 'ranking', 'writing'].includes(GR.phase)
   },
   setMode, getMode: () => S.mode,
+  // 평가지 채점 한꺼번에 넣기(gr-bundle.js)
+  gr: { putBundle: b => grPutBundle(b), refresh: () => { if (S.mode === 'gr') renderGRSetup(); }, mask: () => (GR.settings.maskOn ? GR.settings.mask : []) },
   // 평가 영역 이음(활동지·단원평가 → 평가지 채점): 지금 평가계획의 영역 [{ id, subject, label }]
   planUnits: () => allUnits().map(u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') })),
   onModeChange: fn => { modeHooks.push(fn); },
