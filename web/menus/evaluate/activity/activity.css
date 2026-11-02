@@ -29,3 +29,7 @@
 .chip.ac-stale{background:#fff4c2}
 .ac-marks button{min-width:56px}
 .ac-cell-sheet{display:flex;flex-direction:column;gap:8px}
+.ac-stats{margin:4px 0 0;padding-left:18px;font-size:13.5px;display:flex;flex-direction:column;gap:2px}
+.ac-good{text-align:left !important;min-width:160px}
+.el-box{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.el-sheet{display:flex;flex-direction:column;gap:8px}
