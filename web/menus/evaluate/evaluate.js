@@ -3292,7 +3292,10 @@ async function readPdfPages(file, onPage) {
       const vp = p.getViewport({ scale: Math.min(3, 1800 / Math.max(v0.width, v0.height)) });
       const [c, g] = whiteCanvas(vp.width, vp.height);
       await p.render({ canvasContext: g, viewport: vp }).promise;
-      out.push(await canvasToPage(c, `${file.name} ${i}쪽`));
+      const page = await canvasToPage(c, `${file.name} ${i}쪽`);
+      // 글자층(인쇄본 PDF 쪽): 한꺼번에 넣기에서 정답·교사용 쪽을 가리는 데 씀
+      try { const tc = await p.getTextContent(); page.text = tc.items.map(it => it.str || '').join(' ').replace(/\s+/g, ' ').trim().slice(0, 2000); } catch (e) { page.text = ''; }
+      out.push(page);
       p.cleanup();
       onPage && onPage(i, doc.numPages);
     }
