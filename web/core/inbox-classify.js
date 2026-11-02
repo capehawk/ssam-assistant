@@ -13,6 +13,7 @@ export const KINDS = [
   ['class-plan', '작년 학급운영계획', '올해 학급운영계획 만들기'],
   ['event-plan', '작년 행사 계획', '행사계획 만들기'],
   ['year-plan', '작년 업무 계획', '연간계획 만들기'],
+  ['notice', '연수·행사 안내', '쪽지로 안내하기'],
   ['guide', '올해 지침·공문', '계획에 지침으로 넣기'],
   ['jindo', '진도표', '학급 진도표에 넣기'],
   ['timetable', '기초시간표', '학급 시간표에 넣기'],
@@ -26,6 +27,11 @@ const order = k => KINDS.findIndex(x => x[0] === k);
 
 const EVENT = /(운동회|체육\s*대회|학예회|발표회|축제|현장\s*체험\s*학습|체험\s*학습|수련\s*활동|입학식|졸업식|행사)/;
 const YEAR_PARTS = [/목적/, /방침/, /세부\s*(추진|운영)/, /추진\s*(일정|계획)/, /예산/, /기대\s*효과/];
+/* 연수·회의·행사 안내(쪽지, 스펙 2026-11-02 5장): 머리에 안내·연수 같은 말이 있고 일시·장소·대상·신청·참석 안내가 둘 이상.
+   지침, 행사 계획서(행사 이름 + 「계획」, 안내·신청 말 없음)는 빼고 */
+const NOTICE_HEAD = /(안\s*내|알\s*림|참\s*가|신\s*청|모\s*집|개\s*최|연\s*수|협\s*의\s*회|설\s*명\s*회|회\s*의)/;
+const NOTICE_SIGNS = [/(일\s*시|일\s*자|기\s*간)\s*[:：]/, /장\s*소\s*[:：]/, /대\s*상\s*[:：]/,
+  /(신\s*청|접\s*수|회\s*신|제\s*출)\s*(기\s*한|기\s*간|방\s*법)?\s*[:：]|까지\s*(신청|회신|제출|접수)/, /참\s*석|참\s*가\s*(자|대상|신청)/];
 /* 수업 활동지 머리(활동지 스펙 6장): [5차시]·3-2-1-02 차시 번호, 교과서·국어책 N~M쪽·(N~M쪽), 반 번 이름 칸, 활동 안내(◉·※ …봅시다) */
 const ACT_SIGNS = [
   ['차시', /\[\s*\d+\s*(?:[~-]\s*\d+\s*)?차시\s*\]|(?:^|[\s\]])\d-\d-\d{1,2}-\d{2}(?=\s|$)/m],
@@ -82,6 +88,10 @@ export function classify({ name = '', text = '', scan = false } = {}) {
   if (/(운영|추진|연간|사업)\s*계획/.test(head)) add('year-plan', 4, '제목에 「운영 계획」이 있어요.');
   if (YEAR_PARTS.filter(re => re.test(t)).length >= 2) add('year-plan', 3, '목적·방침·세부 추진 계획이 있어요.');
 
+  // 안내 하나에 2점(지침 공문 9점보다 안내 항목 둘이면 10점)
+  const nSigns = NOTICE_SIGNS.filter(re => re.test(lines.slice(0, 60).join('\n'))).length;
+  const eventPlan = EVENT.test(head) && /계획/.test(head) && !/(안\s*내|참\s*가|신\s*청|모\s*집)/.test(head);
+  if (nSigns >= 2 && NOTICE_HEAD.test(head) && !/지\s*침/.test(head) && !eventPlan) add('notice', 6 + 2 * nSigns, `안내 공문·계획이에요(일시·장소·대상·신청 중 ${nSigns}개). 선생님들께 쪽지로 안내해요.`);
   if (/(지침|공문|시행|안내|협조|알림)/.test(head)) add('guide', 3, '제목에 지침·안내가 있어요.');
   if ([/수신/, /발신/, /경유/, /교육(지원)?청/].filter(re => re.test(head)).length >= 2) add('guide', 4, '공문(수신·발신)이에요.');
   if (/지침|공문/.test(n)) add('guide', 2, '파일 이름에 「지침」이 있어요.');

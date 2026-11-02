@@ -41,6 +41,11 @@ const { sampleSheetDoc } = await import('../web/menus/evaluate/activity/activity
 writeFileSync(new URL('활동지-예시.hwpx', out), makeHwpx(sampleSheetDoc()));
 console.log('samples/활동지-예시.hwpx');
 
+// 연수 안내 공문 예시: 떠 있는 버튼 → 기타 › 쪽지 작성
+const { sampleNoticeDoc } = await import('../web/menus/etc/message-sample.js');
+writeFileSync(new URL('연수안내-공문-예시.hwpx', out), makeHwpx(sampleNoticeDoc()));
+console.log('samples/연수안내-공문-예시.hwpx');
+
 // 단원평가 예시 답안 PDF: 학생 4명 × 1쪽 (지어낸 이름·답, 이름 칸 가리기와 AI 채점 시연용)
 const { SAMPLE_QUESTIONS, SAMPLE_PASSAGE, SAMPLE_ANSWERS } = await import('../web/menus/evaluate/unit/unit-sample.js');
 const { chromium } = await import('playwright');
