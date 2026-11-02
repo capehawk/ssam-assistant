@@ -100,7 +100,10 @@ export function normWeekly(v) {
     // 학사일정 칸: null = 그 주 학사일정을 자동으로, 글('' 포함) = 고쳐 쓴 것
     notes[d] = Object.fromEntries(NOTE_KEYS.map(k => [k, k === 'events' ? (typeof n.events === 'string' ? n.events : null) : str(n[k])]));
   }
-  return { title: str(w.title), cells, notes };
+  // 검토 AI 의견: [{ key: 요일 '0'~'4', field, problem, fix, done? }]
+  const rv = (Array.isArray(w.rv) ? w.rv : []).filter(x => isObj(x) && /^[0-4]$/.test(String(x.key)) && ['prep', 'safety', 'homework', 'notice'].includes(x.field) && str(x.problem) && typeof x.fix === 'string')
+    .map(x => ({ key: String(x.key), field: x.field, problem: str(x.problem).slice(0, 120), fix: x.fix.slice(0, 600), ...(x.done === 'review' || x.done === 'main' ? { done: x.done } : {}) }));
+  return { title: str(w.title), cells, notes, rv };
 }
 export const getWeekly = monday => normWeekly(get('class:weekly:' + monday, null));
 /* 한 번만: 지난 버전은 손대지 않은 학사일정 칸을 ''로 저장했음 → 「자동」(null)으로 */

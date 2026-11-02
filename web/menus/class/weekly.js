@@ -2,7 +2,8 @@
    AI 알림은 시작할 때의 주(월요일)에, 비어 있는 칸만 채움 */
 import { onEnter, go } from '../../core/shell.js';
 import * as ai from '../../core/ai.js';
-import { aiRowHTML } from '../../core/ai-roles.js';
+import { aiRowHTML, pick } from '../../core/ai-roles.js';
+import { reviewJSON, notesReviewPrompt, normNotesReview, opinionHTML, reviewBar, REVIEW_FAIL } from '../../core/ai-review.js';
 import { toast, copyText } from '../../core/ui.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { listEvents, addDays } from '../../core/calendar.js';
@@ -19,6 +20,23 @@ const AI_KEYS = ['prep', 'safety', 'homework', 'notice'];
 let box = null, curTab = null, monday = null;
 migrateWeeklyEvents();
 const busy = {}; // 월요일 → AI가 쓰는 중
+const rvState = {}; // 월요일 → 'busy' | 'fail' (검토 AI)
+const NOTE_LABEL = Object.fromEntries(NOTE_ROWS);
+const openRv = w => (w.rv || []).filter(r => !r.done);
+const rvAt = (w, d, k) => openRv(w).find(r => r.key === String(d) && r.field === k);
+function rvBoxHTML(mon) {
+  const w = getWeekly(mon), open = openRv(w), st = rvState[mon];
+  return (st === 'busy' ? '<p class="muted rv-busy"><span class="spin"></span> 검토 AI가 알림을 살펴보고 있어요…</p>' : st === 'fail' ? `<p class="rv-fail" role="status">${REVIEW_FAIL} 쓴 알림은 그대로 쓸 수 있어요.</p>` : '')
+    + reviewBar(open.length, 'data-rv-next')
+    + open.map(r => opinionHTML({ title: `${WD[+r.key]}요일 ${NOTE_LABEL[r.field] || r.field}`, main: w.notes[r.key][r.field], alt: r.fix, why: r.problem, use: `${r.key}-${r.field}`, keep: `${r.key}-${r.field}` })).join('');
+}
+function updateRv(mon) {
+  if (!visible() || monday !== mon) return;
+  const b = box.querySelector('#clsRvBox');
+  if (b) b.innerHTML = rvBoxHTML(mon);
+  const w = getWeekly(mon);
+  box.querySelectorAll('textarea[data-wn]').forEach(t => { const [d, k] = t.dataset.wn.split('-'); t.classList.toggle('rv-mark', !!rvAt(w, d, k)); });
+}
 const visible = () => curTab === 'weekly' && box && box.isConnected && !box.closest('[hidden]');
 
 /* 학사일정 줄: 고쳐 쓴 글이 있으면 그것, 없으면 그 주 학사일정 */
@@ -46,7 +64,7 @@ function render() {
   const rows = Array.from({ length: ctx.tt.periods }, (_, p) => `<tr><th scope="row">${p + 1}교시</th>${days.map((d, i) =>
     `<td><textarea class="field cls-wc" data-wc="${i}-${p + 1}" rows="2" aria-label="${WD[i]}요일 ${p + 1}교시">${esc(weekCell(days, w, i, p + 1))}</textarea></td>`).join('')}</tr>`).join('');
   const nrows = NOTE_ROWS.map(([k, label]) => `<tr><th scope="row">${label}</th>${days.map((d, i) =>
-    `<td><textarea class="field cls-wn" data-wn="${i}-${k}" rows="2" aria-label="${WD[i]}요일 ${label}">${esc(notes[i][k])}</textarea></td>`).join('')}</tr>`).join('');
+    `<td><textarea class="field cls-wn${rvAt(w, i, k) ? ' rv-mark' : ''}" data-wn="${i}-${k}" rows="2" aria-label="${WD[i]}요일 ${label}">${esc(notes[i][k])}</textarea></td>`).join('')}</tr>`).join('');
   const b = busy[monday];
   box.innerHTML = `<div class="m-page cls-page">${head}
     <div class="cls-week-nav">
@@ -60,7 +78,7 @@ function render() {
       <button class="btn" type="button" data-w="print">인쇄</button>
       ${exportButton('data-w="hwpx"', { cls: 'primary' })}
     </div>
-    ${aiRowHTML('notes')}
+    ${aiRowHTML('notes')}<div id="clsRvBox">${rvBoxHTML(monday)}</div>
     <div class="yp-card cls-sheet">
       <input class="field cls-w-title" id="clsWTitle" value="${esc(title)}" aria-label="제목">
       <p class="muted cls-w-range">${fmtDay(days[0].date)} ~ ${fmtDay(days[4].date)}</p>
@@ -90,8 +108,9 @@ async function runAi() {
   const mon = monday;
   if (busy[mon]) return;
   if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
-  busy[mon] = true;
+  busy[mon] = true; delete rvState[mon];
   render();
+  let wrote = [], sent = null;
   try {
     const { days, notes } = sheet(mon);
     const v = await ai.generateJSON(notesPrompt(days, notes), { task: 'notes', valid: x => x && Array.isArray(x.days) });
@@ -106,9 +125,38 @@ async function runAi() {
       for (const [d, k] of filled) { const el = box.querySelector(`textarea[data-wn="${d}-${k}"]`); if (el && document.activeElement !== el) el.value = w.notes[d][k]; }
     }
     toast(filled.length ? `빈 칸 ${filled.length}개를 채웠어요` : '채울 빈 칸이 없었어요');
+    wrote = filled.map(([d, k]) => [d, k, w.notes[d][k]]);
+    sent = days;
   } catch (err) { toast(ai.errorMessage(err && err.code, err), 6000); }
   delete busy[mon];
   if (visible() && monday === mon) { const b = box.querySelector('[data-w="ai"]'); if (b) { b.disabled = false; b.textContent = 'AI로 알림 쓰기'; } }
+  if (wrote.length) await reviewNotes(mon, wrote, sent);
+}
+/* 검토 AI: 이번에 쓴 알림 칸을 한 번에 봄. 고칠 칸만 그 주의 rv에 */
+async function reviewNotes(mon, wrote, days) {
+  if (!pick('notes', 'review')) return;
+  const entries = wrote.map(([d, k, text]) => ({ key: d, field: k, label: `${WD[d]}요일(${md(days[d].date)}) ${NOTE_LABEL[k] || k}`, text }));
+  rvState[mon] = 'busy'; updateRv(mon);
+  const v = await reviewJSON('notes', notesReviewPrompt('weekly', entries), { valid: x => Array.isArray(x) || !!(x && Array.isArray(x.items)) });
+  if (v && v.error) rvState[mon] = 'fail'; else delete rvState[mon];
+  if (v && !v.error) {
+    const sentText = new Map(wrote.map(([d, k, text]) => [`${d}|${k}`, text]));
+    const w = getWeekly(mon);
+    for (const r of normNotesReview(v, [...sentText.keys()])) {
+      // 검토하는 동안 선생님이 고친 칸은 의견을 버림
+      if (w.notes[r.key][r.field] !== sentText.get(`${r.key}|${r.field}`)) continue;
+      w.rv = [...w.rv.filter(x => !(x.key === r.key && x.field === r.field)), { key: r.key, field: r.field, problem: r.problem, fix: r.fix }];
+    }
+    save(mon, w);
+  }
+  updateRv(mon);
+}
+function chooseRv(key, useRv) {
+  const [d, k] = key.split('-'), w = getWeekly(monday), r = rvAt(w, d, k);
+  if (!r) return;
+  if (useRv) { w.notes[d][k] = r.fix; const el = box.querySelector(`textarea[data-wn="${d}-${k}"]`); if (el) el.value = r.fix; }
+  w.rv = w.rv.map(x => (x === r ? { ...x, done: useRv ? 'review' : 'main' } : x));
+  save(monday, w); updateRv(monday);
 }
 
 /* ---------- 내보내기 ---------- */
@@ -139,7 +187,11 @@ function onInput(el) {
   const w = getWeekly(monday);
   if (el.id === 'clsWTitle') w.title = el.value;
   else if (el.dataset.wc) w.cells[el.dataset.wc] = el.value;
-  else if (el.dataset.wn) { const [d, k] = el.dataset.wn.split('-'); w.notes[d][k] = el.value; }
+  else if (el.dataset.wn) {
+    const [d, k] = el.dataset.wn.split('-'); w.notes[d][k] = el.value;
+    // 손으로 고친 칸의 검토 의견은 사라짐
+    if (rvAt(w, d, k)) { w.rv = w.rv.filter(r => r.done || !(r.key === d && r.field === k)); save(monday, w); updateRv(monday); return; }
+  }
   else return;
   save(monday, w);
 }
@@ -155,6 +207,9 @@ document.addEventListener('class:changed', () => { if (visible()) render(); });
 document.addEventListener('input', e => { if (box && box.contains(e.target) && visible()) onInput(e.target); });
 document.addEventListener('click', e => {
   if (!box || !box.contains(e.target) || !visible()) return;
+  const u = e.target.closest('[data-rv-use]'), kp = e.target.closest('[data-rv-keep]'), nx = e.target.closest('[data-rv-next]');
+  if (u || kp) { chooseRv((u || kp).dataset[u ? 'rvUse' : 'rvKeep'], !!u); return; }
+  if (nx) { const op = box.querySelector('#clsRvBox .rv-op'); if (op) { op.scrollIntoView({ block: 'center', behavior: 'smooth' }); const x = op.querySelector('button'); if (x) x.focus({ preventScroll: true }); } return; }
   const b = e.target.closest('[data-w]');
   if (!b) return;
   const a = b.dataset.w;
