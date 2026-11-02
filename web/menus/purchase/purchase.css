@@ -77,3 +77,7 @@
 .pc-attach .lab{width:100%}.pc-chk{display:inline-flex;gap:6px;align-items:center;font-size:14px}
 .pc-attach-add{width:100%;margin:0}.pc-attach-add .field{flex:1;min-width:0}
 .pc-basis{margin:6px 0 0;font-size:12.5px}.pc-resync{margin:4px 0 0}
+.pc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.pc-head-act{margin:0}
+.pc-lib-list{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.pc-lib-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.pc-lib-row .grow{display:flex;flex-direction:column;gap:2px;min-width:0}.pc-lib-row .row{margin:0}

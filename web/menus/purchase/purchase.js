@@ -9,7 +9,7 @@ import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, reasonTail, purchaseDoc, toNumber, findPersonal,
   defaultUnit, quoteNote, withholding, INCOME, meetingItem, budgetHints, ATTACH, basisLine } from './rules.js';
 import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor } from './intake.js';
-import { pushRecent, newId } from './library.js';
+import { pushRecent, newId, listRecent, deleteRecent, listTemplates, saveTemplate, renameTemplate, deleteTemplate, templateForm } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
 import { registerInbox } from '../../core/inbox.js';
 
@@ -44,7 +44,7 @@ function normDraft(d) {
 }
 function load() {
   const v = get(CUR_KEY, null);
-  return { form: normForm(v && v.form), draft: normDraft(v && v.draft) };
+  return { id: v && typeof v.id === 'string' ? v.id : newId(), form: normForm(v && v.form), draft: normDraft(v && v.draft) };
 }
 
 let st = load();
@@ -58,8 +58,8 @@ export const getDraft = () => (st.draft ? { ...st.draft } : null);
 export function setForm(form) { st.form = normForm(form); save(); if (curTab === 'new' && box && box.isConnected) render(); }
 /* 행사계획에서 [품의로 이어 가기] (P-10): 종류 「행사 운영」으로 칸을 채우고 품의 › 새 품의로 감 */
 export function openPurchase(prefill) {
-  st.form = normForm({ ...emptyForm('event'), ...(prefill || {}), type: 'event' });
-  st.draft = null; msg = ''; tried = false;
+  keepRecent();
+  st = { id: newId(), form: normForm({ ...emptyForm('event'), ...(prefill || {}), type: 'event' }), draft: null }; msg = ''; tried = false;
   save();
   go('purchase', 'new');
 }
@@ -123,7 +123,8 @@ function render() {
   if (!box) return;
   const t = typeOf(st.form.type), ex = t.example;
   box.innerHTML = `<div class="m-page pc-page">
-    <div class="m-head"><h2>새 품의</h2><p class="muted">메모를 채우고 [초안 만들기]를 누르면 에듀파인에 붙여넣을 제목·품의 사유·산출 내역을 써요.</p></div>
+    <div class="m-head pc-head"><div><h2>새 품의</h2><p class="muted">메모를 채우고 [초안 만들기]를 누르면 에듀파인에 붙여넣을 제목·품의 사유·산출 내역을 써요.</p></div>
+      <div class="row pc-head-act"><button class="btn" type="button" data-pc="saveTpl">템플릿으로 저장</button><button class="btn text" type="button" data-pc="fresh">새로 쓰기</button></div></div>
     <div class="seg pc-types" role="radiogroup" aria-label="품의 종류">${TYPES.map(x => `<button type="button" role="radio" data-pctype="${x.id}" aria-pressed="${x.id === t.id}" aria-checked="${x.id === t.id}">${x.label}</button>`).join('')}</div>
     <p class="muted pc-hint" id="pcHint">${esc(t.hint)}</p>
     <div class="pc-grid">
@@ -302,6 +303,7 @@ async function makeDraft() {
     });
     st.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: st.form }), edited: false };
     save();
+    keepRecent();
     document.dispatchEvent(new CustomEvent('ssam:purchase-draft', { detail: { form: getForm(), draft: getDraft() } }));
   } catch (e) {
     msg = ai.errorMessage(e && e.code, e);
@@ -369,6 +371,8 @@ document.addEventListener('click', e => {
     if (!st.form.items.length) st.form.items.push(emptyItem());
     save(); renderItems();
   } else if (a === 'draft') makeDraft();
+  else if (a === 'saveTpl') askSaveTemplate();
+  else if (a === 'fresh') { keepRecent(); st = { id: newId(), form: normForm(emptyForm(st.form.type)), draft: null }; msg = ''; tried = false; save(); render(); toast(st.draft ? '' : '새 품의를 시작해요. 쓰던 품의(초안이 있으면)는 최근 작성에 남아요'); }
   else if (a === 'export') downloadDoc();
   else if (a === 'attachAdd') {
     const inp = box.querySelector('#pcAttachMore'), v = inp.value.trim();
@@ -504,9 +508,69 @@ registerInbox('quote', {
   }
 });
 
-function renderOther(tab) {
-  box.innerHTML = `<div class="m-page"><div class="m-head"><h2>${tab === 'templates' ? '저장한 템플릿' : '최근 작성'}</h2><p class="muted">곧 만들어요.</p></div></div>`;
+/* ---------- 저장한 템플릿 · 최근 작성 (스펙 5장) ---------- */
+/* 초안이 있는 품의는 최근 작성에 남김(같은 품의는 그 자리) */
+function keepRecent() { if (st.draft) pushRecent({ id: st.id, at: Date.now(), form: getForm(), draft: getDraft() }); }
+const sumOf = f => won(sumItems((f && f.items) || []));
+const dayOf = t => { const d = new Date(t); return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}.`; };
+function askSaveTemplate() {
+  SS().openSheet(`<h3>템플릿으로 저장</h3><p class="muted" style="margin:0">종류·사업명·목적·대상·장소·예산 과목·품목(수량 포함)·붙임을 저장해요. 불러오면 일시만 비어 있어요.</p>
+    <label class="yp-f"><span class="lab">이름</span><input class="field" id="pcTplName" value="${esc(st.form.project || '')}" autocomplete="off"></label>
+    <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="pcTplOk">저장</button></div>`, sh => {
+    const ok = () => {
+      const name = sh.querySelector('#pcTplName').value.trim();
+      if (findPersonal(name)) { toast('개인정보는 넣지 말아 주세요'); return; }
+      const t = saveTemplate(name, getForm());
+      SS().closeSheet();
+      toast(t ? `「${t.name}」 템플릿을 저장했어요` : '저장 공간이 모자라 저장하지 못했어요', 5000);
+    };
+    sh.querySelector('#pcTplOk').addEventListener('click', ok);
+    sh.querySelector('#pcTplName').addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
+  });
 }
+/* 쓰던 품의가 있으면 먼저 물어보고 바꿈 */
+function swapTo(next) {
+  const doIt = () => { keepRecent(); st = next; msg = ''; tried = false; save(); go('purchase', 'new'); };
+  if (!busyForm() || next.id === st.id) { doIt(); return; }
+  SS().openSheet(`<h3>지금 쓰던 품의를 바꿀까요?</h3><p class="muted" style="margin:0">${st.draft ? '쓰던 품의는 초안이 있어서 「최근 작성」에 남아요.' : '쓰던 품의는 초안이 없어서 남지 않아요. 필요하면 [템플릿으로 저장]을 먼저 눌러 주세요.'}</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="pcSwapOk">바꾸기</button></div>`,
+  sh => sh.querySelector('#pcSwapOk').addEventListener('click', () => { SS().closeSheet(); doIt(); }));
+}
+function renderOther(tab) {
+  const tpl = tab === 'templates';
+  const typeName = f => typeOf(f && f.type).label;
+  const rows = tpl
+    ? listTemplates().map(t => `<li class="pc-lib-row"><div class="grow"><b>${esc(t.name)}</b><span class="muted">${esc(typeName(t.form))} · 품목 ${cleanItems(t.form.items || []).length}개 · ${sumOf(t.form)}원 · 저장 ${dayOf(t.savedAt)}</span></div>
+        <span class="row"><button class="btn primary" type="button" data-tpl-load="${esc(t.id)}">불러오기</button><button class="btn text" type="button" data-tpl-rename="${esc(t.id)}">이름 바꾸기</button><button class="btn text" type="button" data-tpl-del="${esc(t.id)}">지우기</button></span></li>`)
+    : listRecent().map(r => `<li class="pc-lib-row"><div class="grow"><b>${esc((r.draft && r.draft.title) || r.form.project || '제목 없는 품의')}</b><span class="muted">${esc(typeName(r.form))} · ${sumOf(r.form)}원 · ${r.draft ? '초안 있음' : '초안 없음'} · ${dayOf(r.at)}</span></div>
+        <span class="row"><button class="btn primary" type="button" data-recent-open="${esc(r.id)}">열기</button><button class="btn text" type="button" data-recent-del="${esc(r.id)}">지우기</button></span></li>`);
+  box.innerHTML = `<div class="m-page pc-lib"><div class="m-head"><h2>${tpl ? '저장한 템플릿' : '최근 작성'}</h2>
+      <p class="muted">${tpl ? '자주 쓰는 품의를 저장해 두고 불러와요. 불러오면 일시만 고치면 돼요. 새 학년도에도 가져가요.' : '초안을 만든 품의가 최근 20개까지 남아요. 구입처별로 나눈 품의도 여기에 있어요.'}</p></div>
+    ${rows.length ? `<ul class="pc-lib-list">${rows.join('')}</ul>` : `<div class="empty"><h3>아직 없어요</h3><p>${tpl ? '새 품의에서 [템플릿으로 저장]을 누르면 여기에 남아요.' : '새 품의에서 [초안 만들기]를 누르면 여기에 남아요.'}</p></div>`}</div>`;
+}
+document.addEventListener('click', e => {
+  if (!box || !box.contains(e.target) || curTab === 'new') return;
+  const b = e.target.closest('[data-tpl-load],[data-tpl-rename],[data-tpl-del],[data-recent-open],[data-recent-del]');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.tplLoad) { const t = listTemplates().find(x => x.id === d.tplLoad); if (t) swapTo({ id: newId(), form: normForm(templateForm(t)), draft: null }); }
+  else if (d.tplRename) {
+    const t = listTemplates().find(x => x.id === d.tplRename); if (!t) return;
+    SS().openSheet(`<h3>이름 바꾸기</h3><label class="yp-f"><span class="lab">이름</span><input class="field" id="pcTplRename" value="${esc(t.name)}" autocomplete="off"></label>
+      <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="pcTplRenameOk">바꾸기</button></div>`,
+    sh => sh.querySelector('#pcTplRenameOk').addEventListener('click', () => {
+      const v = sh.querySelector('#pcTplRename').value;
+      if (findPersonal(v)) { toast('개인정보는 넣지 말아 주세요'); return; }
+      if (!renameTemplate(t.id, v)) { toast('이름을 넣어 주세요'); return; }
+      SS().closeSheet(); renderOther(curTab);
+    }));
+  } else if (d.tplDel) {
+    const t = listTemplates().find(x => x.id === d.tplDel); if (!t) return;
+    SS().openSheet(`<h3>「${esc(t.name)}」 템플릿을 지울까요?</h3><div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="pcTplDelOk">지우기</button></div>`,
+      sh => sh.querySelector('#pcTplDelOk').addEventListener('click', () => { deleteTemplate(t.id); SS().closeSheet(); renderOther(curTab); toast('템플릿을 지웠어요'); }));
+  } else if (d.recentOpen) { const r = listRecent().find(x => x.id === d.recentOpen); if (r) swapTo({ id: r.id, form: normForm(r.form), draft: normDraft(r.draft) }); }
+  else if (d.recentDel) { deleteRecent(d.recentDel); renderOther(curTab); toast('최근 작성에서 지웠어요'); }
+});
 
 onEnter('purchase', (tab, section) => {
   if (!box || !section.contains(box)) { box = document.createElement('div'); box.className = 'pc-box'; section.prepend(box); }
