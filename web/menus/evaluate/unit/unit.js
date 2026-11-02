@@ -9,7 +9,7 @@ import { readText, fileMessage } from '../../../core/files.js';
 import { stepsHTML } from '../../../core/steps.js';
 import { parseKey, parsePaper, keyTotal, splitCombined } from './unit-key.js';
 import { ITEM_TYPES, rescoreItem } from './unit-grade.js';
-import { listTests, getTest, saveTest, removeTest, newTest, makeTitle, graded } from './unit-model.js';
+import { listTests, getTest, saveTest, removeTest, newTest, makeTitle, graded, maskOf } from './unit-model.js';
 import { keyPrompt, normKeyAI } from './unit-ai.js';
 import { sampleTests } from './unit-sample.js';
 import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle } from '../../../core/bundle.js';
@@ -222,7 +222,7 @@ async function putBundle(files) {
   const t0 = cur(), id = t0.id;
   setMsg(id, 'key', '읽는 중…');
   let b;
-  try { b = await readBundle(files, { say: m => setMsg(id, 'key', m) }); }
+  try { b = await readBundle(files, { say: m => setMsg(id, 'key', m), mask: (maskOf(t0) || {}).mask || [] }); }
   catch (e) { setMsg(id, 'key', e && e.message === 'PDFJS' ? 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진으로 넣어 주세요.' : '파일을 읽지 못했어요.'); return; }
   setMsg(id, 'key', '');
   if (needsCard(b)) { const r = await openBundleCard(b, { what: '단원평가' }); if (!r) { SS().files.freePages(b.pages); return; } b = r; }

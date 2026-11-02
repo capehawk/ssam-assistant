@@ -65,3 +65,24 @@ export function linkedTo({ unitId = '', subject = '', label = '' } = {}) {
     .map(a => ({ kind: 'activity', id: a.id, title: a.meta.title || '', date: a.meta.date || '' }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
+
+/* 문항 빼기(keep이 거짓인 문항): 번호를 1부터 다시 매기고 학생 표시(문항 번호 열쇠)도 따라 옮김. 바뀌면 채점한 학생은 다시 채점 */
+export function dropItems(a, keep) {
+  const kept = a.items.filter(keep), map = new Map(kept.map((it, i) => [it.no, i + 1]));
+  const changed = kept.length !== a.items.length || kept.some((it, i) => it.no !== i + 1);
+  a.items = kept.map((it, i) => ({ ...it, no: i + 1 }));
+  if (!changed) return a;
+  for (const s of a.students) {
+    const m = {};
+    for (const [no, cell] of Object.entries(s.marks || {})) if (map.has(+no)) m[map.get(+no)] = cell;
+    s.marks = m;
+    if (s.status === 'done') s.stale = true;
+  }
+  return a;
+}
+/* 문항 더하기(맨 뒤, 선생님이 씀): 채점한 학생은 다시 채점 */
+export function addItem(a) {
+  a.items.push({ no: a.items.length + 1, type: 'write', ask: '', answer: '', ok: '', part: '', src: 'edit' });
+  for (const s of a.students) if (s.status === 'done') s.stale = true;
+  return a;
+}

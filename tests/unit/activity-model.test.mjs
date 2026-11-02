@@ -73,3 +73,22 @@ test('평가 영역 이음: unitId가 같거나, 없으면 교과·영역 이름
   assert.equal(linkedTo({ unitId: 'u1', subject: '과학', label: '' }).length, 1);
   assert.equal(linkedTo({ unitId: 'u1', subject: '과학', label: '' })[0].kind, 'activity');
 });
+
+test('문항 빼기·더하기: 번호를 다시 매기고 학생 표시도 그 문항을 따라감, 채점한 학생은 「다시 채점」', async () => {
+  const { dropItems, addItem } = await import('../../web/menus/evaluate/activity/activity-model.js');
+  const a = newActivity({});
+  a.items = [1, 2, 3].map(no => ({ no, type: 'write', ask: 'q' + no, answer: '', ok: '', part: '', src: 'ai' }));
+  a.students = [{ no: 1, status: 'done', marks: { 1: { mark: 'o' }, 2: { mark: 'x' }, 3: { mark: 't', manual: true } } }, { no: 2, status: 'idle', marks: {} }];
+  dropItems(a, it => it.no !== 2);
+  assert.deepEqual(a.items.map(i => [i.no, i.ask]), [[1, 'q1'], [2, 'q3']]);
+  assert.deepEqual(a.students[0].marks, { 1: { mark: 'o' }, 2: { mark: 't', manual: true } });
+  assert.equal(a.students[0].stale, true);
+  assert.ok(!a.students[1].stale);
+  a.students[0].stale = false;
+  dropItems(a, () => true);
+  assert.equal(a.students[0].stale, false, '바뀐 것이 없으면 그대로');
+  addItem(a);
+  assert.deepEqual(a.items.map(i => i.no), [1, 2, 3]);
+  assert.equal(a.items[2].src, 'edit');
+  assert.equal(a.students[0].stale, true);
+});

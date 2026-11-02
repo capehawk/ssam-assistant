@@ -7,14 +7,16 @@ import { aiRowHTML, pick } from '../../../core/ai-roles.js';
 import { reviewJSON, opinionHTML, REVIEW_FAIL } from '../../../core/ai-review.js';
 import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle, bundleMsg } from '../../../core/bundle.js';
 import { readNos, openNoCheck, openNoWait, rosterAllowed, byNoOrder } from '../../../core/student-no.js';
-import { numbersFor } from '../unit/unit-model.js';
+import { numbersFor, parseNos, renumber } from '../unit/unit-model.js';
+import { arrangePages } from '../unit/unit-pages.js';
 import { go } from '../../../core/shell.js';
 import { getActivity, getSet, saveSet, listActivities } from './activity-model.js';
 import { gradePrompt, validGrade, normGrade, judgeCell, reviewPrompt, normReview, MARK, LEVEL } from './activity-ai.js';
 import { A, registerStep, curAct, commitAct, refresh, render, goStep, esc, SS, getBox, visible, openActivity } from './activity.js';
 
 /* 세션 상태: 올린 학생 쪽은 한 활동지에만 붙음. idx[i] = i번째 학생의 쪽 번호들. 채점은 한 번에 한 활동지만 */
-const G = { id: null, pages: [], idx: [], run: null, running: new Map(), nosOk: false };
+/* raw: 올린 학생 쪽(정리 전), pages: 모아찍기·뒷면을 정리한 쪽 */
+const G = { id: null, raw: [], pages: [], idx: [], run: null, running: new Map(), nosOk: false };
 const MARKS = Object.keys(MARK);
 const rosterExcept = () => (store.get('class', null) || {}).except || [];
 const fresh = no => ({ no, skip: false, status: 'idle', marks: {}, good: '', next: '', level: '', levelWhy: '' });
@@ -25,16 +27,18 @@ const pagesFor = (a, i) => (G.id === a.id && G.idx[i]) || [];
 /* ---------- 3단계: 올리기 ---------- */
 function split(a, n, per) {
   G.idx = Array.from({ length: n }, (_, i) => Array.from({ length: Math.min(per, G.pages.length - i * per) }, (_, j) => i * per + j));
-  if (a.students.length !== n) a.students = numbersFor(n, rosterExcept()).map(fresh);
+  if (a.students.length !== n) a.students = numbersFor(n, [...rosterExcept(), ...(a.absent || [])]).map(fresh);
 }
-export function loadPages(id, pages) {
+export function loadPages(id, pages, raw = pages) {
   const a = id === (curAct() && curAct().id) ? curAct() : getActivity(id);
   if (!a || !pages.length) return;
   if (busy(id)) { toast('채점하는 중이에요. 끝나거나 멈춘 뒤에 다시 올려 주세요.', 5000); return; }
   const per = Math.max(1, getSet().pagesPer | 0), n = Math.ceil(pages.length / per);
   const apply = () => {
-    if (G.id && G.pages !== pages && G.pages.length) SS().files.freePages(G.pages);
-    G.id = id; G.pages = pages; G.nosOk = false;
+    // 정리 전 쪽과 정리한 쪽은 같은 것을 함께 쓸 수 있어, 새로 쓰는 쪽은 남기고 버림
+    const keep = new Set([...pages, ...raw]);
+    if (G.id && G.pages !== pages) SS().files.freePages([...G.pages, ...G.raw].filter(p => !keep.has(p)));
+    G.id = id; G.pages = pages; G.raw = raw; G.nosOk = false;
     split(a, n, per);
     commitAct(a); refresh(id);
   };
@@ -45,6 +49,13 @@ export function loadPages(id, pages) {
     return;
   }
   apply();
+}
+/* 모아찍기(한 면에 2쪽)는 왼쪽·오른쪽으로 자르고, 양면 스캔의 거꾸로 나온 뒷면은 돌림(단원평가와 같은 정리) */
+const arrange = raw => { const s = getSet(); return arrangePages(raw, { twoUp: !!s.twoUp, flipBack: !!s.flipBack }); };
+async function placeScans(id, raw) {
+  let pages;
+  try { pages = await arrange(raw); } catch (e) { toast('스캔을 나누지 못했어요. 다시 올려 주세요.', 5000); return; }
+  loadPages(id, pages, raw);
 }
 async function putScans(files) {
   const a0 = curAct();
@@ -60,7 +71,7 @@ async function putScans(files) {
   b.pages.forEach((p, i) => (b.roles[i] === 'student' ? stu : crit).push(p));
   if (crit.length) { if (A.critFor !== id) { SS().files.freePages(A.critPages); A.critPages = []; } A.critFor = id; A.critPages = [...A.critPages, ...crit]; }
   if (!stu.length) { toast('학생 쪽이 없어요. 정답·교사용 쪽은 기준 그림으로 넣었어요.', 6000); return; }
-  loadPages(id, stu);
+  await placeScans(id, stu);
 }
 onBundle('act3', files => { if (A.view === 'act' && A.step === 3) putScans(files); });
 /* 떠 있는 버튼의 학생 답안 스캔 → 「활동지 채점」(단원평가 받는 곳이 SSAM.activityInbox로 부름): 기준을 확정하고 아직 확정(마침)하지 않은 활동지,
@@ -128,11 +139,15 @@ function step3HTML(a) {
       ${bundleBoxHTML('act3', '반 전체 스캔 PDF·사진을 넣어요. 정답·교사용·빈 활동지 쪽이 섞여 있으면 알아서 나눠요')}
       <div class="act-set">
         <label class="yp-f"><span class="lab">학생당 쪽 수</span><input class="field" type="number" id="acPer" min="1" max="6" value="${Math.max(1, set.pagesPer | 0)}"></label>
+        <label class="switch"><input type="checkbox" id="acTwoUp"${set.twoUp ? ' checked' : ''}>모아찍기(한 면에 2쪽)</label>
+        <label class="switch"><input type="checkbox" id="acFlipBack"${set.flipBack ? ' checked' : ''}>양면 스캔 뒷면이 거꾸로</label>
         <label class="switch"><input type="checkbox" id="acMaskOn"${m.on ? ' checked' : ''}>이름 칸 가리기</label>
         <button class="btn text" type="button" data-ac="mask">이름 칸 정하기</button><span class="muted">${m.mask.length ? '정해 둠' : '아직 정하지 않음'}</span>
         <label class="switch"><input type="checkbox" id="acByNo"${a.byNo ? ' checked' : ''}>적힌 번호로 학생 맞추기</label>
         ${a.byNo ? `<button class="btn text" type="button" data-ac="noBox">번호 칸 정하기</button>` : ''}
       </div>
+      ${a.byNo ? '' : `<div class="row"><label class="cls-inline">결석 번호 <input class="field" id="acAbsent" value="${esc((a.absent || []).join(', '))}" placeholder="예: 5, 12" aria-describedby="acAbsentNote"></label>
+        <span class="muted" id="acAbsentNote">활동지를 내지 않은 학생 번호를 적으면 그 번호를 건너뛰고 뒤 번호가 한 칸씩 밀려요.</span></div>`}
       <p class="muted" id="acStus">${mine ? `쪽 ${G.pages.length}장 · 학생 ${n}명` : a.students.length ? `학생 ${n}명 · 스캔은 이 화면에만 있어서, 채점하려면 다시 올려 주세요` : '아직 올린 학생 활동지가 없어요.'}</p>
       ${a.students.length ? `<ul class="ac-stus">${a.students.map((s, i) => `<li><label><input type="checkbox" data-skip="${i}"${s.skip ? '' : ' checked'}> ${s.no}번</label></li>`).join('')}</ul>` : ''}
     </div>
@@ -140,7 +155,7 @@ function step3HTML(a) {
 }
 registerStep(3, {
   html: step3HTML,
-  bind: (box, a) => { if (A.pending && A.pending.id === a.id) { const p = A.pending.pages; A.pending = null; setTimeout(() => loadPages(a.id, p), 0); } }
+  bind: (box, a) => { if (A.pending && A.pending.id === a.id) { const p = A.pending.pages; A.pending = null; setTimeout(() => placeScans(a.id, p), 0); } }
 });
 
 /* ---------- 4단계: 채점 ---------- */
@@ -296,9 +311,27 @@ document.addEventListener('change', e => {
   if (!mine(e)) return;
   const a = curAct(), el = e.target;
   if (!a) return;
-  if (el.id === 'acPer') { saveSet({ ...getSet(), pagesPer: Math.max(1, Math.min(6, Number(el.value) || 1)) }); if (G.id === a.id && G.pages.length) loadPages(a.id, G.pages); }
+  if (el.id === 'acPer') { saveSet({ ...getSet(), pagesPer: Math.max(1, Math.min(6, Number(el.value) || 1)) }); if (G.id === a.id && G.pages.length) loadPages(a.id, G.pages, G.raw); }
+  else if (el.id === 'acTwoUp' || el.id === 'acFlipBack') {
+    if (busy(a.id)) { toast('채점하는 중에는 바꿀 수 없어요.', 4000); render(); return; }
+    // 쪽 모양·방향이 바뀌면 정해 둔 이름 칸 자리가 맞지 않아 이름이 AI로 갈 수 있음: 정한 칸(이 활동지·기본)은 지우고 다시 정하게
+    const had = maskOf(a).mask.length;
+    saveSet({ ...getSet(), [el.id === 'acTwoUp' ? 'twoUp' : 'flipBack']: el.checked, mask: [], maskAll: false });
+    delete a.mask; delete a.maskAll;
+    if (had) toast('쪽 모양이 바뀌어 이름 칸을 지웠어요. [이름 칸 정하기]로 다시 정해 주세요.', 6000);
+    if (a.noBox) delete a.noBox;
+    commitAct(a);
+    if (G.id === a.id && G.raw.length) placeScans(a.id, G.raw); else render();
+  }
   else if (el.id === 'acMaskOn') { saveSet({ ...getSet(), maskOn: el.checked }); render(); }
   else if (el.id === 'acByNo') { a.byNo = el.checked; G.nosOk = false; commitAct(a); render(); }
+  else if (el.id === 'acAbsent') {
+    // 쪽 차례(채점 결과)는 그대로 두고 번호만 다시 매김
+    if (busy(a.id)) { toast('채점하는 중에는 바꿀 수 없어요.', 4000); render(); return; }
+    a.absent = parseNos(el.value);
+    if (a.students.length) renumber(a, rosterExcept());
+    commitAct(a); render();
+  }
   else if (el.dataset.skip != null) { const s = a.students[+el.dataset.skip]; if (s) { s.skip = !el.checked; commitAct(a); render(); } }
   else if (el.dataset.level) { const s = a.students.find(x => x.no === +el.dataset.level); if (s) { s.level = el.value; s.levelManual = true; commitAct(a); } }
 });

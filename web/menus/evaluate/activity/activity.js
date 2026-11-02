@@ -9,7 +9,7 @@ import { getSchool } from '../../../core/settings.js';
 import { stripNames } from '../../../core/privacy.js';
 import { aiRowHTML } from '../../../core/ai-roles.js';
 import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle, bundleMsg } from '../../../core/bundle.js';
-import { newActivity, listActivities, getActivity, saveActivity, removeActivity } from './activity-model.js';
+import { newActivity, listActivities, getActivity, saveActivity, removeActivity, dropItems, addItem, getSet } from './activity-model.js';
 import { readMeta, termOf, SUBJECTS } from './activity-read.js';
 import { TYPES, criteriaPrompt, normCriteria, applyKey } from './activity-ai.js';
 import { sampleActivity } from './activity-sample.js';
@@ -156,7 +156,7 @@ async function putFiles(files) {
   const id = a0.id;
   bundleMsg('act', '읽는 중…');
   let b;
-  try { b = await readBundle(files, { say: m => bundleMsg('act', m) }); }
+  try { b = await readBundle(files, { say: m => bundleMsg('act', m), mask: (a0.mask && a0.mask.length ? a0.mask : getSet().mask) || [] }); }
   catch (e) { bundleMsg('act', ''); toast(e && e.message === 'PDFJS' ? 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진으로 넣어 주세요.' : '파일을 읽지 못했어요.', 6000); return; }
   bundleMsg('act', '');
   if (!b.doc.student && !b.doc.teacher && !b.pages.length) { toast(b.skipped.length ? `읽지 못한 파일: ${b.skipped.join(', ')}` : '넣을 것이 없어요.', 6000); return; }
@@ -186,9 +186,17 @@ function autoCriteria(a) {
   autoFor = a.id;
   makeCriteria(a.id);
 }
+/* 기준 그림·쪽 나누기 그림에 쓰는 이름 칸: 정한 칸(이 활동지·기본), 없으면 맨 위 띠(이름 칸이 흔히 있는 곳). 「이름 칸 가리기」를 끄면 안 가림
+   — 빈 활동지 대신 학생이 쓴 활동지를 기준 사진으로 넣어도 이름이 AI로 가지 않게 */
+export function critMask(a) {
+  const set = getSet();
+  if (set.maskOn === false) return null;
+  const m = (a && a.mask && a.mask.length ? a.mask : set.mask) || [];
+  return m.length ? m : [{ x: 0, y: 0, w: 1, h: 0.18 }];
+}
 async function critImages(id) {
-  const out = [];
-  if (A.critFor === id) for (const p of A.critPages.slice(0, 4)) out.push(await SS().files.pageImage(p, null));
+  const out = [], a = curAct();
+  if (A.critFor === id) for (const p of A.critPages.slice(0, 4)) out.push(await SS().files.pageImage(p, critMask(a)));
   return out;
 }
 async function makeCriteria(id) {
@@ -203,7 +211,8 @@ async function makeCriteria(id) {
     if (a) {
       a.items = a.sheet.teacher ? applyKey(normCriteria(v), a.sheet.teacher) : normCriteria(v);
       a.confirmed = false;
-      a.students.forEach(s => { if (s.status === 'done') s.stale = true; });
+      // 새 기준은 문항이 달라질 수 있어 번호로 남은 선생님 고친 칸은 다시 채점할 때 새로 매김
+      a.students.forEach(s => { if (s.status === 'done') s.stale = true; for (const c of Object.values(s.marks || {})) if (c) delete c.manual; });
       commitAct(a);
     }
   } catch (e) { A.msg = e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. 다시 눌러 주세요.' : ai.errorMessage(e && e.code, e); }
@@ -245,10 +254,10 @@ document.addEventListener('click', e => {
   } else if (!a) return;
   else if (act === 'next') goStep(2);
   else if (act === 'criteria') makeCriteria(a.id);
-  else if (act === 'addItem') { a.items.push({ no: a.items.length + 1, type: 'write', ask: '', answer: '', ok: '', part: '', src: 'edit' }); a.confirmed = false; commitAct(a); render(); }
-  else if (act === 'delItem') { a.items = a.items.filter(x => x.no !== +b.dataset.no).map((x, i) => ({ ...x, no: i + 1 })); a.confirmed = false; commitAct(a); render(); }
+  else if (act === 'addItem') { addItem(a); a.confirmed = false; commitAct(a); render(); }
+  else if (act === 'delItem') { dropItems(a, x => x.no !== +b.dataset.no); a.confirmed = false; commitAct(a); render(); }
   else if (act === 'confirm') {
-    if (!a.confirmed) { a.items = a.items.filter(x => String(x.ask || '').trim() || String(x.answer || '').trim()).map((x, i) => ({ ...x, no: i + 1 })); a.confirmed = a.items.length > 0; commitAct(a); }
+    if (!a.confirmed) { dropItems(a, x => String(x.ask || '').trim() || String(x.answer || '').trim()); a.confirmed = a.items.length > 0; commitAct(a); }
     if (a.confirmed) goStep(3); else render();
   }
 });

@@ -3575,17 +3575,26 @@ const GR_MIX = {
   }
 };
 /* 평어에 참고할 단원평가·활동지(체크한 것만): 그 학생 한 줄 */
-const grRefList = () => GR.refs.map(k => ({ kind: k.slice(0, k.indexOf(':')), id: k.slice(k.indexOf(':') + 1) }));
+const grUnitLink = u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') });
+/* 체크한 것 중 지금 평가요소에 이어 둔 것만(다른 평가요소에서 체크한 것·나중에 이음을 끈 것은 평어에 쓰지 않음) */
+function grActiveRefs() {
+  const R = window.SSAM && window.SSAM.evalRefs, u = grUnit();
+  if (!R || !u || !GR.refs.length) return [];
+  const ok = new Set(R.linked(grUnitLink(u)).map(r => `${r.kind}:${r.id}`));
+  return GR.refs.filter(k => ok.has(k));
+}
+const grRefList = () => grActiveRefs().map(k => ({ kind: k.slice(0, k.indexOf(':')), id: k.slice(k.indexOf(':') + 1) }));
 function grRefLine(no) {
   const R = window.SSAM && window.SSAM.evalRefs;
-  const L = R && GR.refs.length ? R.lines(grRefList(), no) : '';
+  const list = R ? grRefList() : [];
+  const L = list.length ? R.lines(list, no) : '';
   return L ? `\n  참고: ${L}` : '';
 }
 /* 평가요소에 이어 둔 단원평가·활동지 목록(최근 5개 → 더보기), 기본 체크 안 함 */
 function grRefsHTML(u) {
   const R = window.SSAM && window.SSAM.evalRefs;
   if (!u || !R) return '';
-  const list = R.linked({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') });
+  const list = R.linked(grUnitLink(u));
   if (!list.length) return '<p class="muted gr-refs-none">이 평가요소에 이어 둔 단원평가·활동지가 없어요. 단원평가·활동지에서 「교과 평어에 참고하기」를 켜면 여기에 나와요.</p>';
   const show = GR.refsAll ? list : list.slice(0, 5);
   return `<div class="gr-refs" id="grRefs"><span class="lab">참고할 단원평가·활동지 <span class="muted">(체크한 것만 평어를 쓸 때 참고해요)</span></span>
@@ -3630,7 +3639,7 @@ function grWritePrompt(lv, group, avoid) {
     `6. 학생마다 시작하는 말, 핵심 표현, 서술어를 다르게 써서 서로 겹치지 않게 합니다.`,
     `7. ${pronounRule()}`,
     ``, `[학생]`,
-    ...(GR.refs.length ? ['', '[참고: 단원평가·활동지] 학생 줄 아래 「참고:」는 같은 평가 영역의 다른 평가 결과입니다. 그 학생다운 평어를 쓰는 데만 참고하고, 점수·평가 이름은 쓰지 않습니다.', ''] : []),
+    ...(grActiveRefs().length ? ['', '[참고: 단원평가·활동지] 학생 줄 아래 「참고:」는 같은 평가 영역의 다른 평가 결과입니다. 그 학생다운 평어를 쓰는 데만 참고하고, 점수·평가 이름은 쓰지 않습니다.', ''] : []),
     ...group.map(s => who(s) + grRefLine(s.no)),
     avoid.length ? `\n[이미 쓴 평어] 아래와 표현이 겹치지 않게 씁니다.\n${avoid.slice(-30).map(t => '- ' + t).join('\n')}` : '',
     ``, `[출력] JSON 배열 하나만 출력합니다. 예: [{"no": ${group[0].no}, "text": "평어"}]`

@@ -7,7 +7,8 @@ import { open, run, assert, FIXTURES } from './helpers.mjs';
 const t = await open();
 const { page, url, errors } = t;
 const PLAN = { kind: 'plan', title: '2학기 평가계획', grade: 3, source: '', createdAt: 1, subjects: [{ name: '과학', units: [
-  { id: 'u1', subject: '과학', period: '', std: '[4과01-02] 물의 상태 변화를 설명한다.', unit: '1. 물의 여행', area: '물질', elem: '물의 상태 변화', focus: '', crit: { top: '', high: '잘 설명함', mid: '설명함', low: '도움을 받아 설명함' } }] }] };
+  { id: 'u1', subject: '과학', period: '', std: '[4과01-02] 물의 상태 변화를 설명한다.', unit: '1. 물의 여행', area: '물질', elem: '물의 상태 변화', focus: '', crit: { top: '', high: '잘 설명함', mid: '설명함', low: '도움을 받아 설명함' } },
+  { id: 'u2', subject: '과학', period: '', std: '[4과02-01] 동물의 생김새를 비교한다.', unit: '2. 동물의 생활', area: '생명', elem: '동물의 생김새', focus: '', crit: { top: '', high: '잘 비교함', mid: '비교함', low: '도움을 받아 비교함' } }] }] };
 const LINK = { unitId: 'u1', subject: '과학', label: '물질 · 물의 상태 변화' };
 const ACT = { id: 'acR', meta: { subject: '과학', title: '물의 여행', date: '2026-09-10', term: 2 }, sheet: { student: '', teacher: '' }, items: [{ no: 1, type: 'write', ask: 'x', answer: '', ok: '', part: '', src: 'ai' }], confirmed: true, done: true, link: LINK, createdAt: 1,
   students: [1, 2, 3].map(no => ({ no, skip: false, status: 'done', marks: { 1: { mark: 'o' } }, good: `${no}번 활동 잘한 점`, next: '더 해 보기', level: 'good' })) };
@@ -75,6 +76,15 @@ await run('gr-refs', [
     const p = writes().at(-1);
     assert(p.includes('참고: 활동지 「물의 여행」 잘함') && p.includes(`${no}번 활동 잘한 점`) && p.includes(`- ${no}번 (`), p.slice(-400));
     await until(async () => (((await cur()) || {}).refs || []).includes('activity:acR'), 3000);
+  }],
+  ['다른 평가요소로 바꾸면 전에 체크한 활동지는 그 평가요소 평어에 쓰지 않음(목록에도 없음)', async () => {
+    await page.selectOption('#grUnit', 'u2');
+    await page.waitForFunction(() => !document.querySelector('#grRefs [data-gr-ref="activity:acR"]'));
+    const n0 = writes().length, id = (await cur()).students[0].id;
+    await page.click(`#grResults [data-grre="${id}"]`);
+    await until(async () => writes().length > n0);
+    const p = writes().at(-1);
+    assert(!p.includes('참고:') && !p.includes('[참고: 단원평가·활동지]'), p.slice(-400));
   }],
   ['한꺼번에 넣기: 정답 파일 + 학생 사진 3장 → 카드(정답·교사용 문서 · 학생 3쪽) → 채점 기준 문서 「한꺼번에 넣은 정답·기준」 하나·학생 3명', async () => {
     await page.click('[data-gr="new"]');

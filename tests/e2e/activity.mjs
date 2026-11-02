@@ -79,6 +79,19 @@ await run('activity', [
     assert(!calls.filter(c => c.head === '[활동지 기준]')[1].prompt.includes('[교사용'), '교사용 칸');
     assert(await page.inputValue(`${P} [data-it="1"][data-f="type"]`) === 'draw', '그림 문항');
   }],
+  ['사진만 넣은 활동지: 기준 만들기에 보내는 그림도 이름 칸을 가림(정한 칸이 없으면 맨 위 띠)', async () => {
+    await page.click(`${P} [data-ac="back"]`);
+    await page.click(`${P} [data-ac="new"]`);
+    const png = await page.screenshot({ clip: { x: 0, y: 0, width: 300, height: 420 } });
+    await page.setInputFiles('#bundleFile-act', { name: '빈 활동지.png', mimeType: 'image/png', buffer: png });
+    await page.waitForFunction(() => /넣었어요/.test((document.querySelector('#toast') || {}).textContent || ''));
+    await page.evaluate(() => { const f = window.SSAM.files, orig = f.pageImage; window.__masks = []; f.pageImage = (p, m) => { window.__masks.push(m); return orig(p, m); }; });
+    const n0 = calls.filter(c => c.head === '[활동지 기준]').length;
+    await page.click(`${P} [data-ac="next"]`);
+    await until(async () => calls.filter(c => c.head === '[활동지 기준]').length === n0 + 1);
+    const masks = await page.evaluate(() => window.__masks);
+    assert(masks.length >= 1 && masks.every(m => Array.isArray(m) && m.some(r => r.y === 0 && r.h >= 0.15)), JSON.stringify(masks));
+  }],
   ['[예시로 채우기] → 목록에 예시 활동지', async () => {
     await page.click(`${P} [data-ac="back"]`);
     await page.click(`${P} [data-ac="sample"]`);

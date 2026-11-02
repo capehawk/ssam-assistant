@@ -55,6 +55,15 @@ await run('activity-grading', [
     await until(async () => (await act()).students.length === 4);
     assert((await page.textContent(`${P} #acStus`)).includes('학생 4명'), await page.textContent(`${P} #acStus`));
   }],
+  ['결석 번호를 적으면 그 번호를 건너뛰어 다시 매김(쪽 차례는 그대로), 지우면 돌아옴', async () => {
+    await page.fill(`${P} #acAbsent`, '2');
+    await page.press(`${P} #acAbsent`, 'Tab');
+    await until(async () => JSON.stringify((await act()).students.map(s => s.no)) === '[1,3,4,5]');
+    assert((await page.textContent(`${P} .ac-stus`)).includes('5번') && !(await page.textContent(`${P} .ac-stus`)).includes('2번'), await page.textContent(`${P} .ac-stus`));
+    await page.fill(`${P} #acAbsent`, '');
+    await page.press(`${P} #acAbsent`, 'Tab');
+    await until(async () => JSON.stringify((await act()).students.map(s => s.no)) === '[1,2,3,4]');
+  }],
   ['[채점 시작] → 학생마다 [활동지 채점] 한 번(그림 1장, 이름 없음) → 고르기 맞음 ○·틀림 ×(노란 칸)·빈칸 안 함', async () => {
     await page.click(`${P} [data-ac="toGrade"]`);
     await page.click(`${P} [data-ac="grade"]`);
@@ -124,6 +133,17 @@ await run('activity-grading', [
     await page.click(`${P} [data-ac="grade"]`);
     await page.waitForFunction(() => (document.querySelector('#toast') || {}).textContent.includes('채점을 멈췄어요'));
     fail = false;
+  }],
+  ['모아찍기 켬: 가로로 긴 장 1장 → 왼쪽·오른쪽 2쪽 → 학생 2명(학생 수가 다르면 확인)', async () => {
+    await page.click(`${P} [data-step="3"]`);
+    await page.check(`${P} #acTwoUp`);
+    const wide = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 840; c.height = 300; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 840, 300); g.fillStyle = '#123'; g.fillRect(40, 60, 200, 30); g.fillRect(480, 60, 200, 30); return c.toDataURL('image/png').split(',')[1]; });
+    await page.setInputFiles('#bundleFile-act3', [{ name: '모아찍기.png', mimeType: 'image/png', buffer: Buffer.from(wide, 'base64') }]);
+    await page.waitForSelector('#sheetRoot #acRedoOk');
+    await page.click('#sheetRoot #acRedoOk');
+    await until(async () => (await act()).students.length === 2);
+    assert((await page.textContent(`${P} #acStus`)).includes('쪽 2장'), await page.textContent(`${P} #acStus`));
+    await page.uncheck(`${P} #acTwoUp`);
   }],
   ['페이지 오류 없음', async () => { const bad = errors.filter(e => !/status of 401/.test(e)); assert(bad.length === 0, bad.join(' | ')); }]
 ]);
