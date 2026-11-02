@@ -81,6 +81,17 @@ await run('review-unit', [
     assert(await page.locator(`${V} [data-cell="1-2"].chk`).count() === 0, '같게 본 칸이 노란 칸');
     assert((await page.textContent(`${V} .rv-bar`)).includes('검토 의견 2개'), await page.textContent(V));
   }],
+  ['문항 모아 보기: 검토 의견이 보이고 「지금 점수로 모두 확인」은 의견이 있는 칸을 닫지 않음', async () => {
+    await page.click(`${V} [data-item="9"]`);
+    await page.waitForSelector('#sheetRoot [data-un="itemOk"]');
+    const row = await page.textContent('#sheetRoot .un-irow:has(b:text-is("1번"))');
+    assert(row.includes('검토') && row.includes('12점'), row);
+    await page.click('#sheetRoot [data-un="itemOk"]');
+    await page.waitForTimeout(150);
+    const c = (await T(A)).students[0].items[9];
+    assert(c.rv && !c.rv.done && !c.ok, JSON.stringify(c));
+    assert((await page.textContent(`${V} .rv-bar`)).includes('검토 의견 2개'), '의견 수');
+  }],
   ['[다음 의견] → 메인 안 9점 / 검토 안 12점 → [검토 안 쓰기]로 바뀜', async () => {
     await page.click(`${V} [data-un="nextRv"]`);
     await page.waitForSelector('#sheetRoot .rv-op');

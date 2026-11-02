@@ -84,10 +84,14 @@ test('account 엔진이면 main·review 모두 null', () => {
   assert.equal(pick('grade', 'review', env({ engine: 'account' })), null);
 });
 
-test('모델 목록에 없는 모델(직접 입력)이어도 키가 있으면 씀', () => {
+test('모르는 모델(목록에서 빠짐)이면 기본으로, 설정 › AI에 직접 넣은 모델(목록에 있음)은 씀', () => {
   resetRoles();
+  setTaskRole('plan', { main: { engine: 'claude', model: 'claude-old-1' }, reviewOn: true, review: { engine: 'claude', model: 'claude-old-1' } });
+  assert.equal(pick('plan', 'main', env()), null);
+  assert.equal(pick('plan', 'review', env()), null);
+  const e = env({ models: { ...env().models, claude: [...env().models.claude, 'claude-new-9'] } });
   setTaskRole('plan', { main: { engine: 'claude', model: 'claude-new-9' } });
-  assert.deepEqual(pick('plan', 'main', env()), { engine: 'claude', model: 'claude-new-9' });
+  assert.deepEqual(pick('plan', 'main', e), { engine: 'claude', model: 'claude-new-9' });
 });
 
 test('모르는 업무·역할 → null', () => {
@@ -117,6 +121,8 @@ test('AI 줄 글: 기본·업무 AI·검토 끔/켬·검토 AI 없음·키 없�
   setTaskRole('grade', { main: GEM, reviewOn: false });
   assert.equal(rowText('grade', e), 'AI: Claude Sonnet 5.5 (키가 없어 기본 AI로) · 검토 끔');
   assert.equal(rowText('grade', { ...e, engine: 'account' }), 'AI: Claude 계정 하나로');
+  setTaskRole('grade', { main: { engine: 'claude', model: 'claude-old-1' } });
+  assert.equal(rowText('grade', e), 'AI: Claude Sonnet 5.5 (쓸 수 없는 모델이라 기본 AI로) · 검토 끔');
 });
 
 test('고를 수 있는 AI: 키를 넣은 회사의 모델만, 값은 engine|model', () => {

@@ -1618,6 +1618,7 @@ async function run(job) {
   S.running.set(key, { ctl });
   set.status = 'running'; set.err = '';
   if (job.fresh) set.items = set.items.filter(x => x.d);
+  const before = new Set(set.items); // 이번에 쓴 문장만 검토
   const target = job.more ? set.items.length + job.more : Math.max(set.want || N, N);
   set.want = Math.max(N, target);
   renderUnitsSoon(); renderListSoon(job.unitId, job.lv);
@@ -1651,9 +1652,12 @@ async function run(job) {
     set.status = set.items.length >= target ? 'done' : 'part';
     S.consecutiveErr = 0; concOk();
     // 검토 AI: 새로 쓴 문장을 10개씩 (사용함으로 표시한 문장은 빼고)
-    if (!S.noReview) {
+    const fresh = set.items.filter(x => !before.has(x) && !x.d);
+    if (!S.noReview && fresh.length && RV() && RV().pick('writing', 'review')) {
       renderListSoon(job.unitId, job.lv);
-      const r = await reviewSentences('pyeongeo', pyInfo(u, job.lv), set.items.filter(x => !x.d).map(o => ({ o, f: 't' })), ctl.signal);
+      // 검토하는 동안 창을 닫아도 쓴 문장은 남게 먼저 저장
+      if (planId) { Store.saveSet(planId, key, set, sets); set.saved = 1; }
+      const r = await reviewSentences('pyeongeo', pyInfo(u, job.lv), fresh.map(o => ({ o, f: 't' })), ctl.signal);
       if (r === 'fail') { S.noReview = true; set.rvErr = 1; } else if (r === 'ok') delete set.rvErr;
     }
   } catch (e) {
@@ -2844,9 +2848,11 @@ async function hkRun(id) {
     s.results = [...keep, ...fixed.map(t => ({ t, d: 0 }))];
     s.rl = 0; concOk();
     // 검토 AI: 새 후보만 (메인 결과는 먼저 보여 줌)
-    if (!HK.noReview) {
+    const fresh = s.results.filter(x => !keep.includes(x));
+    if (!HK.noReview && fresh.length && RV() && RV().pick('writing', 'review')) {
+      HKStore.save(); // 검토하는 동안 창을 닫아도 후보는 남게
       if (S.mode === 'hk') { renderHKList(); hkEditorSoft(id); }
-      const r = await reviewSentences('hk', `[분량] ${HK.settings.min}~${HK.settings.max}${unitWord()}`, s.results.filter(x => !x.d).map(o => ({ o, f: 't' })), ctl.signal);
+      const r = await reviewSentences('hk', `[분량] ${HK.settings.min}~${HK.settings.max}${unitWord()}`, fresh.map(o => ({ o, f: 't' })), ctl.signal);
       if (r === 'fail') { HK.noReview = true; s.rvErr = 1; } else if (r === 'ok') delete s.rvErr;
     }
   } catch (e) {
@@ -3779,6 +3785,7 @@ GR_RV.handle = (key, use) => {
   if (use) {
     s.score = s.rv.score; if (s.rv.summary) s.summary = s.rv.summary;
     if (!GR.running.size && !GR.writeCtl) grAssign(true);
+    else if (GR.writeCtl) GR.needAssign = true; // 평어를 다 쓴 뒤에 맞춤
   }
   s.rv = { ...s.rv, done: use ? 'review' : 'main' };
   GRStore.save(); renderGR();
@@ -3809,6 +3816,7 @@ async function grWrite(only) {
   if (GR.writeCtl) { GR.pendingWrite = GR.pendingWrite || new Set(); (only || grActive().map(s => s.id)).forEach(id => GR.pendingWrite.add(id)); return; }
   GR.phase = 'writing'; GR.err = '';
   const ctl = new AbortController(); GR.writeCtl = ctl;
+  grWrote = new Set();
   renderGRSoon();
   const want = grActive().filter(s => s.status === 'done' && s.level && (only ? only.includes(s.id) : s.stale || !s.text));
   want.forEach(s => { s.writing = true; });
@@ -3842,9 +3850,11 @@ async function grWrite(only) {
       if (seen.has(k) && !ctl.signal.aborted) { const avoid = grActive().filter(x => x.level === s.level && x.text && x !== s).map(x => x.text); await grWriteChunk(s.level, [s], avoid, ctl.signal); }
       seen.set(normKey(s.text).slice(0, 18), s.id);
     }
-    // 검토 AI: 새로 쓴 평어를 10개씩 (사용함 표시한 학생은 빼고)
-    if (!ctl.signal.aborted) {
-      const r = await reviewSentences('gr', grTaskText(), grActive().filter(x => x.text && !x.d).map(o => ({ o, f: 'text' })), ctl.signal, { rv: 'trv', d: 'trvd' });
+    // 검토 AI: 이번에 쓴 평어만 10개씩 (사용함 표시한 학생은 빼고). 검토하는 동안 창을 닫아도 평어는 남게 먼저 저장
+    const wrote = [...grWrote].filter(x => x.text && !x.d);
+    if (!ctl.signal.aborted && wrote.length && RV() && RV().pick('writing', 'review')) {
+      GRStore.save();
+      const r = await reviewSentences('gr', grTaskText(), wrote.map(o => ({ o, f: 'text' })), ctl.signal, { rv: 'trv', d: 'trvd' });
       if (r === 'fail') GR.rvErr = 1; else if (r === 'ok') delete GR.rvErr;
     }
   } catch (e) {
@@ -3853,12 +3863,15 @@ async function grWrite(only) {
   } finally {
     grActive().forEach(s => { delete s.writing; });
     GR.writeCtl = null;
+    // 쓰는 동안 [검토 점수 쓰기]를 골랐으면 이제 수준을 다시 맞춤 (바뀐 학생은 「다시 쓰세요」)
+    if (GR.needAssign) { GR.needAssign = false; grAssign(true); }
     GR.phase = grActive().some(s => s.status === 'done' && (!s.text || s.stale)) ? 'partial' : 'done';
     GRStore.save();
     renderGRSoon();
     if (GR.pendingWrite && GR.pendingWrite.size) { const ids = [...GR.pendingWrite]; GR.pendingWrite = null; setTimeout(() => grWrite(ids), 0); }
   }
 }
+let grWrote = new Set(); // 이번 쓰기에서 평어를 쓴 학생 (검토는 이 학생만)
 async function grWriteChunk(lv, chunk, avoid, signal) {
   const r = await generate(grWritePrompt(lv, chunk, avoid), { signal, fresh: true, task: 'writing' });
   const arr = grJSON(r.text);
@@ -3866,7 +3879,7 @@ async function grWriteChunk(lv, chunk, avoid, signal) {
   for (const x of list) {
     const s = chunk.find(c => c.no === Number(x.no));
     const t = cleanLine(String(x.text || ''));
-    if (s && t) { s.text = t; s.stale = false; s.d = 0; delete s.writing; delete s.trv; delete s.trvd; }
+    if (s && t) { s.text = t; s.stale = false; s.d = 0; delete s.writing; delete s.trv; delete s.trvd; grWrote.add(s); }
   }
   // 빠진 학생은 한 명씩
   for (const s of chunk.filter(c => c.writing)) {
@@ -3875,7 +3888,7 @@ async function grWriteChunk(lv, chunk, avoid, signal) {
     const a2 = grJSON(r2.text);
     const x = Array.isArray(a2) ? a2[0] : a2;
     const t = x && cleanLine(String(x.text || ''));
-    if (t) { s.text = t; s.stale = false; s.d = 0; delete s.trv; delete s.trvd; }
+    if (t) { s.text = t; s.stale = false; s.d = 0; delete s.trv; delete s.trvd; grWrote.add(s); }
     delete s.writing;
   }
 }
@@ -4601,6 +4614,7 @@ const CHE = {
   areas: { auto: { acts: [ccNewAct()], items: {} }, club: { club: '', acts: [ccNewAct()], items: {} }, career: { acts: [ccNewAct()], items: {} } },
   view: 'auto', len: 'mid', grade: 3,
   queue: [], running: new Map(), err: '', waitT: null, showRes: false, loaded: false,
+  wrote: new Set(), rvCtl: null, // 이번 차례에 쓴 창체 문장(검토는 이것만), 검토 멈추기
   sheets: {}, loading: null // 학습지 스캔 (아래 「학습지 스캔」)
 };
 const ccInfo = k => CC_AREAS.find(a => a.k === k);
@@ -4839,6 +4853,7 @@ function ccPump() {
   renderCCSoon();
 }
 function ccStop() {
+  CHE.wrote.clear(); if (CHE.rvCtl) CHE.rvCtl.abort(); // 멈추면 검토도 하지 않음
   CHE.queue = [];
   CHE.running.forEach(r => r.ctl.abort());
   clearTimeout(CHE.waitT); CHE.waitUntil = 0;
@@ -4879,19 +4894,23 @@ async function ccRun(job) {
 }
 /* 검토 AI: 이 차례에 쓴 창체 문장(활동마다)을 10개씩. 실패하면 남은 검토는 그만둠 */
 async function ccReviewAll() {
-  if (CHE.reviewing || !RV()) return;
+  if (CHE.reviewing || !CHE.wrote.size || !RV() || !RV().pick('writing', 'review')) { CHE.wrote.clear(); return; }
+  const wrote = CHE.wrote; CHE.wrote = new Set();
   CHE.reviewing = true;
+  const ctl = new AbortController(); CHE.rvCtl = ctl;
+  renderCCSoon();
   try {
     for (const a of CC_AREAS) {
       const A = ccArea(a.k);
       for (const act of A.acts) {
-        const items = classNos().map(no => { const it = A.items[no], p = it && it.parts && it.parts[act.id]; return p && !(it && it.d) ? { o: p, f: 't' } : null; }).filter(Boolean);
-        const r = await reviewSentences('cc', `[${a.name}] ${act.name || ''}${act.desc ? ' — ' + act.desc : ''}`, items);
+        const items = classNos().map(no => { const it = A.items[no], p = it && it.parts && it.parts[act.id]; return p && wrote.has(p) && !(it && it.d) ? { o: p, f: 't' } : null; }).filter(Boolean);
+        const r = await reviewSentences('cc', `[${a.name}] ${act.name || ''}${act.desc ? ' — ' + act.desc : ''}`, items, ctl.signal);
+        if (ctl.signal.aborted) return;
         if (r === 'fail') { CHE.rvErr = 1; return; }
         if (r === 'ok') delete CHE.rvErr;
       }
     }
-  } finally { CHE.reviewing = false; CCStore.save(); renderCCSoon(); }
+  } finally { CHE.reviewing = false; CHE.rvCtl = null; CCStore.save(); renderCCSoon(); }
 }
 
 /* 활동 내용만으로 여러 학생 */
@@ -4910,7 +4929,7 @@ async function ccRunPlain(job, act, sig, others, signal) {
     const t = lines.shift();
     if (!t) { left.push(no); continue; }
     const it = ccItem(job.k, no);
-    it.parts[act.id] = { t, sig };
+    it.parts[act.id] = { t, sig }; CHE.wrote.add(it.parts[act.id]);
     it.d = 0;
   }
   if (left.length && job.tries < 2) CHE.queue.unshift({ ...job, nos: left, tries: job.tries + 1 });
@@ -4927,7 +4946,7 @@ async function ccRunSheet(job, act, sig, others, signal) {
   if (!t) throw { code: 'bad_json' };
   const it = ccItem(job.k, no);
   (it.obs || (it.obs = {}))[act.id] = { n: String(j.note || '').trim().slice(0, 400), w: key, b: j.blank ? 1 : 0 };
-  it.parts[act.id] = { t, sig, w: key };
+  it.parts[act.id] = { t, sig, w: key }; CHE.wrote.add(it.parts[act.id]);
   it.d = 0;
 }
 /* 읽어 둔 내용으로 여러 학생 */
@@ -4942,7 +4961,7 @@ async function ccRunNotes(job, act, sig, others, signal) {
     const t = x && cleanLine(String(x.text || ''));
     if (!t) { left.push(no); continue; }
     const it = ccItem(job.k, no), o = ccObs(job.k, no, act.id);
-    it.parts[act.id] = o && o.w ? { t, sig, w: o.w } : { t, sig };
+    it.parts[act.id] = o && o.w ? { t, sig, w: o.w } : { t, sig }; CHE.wrote.add(it.parts[act.id]);
     it.d = 0;
   }
   if (left.length === job.nos.length) throw { code: 'bad_json' };

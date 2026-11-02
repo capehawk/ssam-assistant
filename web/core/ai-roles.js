@@ -50,7 +50,8 @@ export function providerEnv() {
   return env;
 }
 
-const usable = (ai, env) => !!(ai && env.keys && env.keys[ai.engine]);
+/* 쓸 수 있는 AI: 그 회사 키가 있고, 모델이 그 회사 목록(설정 › AI에 직접 넣은 모델 포함)에 있음 */
+const usable = (ai, env) => !!(ai && env.keys && env.keys[ai.engine] && (env.models[ai.engine] || []).includes(ai.model));
 
 /* 업무의 메인·검토 AI. null이면 메인은 기본 AI, 검토는 하지 않음 */
 export function pick(task, role, env = providerEnv()) {
@@ -93,7 +94,7 @@ export function rowText(task, env = providerEnv()) {
   const main = pick(task, 'main', env);
   const dflt = defaultLabel(env);
   let s = `AI: ${main ? aiLabel(main, env) : dflt || '아직 정하지 않았어요'}`;
-  if (t.main && !main) s += ' (키가 없어 기본 AI로)';
+  if (t.main && !main) s += env.keys[t.main.engine] ? ' (쓸 수 없는 모델이라 기본 AI로)' : ' (키가 없어 기본 AI로)';
   if (!t.reviewOn) return s + ' · 검토 끔';
   const rv = pick(task, 'review', env);
   return s + (rv ? ` · 검토: ${aiLabel(rv, env)}` : ' · 검토: 검토 AI를 골라 주세요');
@@ -125,14 +126,14 @@ export function openRoleSheet(task) {
   if (!S.openSheet || !TASK_NAME[task]) return;
   const env = providerEnv(), r = getRoles(), t = r.tasks[task];
   const opts = aiOptions(env);
-  const dflt = defaultLabel(env), dRv = r.review && env.keys[r.review.engine] ? aiLabel(r.review, env) : '';
+  const dflt = defaultLabel(env), dRv = usable(r.review, env) ? aiLabel(r.review, env) : '';
   const optHTML = cur => opts.map(o => `<option value="${escH(o.value)}"${o.value === cur ? ' selected' : ''}>${escH(o.label)}</option>`).join('');
-  const mainV = t.main && env.keys[t.main.engine] ? aiValue(t.main) : '';
-  const rvV = t.review && env.keys[t.review.engine] ? aiValue(t.review) : '';
+  const mainV = usable(t.main, env) ? aiValue(t.main) : '';
+  const rvV = usable(t.review, env) ? aiValue(t.review) : '';
   S.openSheet(`<div id="aiRoleSheet" class="ai-role-sheet"><h3>${escH(TASK_NAME[task])} AI</h3>
     <label class="ar-f"><span class="lab">이 업무의 AI</span>
       <select class="field" id="arMain"><option value="">기본 AI 따름 (지금: ${escH(dflt || '정하지 않음')})</option>${optHTML(mainV)}</select></label>
-    ${t.main && !env.keys[t.main.engine] ? `<p class="muted warn" style="margin:0">정해 둔 ${escH(aiLabel(t.main, env))}는 키가 없어 기본 AI로 써요.</p>` : ''}
+    ${t.main && !usable(t.main, env) ? `<p class="muted warn" style="margin:0">정해 둔 ${escH(aiLabel(t.main, env))}는 ${env.keys[t.main.engine] ? '이제 쓸 수 없는 모델이라' : '키가 없어'} 기본 AI로 써요.</p>` : ''}
     <label class="switch"><input type="checkbox" id="arReviewOn"${t.reviewOn ? ' checked' : ''}>검토 AI로 한 번 더 보기</label>
     <label class="ar-f" id="arReviewF"><span class="lab">검토 AI</span>
       <select class="field" id="arReview"><option value="">기본 검토 AI 따름 (지금: ${escH(dRv || '정하지 않음')})</option>${optHTML(rvV)}</select></label>
@@ -144,7 +145,7 @@ export function openRoleSheet(task) {
       const on = q('arReviewOn').checked;
       q('arReviewF').hidden = !on;
       const main = fromVal(q('arMain').value) || (env.current && env.current.engine ? env.current : null);
-      const rv = fromVal(q('arReview').value) || (r.review && env.keys[r.review.engine] ? r.review : null);
+      const rv = fromVal(q('arReview').value) || (usable(r.review, env) ? r.review : null);
       const out = [];
       if (on) {
         out.push('검토를 켜면 AI 사용량이 대략 1.2~1.5배예요.');

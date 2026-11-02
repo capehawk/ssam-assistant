@@ -10,8 +10,9 @@ await page.addInitScript(() => {
   if (!localStorage.getItem('ssam:engine')) localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: 'sk-test' }, remember: true }));
   if (!localStorage.getItem('ssam:ai-roles')) localStorage.setItem('ssam:ai-roles', JSON.stringify({ review: null, tasks: { grade: { main: null, reviewOn: true, review: { engine: 'claude', model: 'claude-opus-5-5' } } } }));
 });
-// 같은 쪽 그림 → 같은 학생. 처음 본 차례대로 92·75·74·40점(40점은 읽기 어려움). 검토는 75 → 90(다름), 74 → 79, 40 → 45
-const MAIN = [92, 75, 74, 40], REVIEW = { 92: 92, 75: 90, 74: 79, 40: 45 };
+// 같은 쪽 그림 → 같은 학생. 처음 본 차례대로 92·75·74·40점(40점은 읽기 어려움). 검토는 75 → 90·74 → 95(다름), 40 → 45
+const MAIN = [92, 75, 74, 40], REVIEW = { 92: 92, 75: 90, 74: 95, 40: 45 };
+let slowWrite = 0;
 const seen = new Map();
 const calls = [];
 await page.route('https://api.anthropic.com/**', async route => {
@@ -29,6 +30,7 @@ await page.route('https://api.anthropic.com/**', async route => {
   } else if (prompt.startsWith('같은 수행평가를 본 학생')) {
     out = JSON.stringify([...prompt.matchAll(/^- (\d+)번 \| (\d+)점/gm)].map(m => ({ no: +m[1], score: +m[2] })));
   } else {
+    if (slowWrite) await new Promise(r => setTimeout(r, slowWrite));
     const nos = [...prompt.matchAll(/"no": (\d+)/g)].map(m => +m[1]);
     out = JSON.stringify((nos.length ? nos : [1]).map(no => ({ no, text: `${no}번 학생이 수를 바르게 계산함.` })));
   }
@@ -57,19 +59,34 @@ await run('review-gr', [
     assert(rv.length === 3 && rv.map(c => c.main).sort().join(',') === '40,74,75', rv.map(c => c.main).join(','));
     const s = (await cur()).students;
     const by = sc => s.find(x => x.score === sc);
-    assert(by(75).rv && by(75).rv.score === 90, JSON.stringify(by(75)));
-    assert(!by(74).rv && !by(40).rv && !by(92).rv, '의견이 있음');
+    assert(by(75).rv && by(75).rv.score === 90 && by(74).rv && by(74).rv.score === 95, JSON.stringify([by(75), by(74)]));
+    assert(!by(40).rv && !by(92).rv, '의견이 있음');
   }],
-  ['두 의견(75점 / 90점) → [검토 점수 쓰기]로 점수가 바뀜, 「검토 의견」 사라짐', async () => {
+  ['두 의견(75점 / 90점) → [검토 점수 쓰기]로 점수가 바뀜, 「검토 의견」 하나 남음', async () => {
     await page.waitForSelector('#grResults .rv-op');
-    assert(await page.locator('#grResults .rv-op').count() === 1, '의견 수');
-    const txt = await page.textContent('#grResults .rv-op');
+    assert(await page.locator('#grResults .rv-op').count() === 2, '의견 수');
+    const op = page.locator('#grResults .rv-op', { hasText: '90점' });
+    const txt = await op.textContent();
     assert(txt.includes('75점') && txt.includes('90점') && txt.includes('검토 점수 쓰기'), txt);
-    await page.click('#grResults [data-rv-use]');
-    await until(async () => !(await page.locator('#grResults .rv-op').count()));
+    await op.locator('[data-rv-use]').click();
+    await until(async () => await page.locator('#grResults .rv-op').count() === 1);
     await page.waitForTimeout(600);
-    const st = (await cur()).students.find(x => x.rv);
+    const st = (await cur()).students.find(x => x.rv && x.rv.done);
     assert(st.score === 90 && st.rv.done === 'review', JSON.stringify(st));
+  }],
+  ['평어를 쓰는 동안 [검토 점수 쓰기](74 → 95)를 고르면 쓰기가 끝난 뒤 수준을 다시 맞춤(바뀐 학생은 「다시 쓰세요」)', async () => {
+    slowWrite = 1500;
+    const id = (await cur()).students.find(x => x.score === 74).id;
+    await page.click(`#grResults [data-grre="${id}"]`);
+    await page.waitForTimeout(300);
+    await page.click(`#grResults [data-rv-use="grs:${id}"]`);
+    await until(async () => { const g = await cur(); return g && !(await page.locator('#grResults .spin').count()); });
+    await page.waitForTimeout(800);
+    const s = (await cur()).students, me = s.find(x => x.id === id);
+    assert(me.score === 95 && me.level === 'high', JSON.stringify(me));
+    const moved = s.find(x => x.score === 90);
+    assert(moved.level === 'mid' && moved.stale, JSON.stringify(moved));
+    slowWrite = 0;
   }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);

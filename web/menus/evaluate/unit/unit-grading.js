@@ -387,7 +387,7 @@ function openItem(itemNo) {
   if (!it) return;
   const full = Number(it.points) || 0;
   const list = t.students.filter(s => !s.skip && s.status === 'done');
-  const rows = list.map(s => { const c = s.items[itemNo] || {}; return `<li class="un-irow${needsCheck(c) ? ' chk' : ''}"><b>${s.no}번</b><span class="un-iread">${c.read ? esc(c.read) : '<span class="muted">(빈칸)</span>'}</span>
+  const rows = list.map(s => { const c = s.items[itemNo] || {}; return `<li class="un-irow${needsCheck(c) ? ' chk' : ''}${openRv(c) ? ' rvo' : ''}"><b>${s.no}번</b><span class="un-iread">${c.read ? esc(c.read) : '<span class="muted">(빈칸)</span>'}${openRv(c) ? ` <span class="rv-tag" title="${esc(c.rv.why || '')}">검토: ${c.rv.read ? esc(c.rv.read) : '(빈칸)'} · ${gradeCell(it, c.rv).pts}점</span>` : ''}</span>
     <label class="cls-inline"><input class="field num" type="number" min="0" max="${full}" data-ipts="${s.no}" value="${c.pts || 0}"> / ${full}</label></li>`; }).join('');
   SS().openSheet(`<h3>${itemNo}번 문항 모아 보기 <span class="muted">${TYPE[it.type] || ''}</span></h3>
     <p class="muted" style="margin:0">${esc(it.content)} · 정답: <b>${esc(it.answer)}</b>${it.criteria ? ` · 채점 기준: ${esc(it.criteria)}` : ''}</p>
@@ -401,7 +401,13 @@ function openItem(itemNo) {
       save((s, c) => { if (s.no === no) { if (v !== c.pts) delete c.rv; else if (openRv(c)) c.rv.done = 'main'; Object.assign(c, { pts: v, ok: true, manual: c.manual || v !== c.pts }); } });
       inp.closest('li').classList.remove('chk');
     }));
-    sh.querySelector('[data-un="itemOk"]').addEventListener('click', () => { save((s, c) => { c.ok = true; if (openRv(c)) c.rv.done = 'main'; }); SS().closeSheet(); toast(`${itemNo}번 문항을 모두 확인했어요`); });
+    // 검토 의견이 있는 칸은 칸을 눌러 두 의견을 보고 고르게 남김
+    sh.querySelector('[data-un="itemOk"]').addEventListener('click', () => {
+      let left = 0;
+      save((s, c) => { if (openRv(c)) { left++; return; } c.ok = true; });
+      SS().closeSheet();
+      toast(left ? `${itemNo}번 문항을 확인했어요. 검토 의견이 있는 칸 ${left}개는 칸을 눌러 골라 주세요` : `${itemNo}번 문항을 모두 확인했어요`, left ? 6000 : undefined);
+    });
   });
 }
 function nextCheck() {
