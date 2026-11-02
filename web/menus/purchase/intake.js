@@ -4,6 +4,7 @@ import * as ai from '../../core/ai.js';
 import { emptyItem, findPersonal, toNumber } from './rules.js';
 import { readQuote } from './quote.js';
 import { findItems } from '../../core/sheet.js';
+import { readText } from '../../core/files.js';
 
 const UNITS = '박스|상자|개|권|자루|세트|장|통|묶음|팩|병|봉|EA|ea|Ea|명|시간|식|건|매|롤|켤레|대|부|kg|g|L|ml|m|판|타|다스|캔|포|입';
 const QTY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNITS})(?![가-힣A-Za-z])`, 'g');
@@ -13,7 +14,10 @@ const money = (n, man) => Math.round(Number(String(n).replace(/,/g, '')) * (man 
 const CONTACT = /(?:^|[^\d])01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}(?!\d)|(?:^|[^\d])0(?:2|[3-6]\d)[-.)\s]\d{3,4}[-.\s]\d{4}(?!\d)|[\w.+-]+@[\w-]+\.[\w.]+/;
 export const hasContact = v => CONTACT.test(String(v == null ? '' : v));
 
-/* 줄 하나 → 품목 또는 null */
+/* 줄 하나 → { it, stated } 또는 null. stated: 「총 N원」으로 적은 금액(수량으로 나눠 단가를 냄) */
+const WON = /([\d,]*\d(?:\.\d+)?)\s*(?:(만)\s*원|(만)(?![가-힣])|원)/g;
+const MEASURE = /^(g|kg|ml|L|m|매|입)$/; // 규격에 가까운 단위(100매·80g) — 포장 단위가 따로 있으면 수량이 아님
+const SHIP = /^(배송비|택배비|운송비|배달비)$/;
 function parseLine(raw) {
   let s = String(raw).replace(/^\s*(?:[-•·*▪◦]|\d+[).]|\(\d+\))\s*/, '').trim();
   if (!s) return null;
@@ -22,18 +26,23 @@ function parseLine(raw) {
   if (tot) { total = money(tot[1], tot[2]); s = s.replace(tot[0], ' '); }
   let amounts = null;
   if (total == null) {
-    const wons = [...s.matchAll(/([\d,]+(?:\.\d+)?)\s*(만)?\s*원/g)];
+    const wons = [...s.matchAll(WON)];
     const times = /[×xX*]\s*([\d,]+(?:\.\d+)?)\s*(만)?\s*원?/.exec(s);
     if (wons.length) {
-      amounts = wons.map(m => money(m[1], m[2]));
+      amounts = wons.map(m => money(m[1], m[2] || m[3]));
       price = amounts[amounts.length - 1];
       for (const m of wons) s = s.replace(m[0], ' ');
     } else if (times) { price = money(times[1], times[2]); s = s.replace(times[0], ' '); }
   }
   const qs = [...s.matchAll(QTY)];
-  const q = qs.pop();
-  let qty = 1, unit = '';
-  if (q) { qty = Number(q[1]); unit = q[2]; s = s.slice(0, q.index) + ' ' + s.slice(q.index + q[0].length); }
+  const pack = qs.filter(m => !MEASURE.test(m[2]));
+  const q = (pack.length ? pack : qs).at(-1);
+  let qty = 1, unit = '', spec = '';
+  if (q) {
+    qty = Number(q[1]); unit = q[2];
+    if (pack.length) spec = qs.filter(m => MEASURE.test(m[2])).map(m => m[0].replace(/\s+/g, '')).join(' ');
+    for (const m of [...qs].reverse()) if (m === q || (pack.length && MEASURE.test(m[2]))) s = s.slice(0, m.index) + ' ' + s.slice(m.index + m[0].length);
+  }
   if (price == null && total == null) {
     const bare = /(?:^|\s)([\d,]{2,})\s*$/.exec(s);
     if (bare) { price = money(bare[1]); s = s.slice(0, bare.index); }
@@ -47,17 +56,28 @@ function parseLine(raw) {
   const name = s.replace(/[=@×*]|\(\s*\)|\[\s*\]/g, ' ').replace(/(^|\s)(?:x|X|각|개당|단가|금액)(?=\s|$)/g, ' ')
     .replace(/[,:\-–·]+\s*$/, '').replace(/\s+/g, ' ').trim();
   if (!name || price == null || !Number.isFinite(price)) return null;
-  return { ...emptyItem(), name, unit, qty: String(qty), price: String(price) };
+  if (!unit && SHIP.test(name)) unit = '건';
+  return { it: { ...emptyItem(), name, spec, unit, qty: String(qty), price: String(price) }, stated: total };
 }
 
+/* 합계만 적은 줄(「합계 36,000원」·「총액 3만원」) → 총액 칸 */
+const TOTAL_LINE = /^\s*(?:[-•·*]\s*)?(?:합\s*계|총\s*합\s*계|총\s*액|총\s*금\s*액|총)\s*:?\s*([\d,]+(?:\.\d+)?)\s*(만)?\s*원?\s*$/;
 export function parseLines(text) {
   const items = [], missed = [];
+  let said = null, sum = 0, inexact = false;
   for (const line of String(text || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const it = parseLine(line);
-    if (it && !findPersonal(it.name)) items.push(it); else missed.push(line.trim());
+    const t = TOTAL_LINE.exec(line);
+    if (t) { said = money(t[1], t[2]); continue; }
+    const p = parseLine(line);
+    if (!p || findPersonal(p.it.name)) { missed.push(line.trim()); continue; }
+    items.push(p.it);
+    const q = toNumber(p.it.qty) || 1, amt = Math.round(q * toNumber(p.it.price));
+    if (p.stated != null) { sum += p.stated; if (p.stated !== amt) inexact = true; } else sum += amt;
   }
-  return { items, fields: {}, missed };
+  // 「총 1만원」을 3개로 나누면 9,999원이 되니 적은 총액을 총액 칸에(확인 목록이 다르다고 알려 줌)
+  const fields = said != null ? { total: String(said) } : inexact ? { total: String(sum) } : {};
+  return { items, fields, missed };
 }
 
 /* 엑셀·한글 표에서 복사한 칸(탭으로 나뉜 글): 머리줄이 있으면 그 열대로, 없으면 칸 모양으로(글 = 품명·규격, 단위, 수 = 수량·단가·금액) */
@@ -135,10 +155,10 @@ export function normIntake(v, kind = 'text') {
 export const shippingItems = shipping => (shipping || []).filter(s => s && toNumber(s.fee) > 0)
   .map(s => ({ ...emptyItem(), name: '배송비', spec: str(s.vendor, 40), unit: '건', qty: '1', price: String(Math.round(toNumber(s.fee))), vendor: str(s.vendor, 40) }));
 
-/* 빈 칸만 채움 (선생님이 쓴 칸은 그대로) */
+/* 빈 칸만 채움 (선생님이 쓴 칸은 그대로). 총액은 줄글의 합계 줄에서만 옴 */
 export function fillEmpty(form, fields) {
   const out = { ...form };
-  for (const k of FIELDS) if (fields && !blank(fields[k]) && blank(out[k])) out[k] = fields[k];
+  for (const k of [...FIELDS, 'total']) if (fields && !blank(fields[k]) && blank(out[k])) out[k] = fields[k];
   return out;
 }
 
@@ -172,6 +192,8 @@ async function aiRead(kind, { images, text } = {}) {
 }
 export async function readIntake({ text, file } = {}) {
   if (file) {
+    // 글 파일은 줄글로(탭으로 나뉜 표면 표로)
+    if (/\.txt$/i.test(String(file.name || ''))) return readIntake({ text: await readText(file) });
     const isImage = IMAGE.test(String(file.name || '')) || /^image\//.test(String(file.type || ''));
     if (isImage) {
       if (!ai.ready()) throw { code: 'NO_AI' };

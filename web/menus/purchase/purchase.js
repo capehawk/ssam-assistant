@@ -41,14 +41,17 @@ function normForm(v) {
 const firstPara = r => String(r || '').split(/\n\s*\n/)[0].trim();
 const normRv = v => (Array.isArray(v) ? v.filter(x => x && (x.field === 'title' || x.field === 'intro') && typeof x.fix === 'string' && x.fix.trim())
   .map(x => ({ field: x.field, problem: String(x.problem || ''), fix: x.fix, ...(x.done === 'review' || x.done === 'main' ? { done: x.done } : {}) })) : []);
-function normDraft(d) {
+/* tail: 사유를 앱이 마지막으로 맞췄을 때의 가~붙임(예전 초안은 연 때의 것) — 그 뒤 품목·붙임이 바뀌었는지 보려고 */
+function normDraft(d, form) {
   if (!(d && typeof d === 'object' && typeof d.title === 'string')) return null;
   const reason = String(d.reason == null ? '' : d.reason);
-  return { title: d.title, reason, intro: typeof d.intro === 'string' ? d.intro : firstPara(reason), edited: d.intro == null ? true : !!d.edited, ...(normRv(d.rv).length ? { rv: normRv(d.rv) } : {}) };
+  return { title: d.title, reason, intro: typeof d.intro === 'string' ? d.intro : firstPara(reason), edited: d.intro == null ? true : !!d.edited,
+    tail: typeof d.tail === 'string' ? d.tail : reasonTail(form || emptyForm('goods')), ...(normRv(d.rv).length ? { rv: normRv(d.rv) } : {}) };
 }
 function load() {
-  const v = get(CUR_KEY, null);
-  return { id: v && typeof v.id === 'string' ? v.id : newId(), form: normForm(v && v.form), draft: normDraft(v && v.draft) };
+  const v = get(CUR_KEY, null), form = normForm(v && v.form);
+  return { id: v && typeof v.id === 'string' ? v.id : newId(), form, draft: normDraft(v && v.draft, form),
+    ...(v && Array.isArray(v.vendorsOk) ? { vendorsOk: v.vendorsOk.map(String) } : {}) };
 }
 
 let st = load();
@@ -68,7 +71,7 @@ export function openPurchase(prefill) {
   save();
   go('purchase', 'new');
 }
-export function setDraft(draft) { st.draft = normDraft(draft); save(); if (curTab === 'new' && box && box.isConnected) renderDraft(); }
+export function setDraft(draft) { st.draft = normDraft(draft, st.form); save(); if (curTab === 'new' && box && box.isConnected) renderDraft(); }
 
 /* ---------- 그리기 ---------- */
 function field(key, label, { req, ph, wide, area } = {}) {
@@ -172,10 +175,10 @@ function render() {
 
 function calcHTML() {
   const items = cleanItems(st.form.items);
-  const unit = it => String(it.unit || '').trim() || defaultUnit(st.form.type);
-  return `<table class="pc-calc" id="pcCalc"><thead><tr><th>품명</th><th>규격</th><th>단위</th><th>수량</th><th>단가</th><th>금액</th></tr></thead><tbody>`
-    + items.map(it => `<tr><td>${esc(it.name)}</td><td>${esc(it.spec)}</td><td>${esc(unit(it))}</td><td class="n">${won(toNumber(it.qty))}</td><td class="n">${won(toNumber(it.price))}</td><td class="n">${won(itemAmount(it))}</td></tr>`).join('')
-    + `</tbody><tfoot><tr><td colspan="5">합계</td><td class="n">${won(sumItems(st.form.items))}</td></tr></tfoot></table>`
+  const unit = it => String(it.unit || '').trim() || defaultUnit(st.form.type), v = showVendor();
+  return `<table class="pc-calc" id="pcCalc"><thead><tr><th>품명</th><th>규격</th><th>단위</th><th>수량</th><th>단가</th><th>금액</th>${v ? '<th>구입처</th>' : ''}</tr></thead><tbody>`
+    + items.map(it => `<tr><td>${esc(it.name)}</td><td>${esc(it.spec)}</td><td>${esc(unit(it))}</td><td class="n">${won(toNumber(it.qty))}</td><td class="n">${won(toNumber(it.price))}</td><td class="n">${won(itemAmount(it))}</td>${v ? `<td>${esc(it.vendor)}</td>` : ''}</tr>`).join('')
+    + `</tbody><tfoot><tr><td colspan="5">합계</td><td class="n">${won(sumItems(st.form.items))}</td>${v ? '<td></td>' : ''}</tr></tfoot></table>`
     + `<p class="muted pc-basis">산출 근거: ${items.map(it => esc(basisLine(it, st.form.type))).join(' / ')}</p>`;
 }
 
@@ -283,11 +286,11 @@ function live() {
 }
 /* 초안 뒤 입력이 바뀌면: 손대지 않은 사유는 가~붙임을 다시 맞추고, 손으로 고친 사유는 [사유 다시 맞추기]만 보임 */
 const tailOk = () => !st.draft || st.draft.reason.endsWith(reasonTail(st.form));
-const resyncHTML = () => (st.draft && st.draft.edited && !tailOk() ? '<p class="muted pc-resync">품목·붙임이 바뀌었어요 <button class="btn text tiny" type="button" data-pc="resync">사유 다시 맞추기</button></p>' : '');
+const resyncHTML = () => (st.draft && st.draft.edited && st.draft.tail !== reasonTail(st.form) ? '<p class="muted pc-resync">품목·붙임이 바뀌었어요 <button class="btn text tiny" type="button" data-pc="resync">사유 다시 맞추기</button></p>' : '');
 function syncReason() {
   if (!st.draft || !box) return;
   if (!st.draft.edited && !tailOk()) {
-    st.draft.reason = composeReason({ intro: st.draft.intro, form: st.form });
+    st.draft.reason = composeReason({ intro: st.draft.intro, form: st.form }); st.draft.tail = reasonTail(st.form);
     save();
     const ta = box.querySelector('#pcReason');
     if (ta && document.activeElement !== ta) ta.value = st.draft.reason;
@@ -300,8 +303,9 @@ function markBad(r) {
   box.querySelectorAll('.field.bad').forEach(el => el.classList.remove('bad'));
   for (const k of [...r.missing, ...r.personal]) {
     if (k === 'items') {
-      const idx = r.personal.includes('items') ? st.form.items.map((it, i) => (findPersonal(it.name) || findPersonal(it.spec) ? i : -1)).filter(i => i >= 0) : [];
-      (idx.length ? idx : [0]).forEach(i => { const el = box.querySelector(`[data-item="${i}"][data-f="name"]`); if (el) el.classList.add('bad'); });
+      // 개인정보가 든 칸만(품명·규격·단위·구입처), 품목이 없으면 첫 줄 품명
+      const bad = r.personal.includes('items') ? st.form.items.flatMap((it, i) => ['name', 'spec', 'unit', 'vendor'].filter(f => findPersonal(it[f])).map(f => [i, f])) : [];
+      (bad.length ? bad : [[0, 'name']]).forEach(([i, f]) => { const el = box.querySelector(`[data-item="${i}"][data-f="${f}"]`); if (el) el.classList.add('bad'); });
     } else {
       const el = box.querySelector(`[data-k="${k}"]`);
       if (el) el.classList.add('bad');
@@ -351,7 +355,7 @@ async function makeDraft() {
       task: 'purchase',
       valid: x => x && typeof x.title === 'string' && x.title.trim() && typeof x.intro === 'string' && x.intro.trim()
     });
-    mine.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: mine.form }), edited: false };
+    mine.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: mine.form }), edited: false, tail: reasonTail(mine.form) };
     if (st === mine) {
       save();
       keepRecent();
@@ -391,7 +395,7 @@ document.addEventListener('input', e => {
     if (el.dataset.d === 'reason') {
       // 첫 문장만 고쳤으면(가~붙임은 앱이 만든 그대로) 계속 맞춤, 그 밖을 고쳤으면 손으로 고친 사유
       const intro = firstPara(el.value);
-      if (intro && el.value.trim() === composeReason({ intro, form: st.form }).trim()) { st.draft.intro = intro; st.draft.edited = false; }
+      if (intro && el.value.trim() === composeReason({ intro, form: st.form }).trim()) { st.draft.intro = intro; st.draft.edited = false; st.draft.tail = reasonTail(st.form); }
       else st.draft.edited = true;
       const rb = box.querySelector('#pcResyncBox'); if (rb) rb.innerHTML = resyncHTML();
     }
@@ -423,7 +427,7 @@ document.addEventListener('click', e => {
     const f = ru ? ru.dataset.rvUse : rk.dataset.rvKeep, r = openRv(f);
     if (!r) return;
     if (ru && f === 'title') st.draft.title = r.fix;
-    else if (ru) { st.draft.intro = r.fix; st.draft.reason = st.draft.edited ? replaceFirst(st.draft.reason, r.fix) : composeReason({ intro: r.fix, form: st.form }); }
+    else if (ru) { st.draft.intro = r.fix; if (st.draft.edited) st.draft.reason = replaceFirst(st.draft.reason, r.fix); else { st.draft.reason = composeReason({ intro: r.fix, form: st.form }); st.draft.tail = reasonTail(st.form); } }
     st.draft.rv = st.draft.rv.map(x => (x === r ? { ...x, done: ru ? 'review' : 'main' } : x));
     save(); renderDraft(); return;
   }
@@ -458,7 +462,7 @@ document.addEventListener('click', e => {
     save(); renderItems();
   } else if (a === 'resync' && st.draft) {
     st.draft.intro = firstPara(st.draft.reason) || st.draft.intro;
-    st.draft.reason = composeReason({ intro: st.draft.intro, form: st.form }); st.draft.edited = false;
+    st.draft.reason = composeReason({ intro: st.draft.intro, form: st.form }); st.draft.edited = false; st.draft.tail = reasonTail(st.form);
     save(); renderDraft();
   }
   else if (a === 'intake') { const t = box.querySelector('#pcIntake').value; if (!t.trim()) { toast('넣을 글을 쓰거나 붙여넣어 주세요. 파일·캡처는 끌어 놓거나 붙여넣으면 바로 읽어요.'); return; } runIntake({ text: t }); }
@@ -519,12 +523,12 @@ function askMerge(n) {
 function askVendors(vs) {
   SS().openSheet(`<h3>구입처가 ${vs.length}곳이에요</h3><p class="muted" style="margin:0">${vs.map(esc).join('·')} · 구입처별로 품의를 나눌까요? 나누면 지금 품의에는 「${esc(vs[0])}」 품목만 남고, 나머지는 「최근 작성」에 새 품의로 들어가요.</p>
     <div class="row" style="justify-content:flex-end"><button class="btn" type="button" id="pcVendorOne">한 품의로</button><button class="btn primary" type="button" id="pcVendorSplit">구입처별로 나누기</button></div>`, sh => {
-    sh.querySelector('#pcVendorOne').addEventListener('click', () => { SS().closeSheet(); toast('한 품의로 두었어요. 품목마다 구입처를 적어 두었어요.'); });
+    sh.querySelector('#pcVendorOne').addEventListener('click', () => { SS().closeSheet(); st.vendorsOk = vs.slice(); save(); toast('한 품의로 두었어요. 품목마다 구입처를 적어 두었어요.'); });
     sh.querySelector('#pcVendorSplit').addEventListener('click', () => {
       SS().closeSheet();
       const parts = splitByVendor(st.form);
       parts.slice(1).forEach((p, i) => pushRecent({ id: newId(), at: Date.now() + i, form: { ...p, project: `${String(p.project || '물품 구입').trim()} (${vs[i + 1]})` }, draft: null }));
-      st.form = normForm(parts[0]); st.draft = null; save(); render();
+      st.form = normForm(parts[0]); save(); render(); // 초안은 남기고 사유는 render에서 다시 맞춤
       toast(`나머지 ${parts.length - 1}곳은 「최근 작성」에 새 품의로 넣었어요`, 6000);
     });
   });
@@ -553,7 +557,8 @@ async function runIntake(input) {
   const ship = r.items.filter(it => it.name === '배송비').length;
   toast(`품목 ${r.items.length}개${ship ? '(배송비 포함)' : ''}를 넣었어요${r.missed && r.missed.length ? ` · 못 읽은 줄 ${r.missed.length}개` : ''}${r.by === 'ai' ? ' · AI가 읽었어요. 금액을 확인해 주세요' : ''}${note}`, 6000);
   const vs = vendorsOf(st.form.items);
-  if (vs.length >= 2) askVendors(vs);
+  // [한 품의로] 고른 구입처만 있으면 다시 묻지 않음
+  if (vs.length >= 2 && vs.some(v => !(st.vendorsOk || []).includes(v))) askVendors(vs);
   return r.items.length;
 }
 async function intakeFiles(files) { for (const f of files) await runIntake({ file: f }); }
@@ -646,7 +651,10 @@ document.addEventListener('click', e => {
     const t = listTemplates().find(x => x.id === d.tplDel); if (!t) return;
     SS().openSheet(`<h3>「${esc(t.name)}」 템플릿을 지울까요?</h3><div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="pcTplDelOk">지우기</button></div>`,
       sh => sh.querySelector('#pcTplDelOk').addEventListener('click', () => { deleteTemplate(t.id); SS().closeSheet(); renderOther(curTab); toast('템플릿을 지웠어요'); }));
-  } else if (d.recentOpen) { const r = listRecent().find(x => x.id === d.recentOpen); if (r) swapTo({ id: r.id, form: normForm(r.form), draft: normDraft(r.draft) }); }
+  } else if (d.recentOpen) { const r = listRecent().find(x => x.id === d.recentOpen); if (!r) return;
+    // 지금 쓰고 있는 품의면 고치던 것 그대로 새 품의 탭으로(저장해 둔 옛 모습으로 바꾸지 않음)
+    if (r.id === st.id) { go('purchase', 'new'); toast('지금 쓰고 있는 품의예요'); return; }
+    const f = normForm(r.form); swapTo({ id: r.id, form: f, draft: normDraft(r.draft, f) }); }
   else if (d.recentDel) { deleteRecent(d.recentDel); renderOther(curTab); toast('최근 작성에서 지웠어요'); }
 });
 

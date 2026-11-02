@@ -127,6 +127,8 @@ export function meetingItem({ people, price, times = 1 }) {
   return { name: '협의회 다과비', spec: `${n}명 × ${m}회`, unit: '명', qty: String(n * m), price: String(Math.round(toNumber(price))), vendor: '' };
 }
 const perPerson = it => toNumber(it.price);
+/* 1인당 줄: 단위 명, 규격에 「N명」, 다과·식사 같은 품명 (대관료 1식 같은 줄은 상한과 상관없음) */
+const perPersonLine = it => String(it.unit || '').trim() === '명' || /\d\s*명/.test(String(it.spec || '')) || FOOD.test(String(it.name || ''));
 
 /* 예산 과목 추천 (참고, AI 없음) */
 const EDU = /교구|실험|재료|교재|체험|학습|만들기|키트|교육/, SUPPLY = /소모품|인쇄|사무|토너|용지|복사|문구|파일|테이프|건전지|잉크/;
@@ -157,7 +159,7 @@ export function attachText(lines) {
 }
 
 /* 확인 목록 (P-6·P-7). missing·personal은 칸 이름 */
-export function checkPurchase(form, { limit } = {}) {
+export function checkPurchase(form, { limit, meetCap } = {}) {
   const f = form || {};
   const items = cleanItems(f.items);
   const missing = ['purpose', 'date', 'target'].filter(k => blank(f[k]));
@@ -174,8 +176,8 @@ export function checkPurchase(form, { limit } = {}) {
   }
   if (f.budgetUnknown || blank(f.budget)) warnings.push('예산 과목 · 행정실 확인 필요');
   if (limit > 0 && total > limit) warnings.push(`별도 계약 절차 확인 필요 (합계 ${won(total)}원 > 기준 ${won(limit)}원)`);
-  const cap = arguments[1] && arguments[1].meetCap > 0 ? arguments[1].meetCap : 40000;
-  if (f.type === 'meeting') { const over = items.find(it => perPerson(it) > cap); if (over) warnings.push(`1인 단가 ${won(perPerson(over))}원이 협의회 상한 ${won(cap)}원보다 커요 · 행정실 확인`); }
+  const cap = meetCap > 0 ? meetCap : 40000;
+  if (f.type === 'meeting') { const over = items.filter(perPersonLine).find(it => perPerson(it) > cap); if (over) warnings.push(`1인 단가 ${won(perPerson(over))}원이 협의회 상한 ${won(cap)}원보다 커요 · 행정실 확인`); }
   if (f.type === 'event' && items.some(it => FOOD.test(it.name))) warnings.push('행사성 식비는 업무추진비로 따로 품의하는지 행정실 확인');
   if (!personal.length) oks.push('주민번호·계좌번호가 들어 있지 않아요');
   return { missing, personal, warnings, oks, total, canDraft: !missing.length && !personal.length };
@@ -193,8 +195,8 @@ export function itemsTSV(items, type = 'goods') {
 export function draftMemo(form) {
   const f = form || {}, type = TYPES.find(t => t.id === f.type) || TYPES[0], its = cleanItems(f.items);
   const items = type.id === 'lecturer'
-    ? `외부 강사 ${its.length}명, 모두 ${won(its.reduce((n, it) => n + toNumber(it.qty), 0))}시간`
-    : its.map(it => `${it.name}${it.spec ? `(${it.spec})` : ''} ${won(toNumber(it.qty))}${String(it.unit || '').trim() || '개'} × ${won(toNumber(it.price))}원`).join(', ');
+    ? `강사 ${its.length}명, 모두 ${won(its.reduce((n, it) => n + toNumber(it.qty), 0))}시간`
+    : its.map(it => `${it.name}${it.spec ? `(${it.spec})` : ''} ${won(toNumber(it.qty))}${String(it.unit || '').trim() || defaultUnit(type.id)} × ${won(toNumber(it.price))}원`).join(', ');
   const line = (k, v) => (String(v || '').trim() ? `- ${k}: ${String(v).trim()}\n` : '');
   return line('종류', type.label) + line('사업명', f.project) + line('목적', f.purpose) + line('일시', f.date) + line('대상', f.target) + line('장소', f.place)
     + line('품목', items) + `- 합계: ${won(sumItems(f.items))}원\n` + line('그 밖의 메모', f.memo);
@@ -226,14 +228,16 @@ export function purchaseDoc(form, draft) {
     ...items.map(it => [it.name, it.spec, unitOf(it, type), String(toNumber(it.qty)), won(toNumber(it.price)), won(itemAmount(it)), ...(v ? [String(it.vendor || '').trim()] : [])]),
     ['합계', '', '', '', '', won(sumItems(f.items)), ...(v ? [''] : [])]];
   const budget = f.budgetUnknown || blank(f.budget) ? '행정실 확인 필요' : String(f.budget).trim();
+  const reason = String(d.reason || '');
   return {
     title: String(d.title || f.project || '품의').trim(),
     blocks: [
       { type: 'h', text: '1. 품의 사유' }, { type: 'p', text: d.reason || '' },
       { type: 'h', text: '2. 산출 내역' }, { type: 'table', head: true, rows },
-      { type: 'p', text: `산출 근거: ${items.map(it => basisLine(it, type)).join(' / ')}` },
-      { type: 'p', text: `예산 과목: ${budget}` },
-      { type: 'p', text: attachText(attachLines(f)) }
+      // 사유에 이미 있으면(앱이 만든 사유) 다시 쓰지 않음, 손으로 고쳐 빠졌으면 씀
+      ...(reason.includes('산출 근거') ? [] : [{ type: 'p', text: `산출 근거: ${items.map(it => basisLine(it, type)).join(' / ')}` }]),
+      ...(reason.includes('예산 과목') ? [] : [{ type: 'p', text: `예산 과목: ${budget}` }]),
+      ...(/(^|\n)\s*붙임/.test(reason) ? [] : [{ type: 'p', text: attachText(attachLines(f)) }])
     ]
   };
 }

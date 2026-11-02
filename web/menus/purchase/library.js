@@ -20,9 +20,9 @@ export const deleteRecent = id => set(RECENT, listRecent().filter(x => x.id !== 
 /* ---------- 저장한 템플릿 ---------- */
 const normTpl = x => (isObj(x) && typeof x.id === 'string' && isObj(x.form) ? { id: x.id, name: String(x.name || '이름 없는 템플릿').slice(0, 60), savedAt: Number(x.savedAt) || 0, form: x.form } : null);
 export const listTemplates = () => { const v = get(TPL, []); return (Array.isArray(v) ? v : []).map(normTpl).filter(Boolean); };
-/* 일시는 비우고 저장(불러오면 날짜만 고치면 되게). 50개를 넘으면 오래된 것부터 뺌 */
+/* 일시·메모·총액은 비우고 저장(불러오면 날짜만 고치면 되게, 지난 총액이 경고를 내지 않게). 50개를 넘으면 오래된 것부터 뺌 */
 export function saveTemplate(name, form) {
-  const t = { id: newId(), name: String(name || '').trim().slice(0, 60) || String(form.project || '').trim().slice(0, 60) || '이름 없는 템플릿', savedAt: Date.now(), form: { ...form, date: '' } };
+  const t = { id: newId(), name: String(name || '').trim().slice(0, 60) || String(form.project || '').trim().slice(0, 60) || '이름 없는 템플릿', savedAt: Date.now(), form: { ...form, date: '', memo: '', total: '' } };
   return set(TPL, [t, ...listTemplates()].slice(0, 50)) ? t : null;
 }
 export function renameTemplate(id, name) {
@@ -31,4 +31,4 @@ export function renameTemplate(id, name) {
   return set(TPL, listTemplates().map(t => (t.id === id ? { ...t, name: n } : t)));
 }
 export const deleteTemplate = id => set(TPL, listTemplates().filter(t => t.id !== id));
-export const templateForm = tpl => ({ ...tpl.form, date: '' });
+export const templateForm = tpl => ({ ...tpl.form, date: '', memo: '', total: '' });
