@@ -42,7 +42,9 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ### 설치판 연수 화면 회귀 검사
 
-첫 설치판에서 PDF 검사 JavaScript가 `application/pdf`로 제공되어 연수 모듈이 로드되지 않는 오류를 재현했습니다. PDF 머리 검사를 숫자 바이트 비교로 바꾸었습니다. 일반 HTTP 서버의 화면 테스트로 발견하지 못했던 문제이므로 `tests/native/training-smoke.mjs`에서 실제 Windows 실행 파일의 MIME·연수 연결 화면·네이티브 전송 명령을 검사합니다. 수정 전 설치판에서는 MIME 검사 실패를 확인했습니다. 수정 후 통과 여부는 해당 빌드의 ‘실제 Windows 연수 화면 검사’ 단계로 확인합니다.
+첫 설치판에서 PDF 검사 JavaScript가 `application/pdf`로 제공되어 연수 모듈이 로드되지 않는 오류를 재현했습니다. PDF 머리 검사를 숫자 바이트 비교로 바꾸었습니다. 일반 HTTP 서버의 화면 테스트로 발견하지 못했던 문제이므로 Rust 테스트에서 Tauri의 실제 MIME 판별 함수를 호출해 회귀를 검사합니다.
+
+`tests/native/training-smoke.mjs`는 Windows 데스크톱에서 다운로드한 실행 파일의 MIME·연수 연결 화면·업데이트 차단·네이티브 전송 명령을 검사합니다. 수정 전 설치판은 MIME 검사에서 실패했고, 커밋 `65776a0`의 실행 파일은 로컬 Windows에서 모두 통과했습니다. GitHub 호스팅 러너에서는 WebView2 진단 포트 연결이 실패하여 이 GUI 검사는 CI 필수 단계에서 분리했습니다. CI 통과를 실제 앱 실행 검사 통과로 해석하면 안 됩니다. 배포할 파일은 별도로 이 스크립트를 실행해 확인합니다.
 
 테스트판은 `tauri.training.conf.json`과 `training-demo` 기능으로 빌드합니다. 이름은 ‘쌤비서 연수 테스트’이며 앱 식별자를 분리하고 공식 업데이트 조회·설치를 차단합니다. 이 검사에는 실제 교사 인증값을 사용한 제출·담당자 승인 과정이 포함되지 않습니다.
 

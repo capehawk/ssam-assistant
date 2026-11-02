@@ -63,6 +63,11 @@ pub async fn training_request(url: String, body: String) -> Result<String, Strin
 mod tests {
     use super::*;
     #[test]
+    fn certificate_module_has_javascript_mime() {
+        let source = include_bytes!("../../web/menus/training/certificate.js");
+        assert_eq!(tauri::utils::mime_type::MimeType::parse(source, "certificate.js"), "text/javascript");
+    }
+    #[test]
     fn deployment_is_exact_and_has_no_credentials_or_query() {
         assert!(allowed_deployment("https://script.google.com/macros/s/demo_123/exec"));
         for url in ["http://script.google.com/macros/s/x/exec", "https://script.google.com.evil.test/macros/s/x/exec", "https://user@script.google.com/macros/s/x/exec", "https://script.google.com/macros/s/x/exec?token=x", "https://script.google.com/macros/s/x/dev", "https://script.google.com/macros/s/x/exec#x"] { assert!(!allowed_deployment(url)); }
