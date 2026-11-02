@@ -12,7 +12,7 @@ import { go } from '../../../core/shell.js';
 import { gradePrompt, normGrade, validGrade } from './unit-ai.js';
 import { arrangePages } from './unit-pages.js';
 import { readNos, openNoCheck, openNoWait, rosterAllowed, byNoOrder } from '../../../core/student-no.js';
-import { esc, SS, AI_KEY, registerStep, inStep, cur, curId, commit, saveOrWarn, refresh, render, goStep, getBox, openTest } from './unit.js';
+import { esc, SS, AI_KEY, registerStep, inStep, cur, curId, commit, saveOrWarn, refresh, render, goStep, getBox, openTest, U } from './unit.js';
 
 const TYPE = Object.fromEntries(ITEM_TYPES);
 /* 세션 상태: 올린 스캔은 한 평가에만 붙음(raw: 올린 장, pages: 모아찍기를 자르고 뒷면을 돌린 쪽). 채점은 한 번에 한 평가만(run: 그 평가의 차례·멈춤) */
@@ -44,6 +44,16 @@ async function loadAnswers(fileList) {
   try { r = await SS().files.readPages(fileList, say); }
   catch (e) { say(e && e.message === 'PDFJS' ? 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진으로 올려 주세요.' : '파일을 읽지 못했어요.'); return false; }
   if (!r.pages.length) { say('읽을 수 있는 PDF·사진이 없어요.'); return false; }
+  return placeRaw(t0, id, per, r, say);
+}
+/* 한꺼번에 넣기에서 나눈 학생 쪽(이미 읽은 쪽)을 답안으로 */
+export async function loadAnswerPages(raw) {
+  const t0 = cur(), id = t0.id, per = Math.max(1, getSet().pagesPer | 0);
+  const say = m => { G.msg = m; const el = getBox() && getBox().querySelector('#unAnsMsg'); if (el) el.textContent = m; };
+  if (busyOther(id) || busy(id)) { say('채점하는 중이에요. 끝나거나 멈춘 뒤에 다시 올려 주세요.'); SS().files.freePages(raw); return false; }
+  return placeRaw(t0, id, per, { pages: raw, skipped: [] }, say);
+}
+async function placeRaw(t0, id, per, r, say) {
   let pages;
   try { pages = await arrange(r.pages); }
   catch (e) { SS().files.freePages(r.pages); say('스캔을 나누지 못했어요. 다시 올려 주세요.'); return false; }
@@ -430,7 +440,11 @@ function askFinish() {
   }));
 }
 
-registerStep(2, { html: step2HTML });
+registerStep(2, {
+  html: step2HTML,
+  // 1단계 한꺼번에 넣기에서 넘어온 학생 쪽
+  bind: (box, t) => { if (U.pending && U.pending.id === t.id) { const p = U.pending.pages; U.pending = null; setTimeout(() => loadAnswerPages(p), 0); } }
+});
 registerStep(3, { html: step3HTML });
 
 document.addEventListener('click', e => {
