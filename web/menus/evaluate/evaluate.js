@@ -1206,7 +1206,7 @@ const Store = {
     if (this.mode === 'db') {
       try {
         const q = await cap.db.doc(this.base() + '/p_' + id).collection('sets').limit(1000).get();
-        q.docs.forEach(d => { const b = d.data(); out.set(d.id, { items: (b.items || []).map(x => ({ t: x.t, d: x.d ? 1 : 0 })), want: b.want || N, saved: 1 }); });
+        q.docs.forEach(d => { const b = d.data(); out.set(d.id, { items: (b.items || []).map(itemOut), want: b.want || N, saved: 1 }); });
       } catch (e) {}
       return fixSetEndings(id, out);
     }
@@ -1216,7 +1216,7 @@ const Store = {
   },
   // sets: 그 평가계획의 묶음 (다른 평가계획을 연 뒤에 끝난 작업이 엉뚱한 묶음을 저장하지 않게 넘겨받음)
   saveSet(planId, key, set, sets = S.sets) {
-    const body = { items: set.items.map(x => ({ t: x.t, d: x.d ? 1 : 0 })), want: set.want || N, at: Date.now() };
+    const body = { items: set.items.map(itemOut), want: set.want || N, at: Date.now() };
     if (this.mode === 'db') return writeDoc(this.base() + '/p_' + planId + '/sets/' + key, body);
     if (this.mode === 'local') {
       this._lt = this._lt || {}; this._lf = this._lf || {};
@@ -1225,7 +1225,7 @@ const Store = {
         delete this._lt[planId]; delete this._lf[planId];
         if (this._gone && this._gone.has(planId)) return; // 지운 평가계획
         const all = {};
-        sets.forEach((v, k) => { if (v.items.length) all[k] = { items: v.items.map(x => ({ t: x.t, d: x.d ? 1 : 0 })), want: v.want }; });
+        sets.forEach((v, k) => { if (v.items.length) all[k] = { items: v.items.map(itemOut), want: v.want }; });
         this.lsSet('ssam:sets:' + planId, all);
       };
       this._lf[planId] = write;
@@ -1501,6 +1501,7 @@ function enqueueAll() {
   pump();
 }
 function pump() {
+  if (!S.running.size && !S.queue.length) S.noReview = false; // 검토 실패로 멈춘 것은 그 차례에만
   if (S.paused || !engineReady()) { updateGen(); return; }
   while (S.running.size < conc() && S.queue.length) run(S.queue.shift());
   updateGen();
@@ -1550,6 +1551,63 @@ function errMsg(code, e) {
   };
   return m[code] || SAMPLE_MSG[code] || SAMPLE_MSG.upstream_error;
 }
+/* ---------- 검토 AI (평어·행특·창체·평가지 평어 문장) ---------- */
+const RV = () => (window.SSAM && window.SSAM.review) || null;
+/* items: [{ o, f }] — o[f]가 문장. 검토 AI가 문제를 적은 문장에만 o[rv] = { problem, fix }, 검토한 문장은 o[d] = 1.
+   반환: 'off'(검토 꺼짐·볼 문장 없음) | 'ok' | 'fail'(키·한도·연결 — 쓴 글은 그대로) */
+async function reviewSentences(kind, info, items, signal, keys = { rv: 'rv', d: 'rvd' }) {
+  const R = RV();
+  if (!R || !R.texts) return 'off';
+  const list = items.filter(x => x.o && !x.o[keys.d] && String(x.o[x.f] || '').trim());
+  if (!list.length) return 'off';
+  const sent = list.map(x => x.o[x.f]);
+  const res = await R.texts(kind, info, sent, { signal });
+  if (res == null) return 'off';
+  const got = Array.isArray(res) ? res : (res.partial || []);
+  // 검토하는 동안 바뀐 문장(다시 쓰기·손으로 고침)의 의견은 버림
+  for (const r of got) { const x = list[r.i - 1]; if (x && x.o[x.f] === sent[r.i - 1]) x.o[keys.rv] = { problem: r.problem, fix: r.fix }; }
+  if (!Array.isArray(res)) return res.error === 'cancelled' ? 'off' : 'fail';
+  list.forEach((x, i) => { if (x.o[x.f] === sent[i]) x.o[keys.d] = 1; });
+  return 'ok';
+}
+const rvOpen = (o, k = 'rv') => !!(o && o[k] && !o[k].done);
+function rvInline(o, key, title, k = 'rv', f = 't') {
+  const R = RV();
+  if (!R || !rvOpen(o, k)) return '';
+  return `<div class="rv-inline" data-rv-for="${esc(key)}">${R.opinionHTML({ title, main: o[f], alt: o[k].fix, why: o[k].problem, use: key, keep: key, useLabel: '고친 문장 쓰기' })}</div>`;
+}
+const rvBarHTML = n => { const R = RV(); return R ? R.reviewBar(n, 'data-rv-next') : ''; };
+const GR_RV = { handle: () => false }; // 평가지 채점 점수 검토(아래에서 채움)
+const RV_FAIL_HTML = '<p class="rv-fail" role="status">검토하지 못했어요. 쓴 글은 그대로 쓸 수 있어요.</p>';
+/* 저장할 문장: 사용함 표시와 검토 의견 */
+const itemOut = x => ({ t: x.t, d: x.d ? 1 : 0, ...(x.rvd ? { rvd: 1 } : {}), ...(x.rv ? { rv: x.rv } : {}) });
+const pyInfo = (u, lv) => [u.std && `[성취기준] ${u.std}`, u.elem && `[평가요소] ${u.elem}`, `[수준] ${LVNAME[lv]}${u.crit[lv] ? ': ' + u.crit[lv] : ''}`].filter(Boolean).join('\n');
+/* 의견 고르기: 열쇠 → 그 문장. py:평가요소:수준:번호 · hk:학생:번호 · cc:영역:번호:활동 · gr:학생 */
+function rvTarget(key) {
+  const p = String(key || '').split(':').map(decodeURIComponent);
+  if (p[0] === 'py') { const set = getSet(p[1], p[2]), o = set.items[+p[3]]; return o && { o, f: 't', save: () => S.planId && Store.saveSet(S.planId, setKey(p[1], p[2]), set), render: () => { renderList(); renderTabs(); } }; }
+  if (p[0] === 'hk') { const st = hkStudent(p[1]), o = st && (st.results || [])[+p[2]]; return o && { o, f: 't', save: () => HKStore.save(), render: () => { renderHKEditor(); renderHKList(); } }; }
+  if (p[0] === 'cc') { const it = ccArea(p[1]).items[+p[2]], o = it && it.parts && it.parts[p[3]]; return o && { o, f: 't', save: () => CCStore.save(), render: renderCCResults }; }
+  if (p[0] === 'gr') { const o = grStudent(p[1]); return o && { o, f: 'text', rv: 'trv', save: () => GRStore.save(), render: renderGRResults }; }
+  return null;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-rv-use],[data-rv-keep],[data-rv-next]');
+  const view = b && b.closest('#planView,#hkView,#ccView,#grView');
+  if (!view) return;
+  e.stopPropagation(); e.preventDefault();
+  if (b.dataset.rvNext != null) { const op = view.querySelector('.rv-op'); if (op) { op.scrollIntoView({ block: 'center', behavior: 'smooth' }); const x = op.querySelector('button'); if (x) x.focus({ preventScroll: true }); } return; }
+  const use = b.dataset.rvUse != null, key = use ? b.dataset.rvUse : b.dataset.rvKeep;
+  if (GR_RV.handle(key, use)) return;
+  const tg = rvTarget(key);
+  if (!tg) return;
+  const k = tg.rv || 'rv';
+  if (!rvOpen(tg.o, k)) return;
+  if (use) { tg.o[tg.f] = tg.o[k].fix; if (k === 'trv') tg.o.stale = false; }
+  tg.o[k] = { ...tg.o[k], done: use ? 'review' : 'main' };
+  tg.save(); tg.render();
+  toast(use ? '고친 문장을 썼어요' : '그대로 두었어요');
+}, true);
 async function run(job) {
   const u = unitById(job.unitId);
   const key = setKey(job.unitId, job.lv);
@@ -1592,6 +1650,12 @@ async function run(job) {
     }
     set.status = set.items.length >= target ? 'done' : 'part';
     S.consecutiveErr = 0; concOk();
+    // 검토 AI: 새로 쓴 문장을 10개씩 (사용함으로 표시한 문장은 빼고)
+    if (!S.noReview) {
+      renderListSoon(job.unitId, job.lv);
+      const r = await reviewSentences('pyeongeo', pyInfo(u, job.lv), set.items.filter(x => !x.d).map(o => ({ o, f: 't' })), ctl.signal);
+      if (r === 'fail') { S.noReview = true; set.rvErr = 1; } else if (r === 'ok') delete set.rvErr;
+    }
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
     if (e && e.text) { const keys = unitKeys(job.unitId); e.text.split('\n').slice(0, -1).forEach(l => addLine(job.unitId, set, l, target, keys)); }
@@ -1865,11 +1929,11 @@ function renderList() {
   const busy = s.status === 'running' || s.status === 'queued';
   let items = s.items.map((x, i) => ({ ...x, i }));
   if (S.remainOnly) items = items.filter(x => !x.d);
-  const rows = items.map(x => `<li class="sent ${x.d ? 'done' : ''} ${x.fresh ? 'fresh' : ''}" data-i="${x.i}" tabindex="0" role="button" aria-label="${x.d ? '사용함. ' : ''}${esc(x.t)} 복사">
+  const rows = items.map(x => `<li class="sent ${x.d ? 'done' : ''} ${x.fresh ? 'fresh' : ''}${rvOpen(x) ? ' rv-mark' : ''}" data-i="${x.i}" tabindex="0" role="button" aria-label="${x.d ? '사용함. ' : ''}${esc(x.t)} 복사">
       <span class="n"><span class="num-text">${x.i + 1}</span>${ICON.check}</span>
       <span class="t">${esc(x.t)}</span>
       <span class="side"><span class="len">${x.t.length}자</span><button class="icon-btn x" type="button" data-x="${x.i}" aria-label="이 문장 빼기" title="이 문장 빼기">${ICON.x}</button><button class="undo" type="button" data-undo="${x.i}">되돌리기</button></span>
-    </li>`).join('');
+    </li>${rvOpen(x) ? `<li class="rv-li">${rvInline(x, ['py', u.id, S.lv, x.i].map(encodeURIComponent).join(':'), `${x.i + 1}번 문장`)}</li>` : ''}`).join('');
   let tail = '';
   if (s.status === 'running') tail = `<li class="skel" aria-hidden="true"></li><li class="skel" aria-hidden="true"></li>`;
   else if (s.status === 'queued' && !s.items.length) tail = `<li class="skel" aria-hidden="true"></li><li class="skel" aria-hidden="true"></li><li class="skel" aria-hidden="true"></li>`;
@@ -1882,6 +1946,7 @@ function renderList() {
   }
   if (s.status === 'error') head = `<div class="banner err"><span class="grow">${esc(s.err || SAMPLE_MSG.upstream_error)}</span><button class="btn" type="button" data-act="retry">다시 시도</button></div>` + head;
   if (busy) head = `<div class="muted" style="display:flex;gap:8px;align-items:center;padding:2px 2px 6px"><span class="spin"></span>${s.status === 'queued' ? '차례를 기다리는 중이에요' : `${LVNAME[S.lv]} 수준 평어를 쓰는 중이에요 · ${s.items.length}/${s.want || N}`}</div>` + head;
+  head += (s.rvErr ? RV_FAIL_HTML : '') + rvBarHTML(s.items.filter(x => rvOpen(x)).length);
   if (S.remainOnly && s.items.length && !items.length) head += `<div class="empty"><h3>이 수준 문장을 모두 썼어요</h3><p>10개 더를 누르면 겹치지 않는 문장을 더 만들어요.</p></div>`;
   box.innerHTML = head + ((rows || tail) ? `<ul class="list ${lvc}">${rows}${tail}</ul>` : '');
   s.items.forEach(x => { delete x.fresh; });
@@ -2625,7 +2690,7 @@ const HKStore = {
   },
   write() {
     this.t = null;
-    const body = { settings: HK.settings, students: HK.students.map(s => ({ id: s.id, no: s.no, label: s.label || '', memo: s.memo || '', done: s.done ? 1 : 0, results: (s.results || []).slice(0, 4).map(r => ({ t: r.t, d: r.d ? 1 : 0 })) })), at: Date.now() };
+    const body = { settings: HK.settings, students: HK.students.map(s => ({ id: s.id, no: s.no, label: s.label || '', memo: s.memo || '', done: s.done ? 1 : 0, results: (s.results || []).slice(0, 4).map(itemOut), ...(s.rvErr ? { rvErr: 1 } : {}) })), at: Date.now() };
     if (Store.mode === 'db') writeDoc(Store.base() + '/hk', body);
     else if (Store.mode === 'local') Store.lsSet('ssam:hk', body);
   }
@@ -2733,6 +2798,7 @@ function hkEnqueue(id, front) {
   hkPump();
 }
 function hkPump() {
+  if (!HK.running.size && !HK.queue.length) HK.noReview = false; // 검토 실패로 멈춘 것은 그 차례에만
   if (HK.waitUntil && Date.now() < HK.waitUntil) { if (S.mode === 'hk') { renderHKList(); hkEditorSoft(); } return; }
   if (engineReady()) while (HK.running.size < conc() && HK.queue.length) hkRun(HK.queue.shift());
   if (S.mode === 'hk') { renderHKList(); hkEditorSoft(); }
@@ -2777,6 +2843,12 @@ async function hkRun(id) {
     }
     s.results = [...keep, ...fixed.map(t => ({ t, d: 0 }))];
     s.rl = 0; concOk();
+    // 검토 AI: 새 후보만 (메인 결과는 먼저 보여 줌)
+    if (!HK.noReview) {
+      if (S.mode === 'hk') { renderHKList(); hkEditorSoft(id); }
+      const r = await reviewSentences('hk', `[분량] ${HK.settings.min}~${HK.settings.max}${unitWord()}`, s.results.filter(x => !x.d).map(o => ({ o, f: 't' })), ctl.signal);
+      if (r === 'fail') { HK.noReview = true; s.rvErr = 1; } else if (r === 'ok') delete s.rvErr;
+    }
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
     if (code === 'rate_limited' && E.engine !== 'account' && (s.rl = (s.rl || 0) + 1) <= 4) {
@@ -2806,7 +2878,7 @@ async function hkAdjust(id, idx, dir) {
   try {
     const out = await hkCall(hkFixPrompt(s, r.t, dir));
     const c = out.split('\n').map(hkClean).filter(Boolean).join(' ');
-    if (c) { r.t = dir === 'longer' ? c : hkTrim(c); r.d = 0; }
+    if (c) { r.t = dir === 'longer' ? c : hkTrim(c); r.d = 0; delete r.rv; }
     toast(dir === 'longer' ? '조금 길게 고쳤어요' : '조금 짧게 고쳤어요');
   } catch (e) { toast(errMsg((e && e.code) || 'upstream_error', e), 4500); }
   finally { delete r.busy; HKStore.save(); renderHKEditor(); renderHKList(); }
@@ -2874,7 +2946,7 @@ function renderHKEditor() {
   const res = (s.results || []).map((r, i) => {
     const cur = r.draft != null ? r.draft : r.t;
     const ok = rangeOk(cur);
-    return `<div class="hk-res ${r.d ? 'done' : ''}" data-ri="${i}">
+    return `<div class="hk-res ${r.d ? 'done' : ''}${rvOpen(r) ? ' rv-mark' : ''}" data-ri="${i}">
       ${r.edit ? `<textarea class="field hk-edit" data-edit="${i}" rows="7">${esc(cur)}</textarea>`
         : `<div class="hk-text" role="button" tabindex="0" data-pick="${i}" aria-label="${r.d ? '사용함. ' : ''}눌러서 복사">${r.d ? ICON.check : ''}${esc(r.t)}</div>`}
       <div class="hk-meta">
@@ -2887,6 +2959,7 @@ function renderHKEditor() {
           <button class="icon-btn" type="button" data-hkr="del" data-i="${i}" aria-label="이 글 지우기" title="이 글 지우기">${ICON.x}</button>
         </span>
       </div>
+      ${r.edit ? '' : rvInline(r, ['hk', s.id, i].map(encodeURIComponent).join(':'), `후보 ${i + 1}`)}
     </div>`;
   }).join('');
   box.innerHTML = `
@@ -2901,7 +2974,7 @@ function renderHKEditor() {
       <button class="btn primary" type="button" data-hk="gen" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>쓰는 중' : ICON.spark + (s.results && s.results.length ? '새 후보 만들기' : '행특 만들기')}</button>
       <span class="muted num">후보 ${HK.settings.variants}개 · ${HK.settings.min}~${HK.settings.max}${unitWord()}${engineReady() ? ' · ' + esc(engineName()) : ''}</span>
     </div>
-    ${s.err ? `<div class="banner err"><span class="grow">${esc(s.err)}</span></div>` : ''}
+    ${s.err ? `<div class="banner err"><span class="grow">${esc(s.err)}</span></div>` : ''}${s.rvErr ? RV_FAIL_HTML : ''}
     ${!engineReady() ? `<div class="banner info"><span class="grow">글을 만들 AI를 먼저 정해 주세요.</span><button class="btn primary" type="button" data-act="settings">API 키 넣기</button></div>` : ''}
     <div class="hk-results">${res || (busy ? '<div class="skel" style="height:120px"></div>' : '')}</div>
     ${res ? '<p class="muted">글을 누르면 복사되고 완료로 표시돼요. 마음에 드는 글만 쓰고 나머지는 지워도 돼요.</p>' : ''}`;
@@ -2949,7 +3022,7 @@ document.addEventListener('click', e => {
     const s = hkStudent(HK.sel); const i = +rb.dataset.i; const r = s && s.results[i]; if (!r) return;
     const a = rb.dataset.hkr;
     if (a === 'edit') {
-      if (r.edit) { const v = r.draft != null ? r.draft : r.t; r.t = v.replace(/\s*\n+\s*/g, ' ').trim(); delete r.draft; delete r.edit; HKStore.save(); renderHKList(); }
+      if (r.edit) { const v = r.draft != null ? r.draft : r.t, nt = v.replace(/\s*\n+\s*/g, ' ').trim(); if (nt !== r.t) delete r.rv; r.t = nt; delete r.draft; delete r.edit; HKStore.save(); renderHKList(); }
       else r.edit = 1;
       renderHKEditor(); if (r.edit) { const ta = document.querySelector(`[data-edit="${i}"]`); ta && ta.focus(); }
     } else if (a === 'del') { s.results.splice(i, 1); if (!s.results.some(x => x.d)) s.done = 0; HKStore.save(); renderHKEditor(); renderHKList(); }
@@ -3087,7 +3160,8 @@ const GRStore = {
       students: GR.students.map(s => ({
         id: s.id, no: s.no, n: s.pages.length, skip: s.skip ? 1 : 0, score: s.score ?? null, level: s.level || null, manual: s.manual ? 1 : 0,
         summary: s.summary || '', evidence: s.evidence || [], strengths: s.strengths || '', improve: s.improve || '',
-        unreadable: s.unreadable ? 1 : 0, text: s.text || '', d: s.d ? 1 : 0, stale: s.stale ? 1 : 0
+        unreadable: s.unreadable ? 1 : 0, text: s.text || '', d: s.d ? 1 : 0, stale: s.stale ? 1 : 0,
+        ...(s.trv ? { trv: s.trv } : {}), ...(s.trvd ? { trvd: 1 } : {}), ...(s.rv ? { rv: s.rv } : {})
       }))
     };
   },
@@ -3715,6 +3789,11 @@ async function grWrite(only) {
       if (seen.has(k) && !ctl.signal.aborted) { const avoid = grActive().filter(x => x.level === s.level && x.text && x !== s).map(x => x.text); await grWriteChunk(s.level, [s], avoid, ctl.signal); }
       seen.set(normKey(s.text).slice(0, 18), s.id);
     }
+    // 검토 AI: 새로 쓴 평어를 10개씩 (사용함 표시한 학생은 빼고)
+    if (!ctl.signal.aborted) {
+      const r = await reviewSentences('gr', grTaskText(), grActive().filter(x => x.text && !x.d).map(o => ({ o, f: 'text' })), ctl.signal, { rv: 'trv', d: 'trvd' });
+      if (r === 'fail') GR.rvErr = 1; else if (r === 'ok') delete GR.rvErr;
+    }
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
     if (code !== 'cancelled') GR.err = errMsg(code, e);
@@ -3734,7 +3813,7 @@ async function grWriteChunk(lv, chunk, avoid, signal) {
   for (const x of list) {
     const s = chunk.find(c => c.no === Number(x.no));
     const t = cleanLine(String(x.text || ''));
-    if (s && t) { s.text = t; s.stale = false; s.d = 0; delete s.writing; }
+    if (s && t) { s.text = t; s.stale = false; s.d = 0; delete s.writing; delete s.trv; delete s.trvd; }
   }
   // 빠진 학생은 한 명씩
   for (const s of chunk.filter(c => c.writing)) {
@@ -3743,7 +3822,7 @@ async function grWriteChunk(lv, chunk, avoid, signal) {
     const a2 = grJSON(r2.text);
     const x = Array.isArray(a2) ? a2[0] : a2;
     const t = x && cleanLine(String(x.text || ''));
-    if (t) { s.text = t; s.stale = false; s.d = 0; }
+    if (t) { s.text = t; s.stale = false; s.d = 0; delete s.trv; delete s.trvd; }
     delete s.writing;
   }
 }
@@ -3920,7 +3999,7 @@ function renderGRResults() {
             <span class="grow"></span>
             ${s.d && s.text ? `<span class="chip done">${ICON.check}사용함</span>` : ''}
           </div>
-          ${s.text && !s.skip ? `<div class="gr-text ${s.d ? 'done' : ''} ${s.stale ? 'stale' : ''}" role="button" tabindex="0" data-grcopy="${esc(s.id)}" aria-label="${s.d ? '사용함. ' : ''}${s.no}번 평어 복사">${esc(s.text)}</div>` : ''}
+          ${s.text && !s.skip ? `<div class="gr-text ${s.d ? 'done' : ''} ${s.stale ? 'stale' : ''}${rvOpen(s, 'trv') ? ' rv-mark' : ''}" role="button" tabindex="0" data-grcopy="${esc(s.id)}" aria-label="${s.d ? '사용함. ' : ''}${s.no}번 평어 복사">${esc(s.text)}</div>${rvInline(s, 'gr:' + encodeURIComponent(s.id), `${s.no}번 평어`, 'trv', 'text')}` : ''}
           ${s.stale && s.text && !s.writing ? `<p class="muted warn">수준이 바뀌었어요. 평어를 다시 쓰세요.</p>` : ''}
           ${s.summary && !s.skip ? `<p class="muted gr-sum">${esc(s.summary)}</p>` : ''}
           ${s.err ? `<p class="muted err">${esc(s.err)}</p>` : ''}
@@ -4740,7 +4819,24 @@ async function ccRun(job) {
     CHE.running.delete(key);
     CCStore.save();
     ccPump();
+    if (!CHE.running.size && !CHE.queue.length) ccReviewAll();
   }
+}
+/* 검토 AI: 이 차례에 쓴 창체 문장(활동마다)을 10개씩. 실패하면 남은 검토는 그만둠 */
+async function ccReviewAll() {
+  if (CHE.reviewing || !RV()) return;
+  CHE.reviewing = true;
+  try {
+    for (const a of CC_AREAS) {
+      const A = ccArea(a.k);
+      for (const act of A.acts) {
+        const items = classNos().map(no => { const it = A.items[no], p = it && it.parts && it.parts[act.id]; return p && !(it && it.d) ? { o: p, f: 't' } : null; }).filter(Boolean);
+        const r = await reviewSentences('cc', `[${a.name}] ${act.name || ''}${act.desc ? ' — ' + act.desc : ''}`, items);
+        if (r === 'fail') { CHE.rvErr = 1; return; }
+        if (r === 'ok') delete CHE.rvErr;
+      }
+    }
+  } finally { CHE.reviewing = false; CCStore.save(); renderCCSoon(); }
 }
 
 /* 활동 내용만으로 여러 학생 */
@@ -4927,7 +5023,7 @@ function renderCCResults() {
       let shot = null;
       for (const a of sheetActs) { const pg = ccSheetPages(a.id, no); if (pg.length) { shot = { p: pg[0], a, n: pg.length }; break; } }
       const obs = acts.map(a => [a, ccObs(k, no, a.id)]).filter(x => x[1]);
-      return `<li class="gr-row cc-row ${it && it.d ? 'used' : ''}">
+      return `<li class="gr-row cc-row ${it && it.d ? 'used' : ''}${it && it.parts && acts.some(a => rvOpen(it.parts[a.id])) ? ' rv-mark' : ''}">
         ${sheetActs.length ? (shot ? `<button class="thumb" type="button" data-ccview1="${no}" aria-label="${no}번 학습지 크게 보기"><img src="${shot.p.thumb || shot.p.url}" alt="" loading="lazy" decoding="async">${maskOverlay(ccMask(shot.a), shot.a.maskAll, 0)}${shot.n > 1 ? `<small>${shot.n}쪽</small>` : ''}</button>` : '<span class="thumb none" title="학습지 없음"><span class="noimg">-</span></span>') : ''}
         <div class="body">
           <div class="head"><span class="badge num">${no}</span>
@@ -4936,6 +5032,7 @@ function renderCCResults() {
             <span class="grow"></span>${it && it.d && t ? `<span class="chip done">${ICON.check}사용함</span>` : ''}</div>
           ${t ? `<div class="gr-text ${it && it.d ? 'done' : ''}" role="button" tabindex="0" data-cccopy="${no}" aria-label="${it && it.d ? '사용함. ' : ''}${no}번 ${info.name} 복사">${esc(t)}</div>` : (running ? '<div class="skel"></div>' : '<p class="muted">아직 쓰지 않았어요</p>')}
           ${obs.filter(x => x[1].n).map(([a, o]) => `<p class="muted gr-sum">${acts.length > 1 ? esc((a.name || '').trim() || '활동') + ' ' : ''}학습지: ${esc(o.n)}</p>`).join('')}
+          ${it && it.parts ? acts.map(a => rvInline(it.parts[a.id], ['cc', k, no, a.id].map(encodeURIComponent).join(':'), `${no}번${acts.length > 1 ? ' ' + ((a.name || '').trim() || '활동') : ''}`)).join('') : ''}
           <div class="acts">${t ? `<span class="muted num">${t.length}자</span>` : ''}
             ${!running && engineReady() ? `<button class="btn text tiny" type="button" data-ccre="${no}">${t ? '다시 쓰기' : '쓰기'}</button>` : ''}
             ${it && it.d && t ? `<button class="btn text tiny" type="button" data-ccundo="${no}">사용 표시 지우기</button>` : ''}</div>
@@ -4948,7 +5045,7 @@ function renderCCResults() {
     <div class="seg cc-tabs" role="tablist">${CC_AREAS.map(tab).join('')}</div>
     ${CHE.err ? `<div class="banner err"><span class="grow">${esc(CHE.err)}</span>${CHE.waitUntil ? '' : '<button class="btn" type="button" data-act="settings">평어 쓰는 방식</button>'}</div>` : ''}
     ${!engineReady() ? `<div class="banner info"><span class="grow">문장을 만들 AI를 먼저 정해 주세요.</span><button class="btn primary" type="button" data-act="settings">API 키 넣기</button></div>` : ''}
-    ${upNote()}
+    ${upNote()}${CHE.rvErr ? RV_FAIL_HTML : ''}${CHE.reviewing ? '<p class="muted rv-busy"><span class="spin"></span> 검토 AI가 문장을 살펴보고 있어요…</p>' : ''}${rvBarHTML(nos.reduce((n, no) => { const it = A.items[no]; return n + (it && it.parts ? acts.filter(a => rvOpen(it.parts[a.id])).length : 0); }, 0))}
     ${stale && !busy ? `<div class="banner warn"><span class="grow">활동 내용이 바뀐 학생이 ${stale}명 있어요. 「만들기」를 누르면 새 활동으로 고쳐 써요. 사용함으로 표시한 학생은 그대로 둬요.</span></div>` : ''}
     ${sheetN && !busy ? `<div class="banner info"><span class="grow">학습지를 넣은 학생 ${sheetN}명은 아직 학습지 내용이 글에 들어가지 않았어요. 「남은 학생 쓰기」를 누르면 학습지를 읽고 고쳐 써요.</span></div>` : ''}
     ${nos.length && acts.length ? `<div class="tools"><div class="left">${k === 'club' && (A.club || '').trim() ? `<span class="muted">문장 앞에 <b>(${esc(A.club.trim())})</b>를 붙여요</span>` : ''}</div>
@@ -5194,7 +5291,7 @@ async function pronCollect() {
             if (cur ? (S.planId !== p.id || S.sets !== sets) : S.planId === p.id) return false;
             if (it.d || it.t !== orig || !set.items.includes(it)) return false;
             const c = cleanLine(t); if (!c) return false;
-            it.t = c;
+            it.t = c; delete it.rv;
             dirty.set('s:' + p.id + ':' + k, () => Store.saveSet(p.id, k, set, sets));
             return true;
           }
@@ -5217,7 +5314,7 @@ async function pronCollect() {
           if (open ? GR.id !== h.id : GR.id === h.id) return false;
           if (s.d || s.text !== orig || s.writing) return false;
           const c = cleanLine(t); if (!c) return false;
-          s.text = c;
+          s.text = c; delete s.trv;
           dirty.set('g:' + h.id, open ? () => GRStore.save() : () => {
             if (Store.mode === 'db') writeDoc(Store.base() + '/g_' + h.id, b);
             else if (Store.mode === 'local') Store.lsSet('ssam:gr:' + h.id, b);

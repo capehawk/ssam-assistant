@@ -95,6 +95,20 @@ export function normTextReview(v, n) {
   return out;
 }
 
+/* 문장 여러 개: 10개씩 나눠 검토 AI로. 번호(i)는 전체 차례(1부터). 검토가 꺼지면 null, 실패하면 { error, partial } */
+export async function reviewTexts(kind, info, texts, { signal } = {}) {
+  if (!pick('writing', 'review')) return null;
+  const out = [];
+  for (let k = 0; k < texts.length; k += 10) {
+    const chunk = texts.slice(k, k + 10);
+    const v = await reviewJSON('writing', textReviewPrompt(kind, info, chunk), { signal, valid: x => Array.isArray(x) || !!(x && Array.isArray(x.items)) });
+    if (v == null) return out.length ? out : null;
+    if (v.error) return { error: v.error, partial: out };
+    out.push(...normTextReview(v, chunk.length).map(r => ({ ...r, i: r.i + k })));
+  }
+  return out;
+}
+
 /* ---------- 계획 초안 ---------- */
 export function planReviewPrompt(title, sections, guide) {
   return [
@@ -182,6 +196,6 @@ const CSS = `.rv-op{display:flex;flex-direction:column;gap:8px;border:1px solid 
 
 if (globalThis.window && globalThis.document) {
   window.SSAM = window.SSAM || {};
-  window.SSAM.review = { ...(window.SSAM.review || {}), reviewJSON, textReviewPrompt, normTextReview, grReviewNeeded, grDiffers, opinionHTML, reviewBar, REVIEW_FAIL };
+  window.SSAM.review = { ...(window.SSAM.review || {}), texts: reviewTexts, reviewJSON, textReviewPrompt, normTextReview, grReviewNeeded, grDiffers, opinionHTML, reviewBar, REVIEW_FAIL, pick };
   if (!document.getElementById('aiReviewCss')) { const st = document.createElement('style'); st.id = 'aiReviewCss'; st.textContent = CSS; document.head.appendChild(st); }
 }

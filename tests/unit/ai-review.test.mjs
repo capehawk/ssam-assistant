@@ -131,3 +131,19 @@ test('검토 AI 부르기: 꺼져 있으면 null(부르지 않음), 켜면 그 A
   assert.equal(await R.reviewJSON('grade', 'x'), null, '검토 AI 키 없음 → 검토 안 함');
   assert.equal(calls.length, 0);
 });
+
+test('문장 검토 묶음: 10개씩 나눠 부르고 번호는 전체 차례로, 꺼지면 null', async () => {
+  resetRoles();
+  calls.length = 0;
+  assert.equal(await R.reviewTexts('pyeongeo', '정보', ['a', 'b']), null);
+  assert.equal(calls.length, 0);
+  setTaskRole('writing', { reviewOn: true, review: { engine: 'claude', model: 'claude-opus-5-5' } });
+  reply = p => ({ text: JSON.stringify({ items: [{ i: 2, problem: 'p', fix: 'f' + (p.includes('11. ') ? 'x' : (p.match(/^\d+\. (t\d+)/m) || [])[1]) }] }) });
+  const texts = Array.from({ length: 12 }, (_, i) => `t${i + 1}`);
+  const v = await R.reviewTexts('pyeongeo', '정보', texts);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].prompt.includes('1. t11') && calls[1].prompt.includes('2. t12'));
+  assert.deepEqual(v.map(x => x.i), [2, 12]);
+  reply = () => { throw { code: 'quota' }; };
+  assert.deepEqual(await R.reviewTexts('pyeongeo', '정보', texts), { error: 'quota', partial: [] });
+});
