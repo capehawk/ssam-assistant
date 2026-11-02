@@ -14,3 +14,18 @@
 .chip.src-ai{background:#eef3fd}.chip.src-teacher,.chip.src-answer{background:#e9f7ef}.chip.src-edit{background:#fff4c2}
 .act-warn{color:var(--warn,#8c4a00);margin:4px 0 0}
 .act-next{justify-content:flex-end}
+.act-set{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.ac-stus{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}
+.ac-grid-wrap{overflow-x:auto}
+.ac-grid{border-collapse:collapse;font-size:13px;min-width:100%}
+.ac-grid th,.ac-grid td{border-bottom:1px solid var(--line,#e4e6eb);padding:3px 4px;text-align:center;vertical-align:middle}
+.ac-grid td input.field{min-width:150px}
+.ac-no{white-space:nowrap;text-align:left !important}
+.ac-cell{min-width:32px;height:30px;border-radius:6px;border:1px solid var(--line,#d9dde3);background:var(--surface,#fff);font-size:15px;cursor:pointer}
+.ac-cell.mark-o{color:#1d7a46}.ac-cell.mark-t{color:#9a6a00}.ac-cell.mark-x{color:#c0392b}.ac-cell.mark-n{color:#888;font-size:11px}
+.ac-cell.chk{background:#fff4c2;border-color:#e0b400}
+.ac-cell.rv{box-shadow:0 0 0 2px #e0b400 inset}
+.ac-cell.manual{border-style:dashed}
+.chip.ac-stale{background:#fff4c2}
+.ac-marks button{min-width:56px}
+.ac-cell-sheet{display:flex;flex-direction:column;gap:8px}
