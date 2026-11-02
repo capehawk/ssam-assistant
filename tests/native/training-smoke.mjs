@@ -17,7 +17,7 @@ const port = await new Promise((yes,no)=>{
 });
 const child=spawn(exe,[],{windowsHide:true,stdio:'ignore',env:{...process.env,
   WEBVIEW2_USER_DATA_FOLDER:profile,
-  WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1`,
+  WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1${process.env.CI ? ' --headless=new --disable-gpu' : ''}`,
 }});
 let launchError;child.on('error',e=>{launchError=e;});
 let browser;
