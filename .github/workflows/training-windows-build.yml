@@ -37,9 +37,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:training
       - name: Windows 설치 파일 생성
-        run: npm run tauri build -- --bundles nsis
+        run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.training.conf.json --features training-demo
       - name: Rust 릴리즈 테스트
-        run: cargo test --release --manifest-path src-tauri/Cargo.toml
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml --features training-demo
+      - name: 실제 Windows 연수 화면 검사
+        run: node tests/native/training-smoke.mjs
       - name: 테스트 파일과 안내 정리
         shell: pwsh
         run: |
@@ -51,7 +53,7 @@ jobs:
           $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe)
           if ($installers.Count -ne 1) { throw '설치 파일이 정확히 한 개 있어야 합니다.' }
           Copy-Item -LiteralPath $installers[0].FullName -Destination "out/$label-setup.exe"
-          Copy-Item -LiteralPath src-tauri/target/release/ssam.exe -Destination "out/$label-portable.exe"
+          Copy-Item -LiteralPath src-tauri/target/release/ssam-training.exe -Destination "out/$label-portable.exe"
           Get-ChildItem out/*.exe | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           } | Set-Content out/SHA256SUMS.txt -Encoding ascii
@@ -61,10 +63,10 @@ jobs:
           빌드 기록: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
 
           setup.exe는 설치 프로그램, portable.exe는 설치 없이 실행하는 파일입니다.
-          기존 쌤비서와 저장 공간이 분리된 제품은 아닙니다. 기존 자료를 먼저 백업하세요.
+          앱 이름은 쌤비서 연수 테스트이며 기존 쌤비서와 앱 식별자·저장 공간이 분리됩니다.
           연수 → 내 필수연수에서 배포한 서버 /exec 주소와 교사 시연 인증값을 입력하세요.
           실제 교직원 자료 대신 합성 PDF를 사용하세요. 인증값은 이 파일에 포함하지 않습니다.
-          자동 업데이트는 기존 공식 배포를 참조하므로 연수 시험 중에는 적용하지 마세요.
+          테스트판에서는 공식 자동 업데이트 조회와 설치가 차단됩니다.
           이 결과물은 공식 릴리즈가 아니며 PR 정식 리뷰·병합과 무관합니다.
           "@ | Set-Content out/사용안내.txt -Encoding utf8
       - name: 테스트 설치 파일 보관

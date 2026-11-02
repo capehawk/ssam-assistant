@@ -6,6 +6,9 @@ authors = ["doguri25"]
 edition = "2021"
 publish = false
 
+[features]
+training-demo = []
+
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 

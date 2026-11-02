@@ -122,6 +122,13 @@ struct UpdateInfo {
 async fn check_update() -> Result<UpdateInfo, String> {
     let current = env!("CARGO_PKG_VERSION").to_string();
     let portable = uninstaller_path().is_none();
+    if cfg!(feature = "training-demo") {
+        return Ok(UpdateInfo {
+            current, latest: String::new(), available: false,
+            notes: "연수 테스트판은 공식 자동 업데이트를 사용하지 않습니다.".into(),
+            published: String::new(), portable, size: 0, page: String::new(),
+        });
+    }
     let page = updater::release_page(updater::RELEASES_REPO);
     let client = updater::client()?;
     match updater::latest_manifest(&client, updater::GITHUB, updater::RELEASES_REPO).await {
@@ -162,6 +169,9 @@ static INSTALLING: AtomicBool = AtomicBool::new(false);
 /// 새 버전을 받아 확인값을 검사하고 설치. 성공하면 앱이 닫혔다가 새 버전으로 다시 켜짐
 #[tauri::command]
 async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    if cfg!(feature = "training-demo") {
+        return Err("연수 테스트판은 공식 자동 업데이트를 사용하지 않습니다.".into());
+    }
     if !cfg!(windows) {
         return Err("업데이트 설치는 Windows에서만 할 수 있어요".to_string());
     }
@@ -306,6 +316,13 @@ fn main() {
         .manage(bubble::Bubble::default())
         // 쌤비서 창은 숨긴 채 만들어 두고, 컴퓨터를 켜며 버튼만 띄운 경우(--bubble)가 아니면 보임
         .setup(|app| {
+            #[cfg(feature = "training-demo")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    window.set_title("쌤비서 연수 테스트")?;
+                }
+            }
             if !std::env::args().any(|a| a == "--bubble") {
                 bubble::show_main(app.handle());
             }

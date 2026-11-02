@@ -40,6 +40,17 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Windows CI
 
+### 설치판 연수 화면 회귀 검사
+
+첫 설치판에서 PDF 검사 JavaScript가 `application/pdf`로 제공되어 연수 모듈이 로드되지 않는 오류를 재현했습니다. PDF 머리 검사를 숫자 바이트 비교로 바꾸었습니다. 일반 HTTP 서버의 화면 테스트로 발견하지 못했던 문제이므로 `tests/native/training-smoke.mjs`에서 실제 Windows 실행 파일의 MIME·연수 연결 화면·네이티브 전송 명령을 검사합니다. 수정 전 설치판에서는 MIME 검사 실패를 확인했습니다. 수정 후 통과 여부는 해당 빌드의 ‘실제 Windows 연수 화면 검사’ 단계로 확인합니다.
+
+테스트판은 `tauri.training.conf.json`과 `training-demo` 기능으로 빌드합니다. 이름은 ‘쌤비서 연수 테스트’이며 앱 식별자를 분리하고 공식 업데이트 조회·설치를 차단합니다. 이 검사에는 실제 교사 인증값을 사용한 제출·담당자 승인 과정이 포함되지 않습니다.
+
+```sh
+npm run tauri build -- --bundles nsis --config src-tauri/tauri.training.conf.json --features training-demo
+node tests/native/training-smoke.mjs
+```
+
 [최초 실행 결과](https://github.com/capehawk/ssam-assistant/actions/runs/41355906916): 커밋 `42b8fe8`의 Windows CI가 통과했습니다. 연수 단위 테스트, 교사·담당자 화면 통합, 배포 파일 일치 검사, 웹 빌드와 Rust 빌드·테스트가 모두 성공했습니다. 실제 GAS 배포·설치형 앱 네트워크 통신 점검은 이 결과에 포함되지 않습니다.
 
 실제 GAS 업로드 확인: 숫자 구분자 표기 때문에 최초 업로드가 파서 오류로 실패했습니다. 1000000 표기로 수정한 뒤 25개 연수 단위 테스트와 실제 코드 업로드가 성공했습니다. 최초 OAuth 승인·저장소 초기화·웹앱 배포·실제 통신 검증은 아직 남아 있습니다.
