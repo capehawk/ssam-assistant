@@ -6,12 +6,13 @@ const A = () => (window.SSAM && window.SSAM.ai) || null;
 let inflight = 0;
 export const busyCount = () => inflight;
 
-/* images: [{ mime, b64, blob }] → { text, truncated }. 실패하면 { code, message }를 던짐 */
-export function generate(prompt, { signal, images, careful } = {}) {
+/* images: [{ mime, b64, blob }] → { text, truncated }. 실패하면 { code, message }를 던짐.
+   task: 업무(grade·writing·plan·notes)면 그 업무에 정한 AI로, role: 'main'|'review', use: { engine, model } 이 AI로 */
+export function generate(prompt, { signal, images, careful, task, role, use } = {}) {
   const a = A();
   if (!a) return Promise.reject({ code: 'no_engine' });
   inflight++;
-  return Promise.resolve(a.generate(prompt, { signal, images, careful, fresh: true })).finally(() => { inflight--; });
+  return Promise.resolve(a.generate(prompt, { signal, images, careful, fresh: true, task, role, use })).finally(() => { inflight--; });
 }
 
 export const ready = () => !!(A() && A().engineReady());

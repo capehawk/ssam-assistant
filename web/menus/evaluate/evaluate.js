@@ -854,6 +854,14 @@ function engineName() {
   if (E.engine === 'account') return 'Claude 계정';
   return E.engine && PROVIDERS[E.engine] ? PROVIDERS[E.engine].label : '';
 }
+/* 업무별 AI 고르기용: 회사·모델 목록과 키가 있는지만(키 값은 주지 않음). 직접 입력한 모델도 목록에 */
+function aiProviders() {
+  return Object.entries(PROVIDERS).map(([id, p]) => {
+    const models = p.models.slice();
+    if (E.models[id] && !models.some(m => m[0] === E.models[id])) models.push([E.models[id], E.models[id]]);
+    return { id, name: p.name, label: p.label, models, hasKey: !!(E.keys[id] || '').trim() };
+  });
+}
 /* 처음 정하기: Claude 안이면 계정, 아니면 키가 있는 곳 */
 function settleEngine() {
   if (E.engine === 'account' && cap.sample) return;
@@ -994,7 +1002,7 @@ async function upstageRead(images, signal) {
 /* Claude 5.x 등은 답하기 전에 먼저 생각(thinking)하고, 생각도 max_tokens 안에서 씀.
    평어 쓰기는 깊은 생각이 필요 없어서 effort를 낮춰 빠르게 하고, 글자 한도는 넉넉히 둠 */
 const CLAUDE_EFFORT_RE = /^claude-(?:opus-(?:4-[5-9]|[5-9])|sonnet-(?:4-[6-9]|[5-9])|haiku-[5-9]|fable-|mythos-)/;
-async function callApi(provider, prompt, { onText, signal: outer, images, careful }) {
+async function callApi(provider, prompt, { onText, signal: outer, images, careful, model: useModel }) {
   const imgs = images || [];
   // 2분 동안 아무것도 오지 않거나(연결이 멈춤) 모두 15분이 넘으면 끊음
   const wd = new AbortController();
@@ -1005,7 +1013,7 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
   idle();
   try {
   const key = (E.keys[provider] || '').trim();
-  const model = E.models[provider];
+  const model = useModel || E.models[provider];
   let text = '', truncated = false, stopReason = '';
   const push = t => { if (!t) return; text += t; onText && onText({ text, delta: t }); };
   let res;
@@ -1078,8 +1086,22 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
   } finally { clearTimeout(idleT); clearTimeout(totalT); }
 }
 /* 모든 생성은 여기로 */
-/* images: [{ mime, b64, blob }] — 평가지 채점에서 씀 */
-async function generate(prompt, { onText, signal, fresh, images, careful }) {
+/* images: [{ mime, b64, blob }] — 평가지 채점에서 씀.
+   use: { engine, model } 이 AI로 부름. task: 업무(grade·writing·plan·notes) — 업무에 정한 AI(없으면 기본), role: 'main'|'review' */
+function roleAI(use, task, role) {
+  if (use) return use;
+  const r = task && window.SSAM && window.SSAM.aiRoles;
+  return r ? r.pick(task, role || 'main') : null;
+}
+async function generate(prompt, { onText, signal, fresh, images, careful, use, task, role } = {}) {
+  const pickd = E.engine === 'account' ? null : roleAI(use, task, role);
+  if (pickd && PROVIDERS[pickd.engine] && (E.keys[pickd.engine] || '').trim()) {
+    const prov = pickd.engine;
+    try {
+      if (prov === 'upstage' && images && images.length) { prompt = await upstageRead(images, signal) + prompt; images = null; }
+      return await callApi(prov, prompt, { onText, signal, images, careful, model: pickd.model });
+    } catch (e) { if (e && typeof e === 'object' && !e.provider) e.provider = prov; throw e; }
+  }
   if (E.engine === 'account') {
     const opts = { signal, onText, modelTier: careful || S.settings.tier === 'careful' ? 'default' : 'quick' };
     if (fresh || (images && images.length)) opts.cache = false;
@@ -1509,7 +1531,8 @@ const SAMPLE_MSG = {
 /* 업스테이지를 쓰면 이미지 화면에 한 줄 안내 (쓰는 것은 막지 않음) */
 const upNote = () => E.engine === 'upstage' ? '<p class="muted up-note">업스테이지는 이미지를 글자로 읽어서 보내요. 손글씨 이미지는 Claude·Gemini·GPT를 권장해요.</p>' : '';
 function errMsg(code, e) {
-  const nm = engineName() || 'AI';
+  // 업무별 AI로 부른 오류는 그 회사 이름으로
+  const nm = (e && e.provider && PROVIDERS[e.provider] ? PROVIDERS[e.provider].label : engineName()) || 'AI';
   const m = {
     auth: `${nm} 키가 맞지 않아요(또는 권한이 없어요). 왼쪽 아래 AI 버튼에서 API 키를 다시 확인해 주세요.`,
     quota: e && /^하루/.test(e.message || '') ? `${nm}의 하루 사용 한도를 다 썼어요. 내일 이어서 하거나 결제 설정을 확인해 주세요.` : `${nm} 사용 한도(크레딧·결제)가 부족해요. 결제나 한도를 확인한 뒤 이어서 만들기를 눌러 주세요.`,
@@ -1551,7 +1574,7 @@ async function run(job) {
       const keys = unitKeys(job.unitId);
       let consumed = 0, added = 0;
       const res = await generate(prompt, {
-        signal: ctl.signal,
+        signal: ctl.signal, task: 'writing',
         fresh: !!(job.fresh || job.more || attempts > 1),
         onText: ({ text }) => {
           const lines = text.split('\n'); const complete = lines.length - 1;
@@ -2727,7 +2750,7 @@ document.addEventListener('focusout', e => {
   setTimeout(() => { if (!hkTyping()) { HK.editorDirty = false; renderHKEditor(); } }, 0);
 });
 async function hkCall(prompt, signal) {
-  const r = await generate(prompt, { signal, fresh: true });
+  const r = await generate(prompt, { signal, fresh: true, task: 'writing' });
   return r.text;
 }
 async function hkRun(id) {
@@ -3507,7 +3530,7 @@ async function grGrade(st) {
     const imgs = await grStudentImages(st);
     if (!GR._critCache) { GR._critCache = grCritImages(); GR._critCache.catch(() => { GR._critCache = null; }); }
     const crit = await GR._critCache;
-    const r = await generate(grGradePrompt(st, crit.length), { signal: ctl.signal, images: [...imgs, ...crit], fresh: true, careful: true });
+    const r = await generate(grGradePrompt(st, crit.length), { signal: ctl.signal, images: [...imgs, ...crit], fresh: true, careful: true, task: 'grade' });
     const j = grJSON(r.text);
     const sc = Math.round(Number(j.score));
     if (!Number.isFinite(sc)) throw { code: 'bad_json' };
@@ -3610,7 +3633,7 @@ async function grCalibrate(signal) {
   if (list.length < 3) return;
   GR.loading = '학생들끼리 견주어 점수를 맞추는 중'; renderGRSoon();
   try {
-    const r = await generate(grCalibPrompt(list), { fresh: true, careful: true, signal });
+    const r = await generate(grCalibPrompt(list), { fresh: true, careful: true, signal, task: 'grade' });
     const arr = grJSON(r.text);
     if (!Array.isArray(arr)) return;
     const m = new Map(arr.map(x => [Number(x.no), Math.round(Number(x.score))]));
@@ -3704,7 +3727,7 @@ async function grWrite(only) {
   }
 }
 async function grWriteChunk(lv, chunk, avoid, signal) {
-  const r = await generate(grWritePrompt(lv, chunk, avoid), { signal, fresh: true });
+  const r = await generate(grWritePrompt(lv, chunk, avoid), { signal, fresh: true, task: 'writing' });
   const arr = grJSON(r.text);
   const list = Array.isArray(arr) ? arr : (arr && Array.isArray(arr.items) ? arr.items : []);
   for (const x of list) {
@@ -3715,7 +3738,7 @@ async function grWriteChunk(lv, chunk, avoid, signal) {
   // 빠진 학생은 한 명씩
   for (const s of chunk.filter(c => c.writing)) {
     if (signal && signal.aborted) return;
-    const r2 = await generate(grWritePrompt(lv, [s], avoid.concat(chunk.filter(c => c.text).map(c => c.text))), { signal, fresh: true });
+    const r2 = await generate(grWritePrompt(lv, [s], avoid.concat(chunk.filter(c => c.text).map(c => c.text))), { signal, fresh: true, task: 'writing' });
     const a2 = grJSON(r2.text);
     const x = Array.isArray(a2) ? a2[0] : a2;
     const t = x && cleanLine(String(x.text || ''));
@@ -4721,7 +4744,7 @@ async function ccRun(job) {
 
 /* 활동 내용만으로 여러 학생 */
 async function ccRunPlain(job, act, sig, others, signal) {
-  const r = await generate(ccPrompt(job.k, act, job.nos.length + 2, others.slice(-40)), { signal, fresh: true });
+  const r = await generate(ccPrompt(job.k, act, job.nos.length + 2, others.slice(-40)), { signal, fresh: true, task: 'writing' });
   const seen = new Set(others.map(t => normKey(t).slice(0, 18)));
   const lines = [];
   for (const raw of String(r.text || '').split('\n')) {
@@ -4746,7 +4769,7 @@ async function ccRunSheet(job, act, sig, others, signal) {
   if (!pages.length) { CHE.queue.unshift({ ...job, kind: ccObs(job.k, no, act.id) ? 'note' : 'plain' }); return; } // 그사이 학습지를 뺐음
   const mask = ccMask(act), imgs = [];
   for (let j = 0; j < pages.length; j++) imgs.push(await pageImage(pages[j], act.maskAll || j === 0 ? mask : null));
-  const r = await generate(ccSheetPrompt(job.k, act, pages.length, others.slice(-30)), { signal, images: imgs, fresh: true, careful: true });
+  const r = await generate(ccSheetPrompt(job.k, act, pages.length, others.slice(-30)), { signal, images: imgs, fresh: true, careful: true, task: 'writing' });
   const j = grJSON(r.text);
   const t = cleanLine(String((j && j.text) || ''));
   if (!t) throw { code: 'bad_json' };
@@ -4758,7 +4781,7 @@ async function ccRunSheet(job, act, sig, others, signal) {
 /* 읽어 둔 내용으로 여러 학생 */
 async function ccRunNotes(job, act, sig, others, signal) {
   const list = job.nos.map(no => { const o = ccObs(job.k, no, act.id); return { no, note: o && !o.b ? o.n : '' }; });
-  const r = await generate(ccNotePrompt(job.k, act, list, others.slice(-30)), { signal, fresh: true });
+  const r = await generate(ccNotePrompt(job.k, act, list, others.slice(-30)), { signal, fresh: true, task: 'writing' });
   const arr = grJSON(r.text);
   const xs = Array.isArray(arr) ? arr : (arr && Array.isArray(arr.items) ? arr.items : []);
   const left = [];
@@ -5246,7 +5269,7 @@ function pronPrompt(kind, texts) {
 async function pronBatch(kind, batch, signal) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await generate(pronPrompt(kind, batch.map(j => j.text)), { signal, fresh: true });
+      const r = await generate(pronPrompt(kind, batch.map(j => j.text)), { signal, fresh: true, task: 'writing' });
       const arr = grJSON(r.text);
       if (!Array.isArray(arr) || arr.length !== batch.length) throw { code: 'bad_json' };
       return arr.map(x => (typeof x === 'string' ? x : (x && (x.text || x.t)) || ''));
@@ -5366,7 +5389,7 @@ window.SSAM = {
   },
   setMode, getMode: () => S.mode,
   onModeChange: fn => { modeHooks.push(fn); },
-  ai: { generate, engineReady, engineName, providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
+  ai: { generate, engineReady, engineName, providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
   rosterHTML, toast, openSheet, closeSheet, esc, copyText,
   // 단원평가: 이름 칸 가리기 편집기 { shots: [{ url, label }], mask, all, what, save(mask, all) }
   openMaskEditor,

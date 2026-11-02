@@ -3,7 +3,7 @@
 import { schoolYearOf } from './calendar.js';
 
 const PREFIX = 'ssam:';
-export const GLOBAL = ['engine', 'theme', 'nav', 'mode', 'updSkip', 'years', 't', 'backupAt', 'inbox', 'bubble', 'export'];
+export const GLOBAL = ['engine', 'theme', 'nav', 'mode', 'updSkip', 'years', 't', 'backupAt', 'inbox', 'bubble', 'export', 'ai-roles'];
 export const isYearKey = k => !!k && !GLOBAL.includes(k) && !k.startsWith('mig:');
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const pad = n => String(n).padStart(2, '0');

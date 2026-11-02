@@ -142,7 +142,7 @@ async function writePyeongeo() {
         const rates = contentRates(st.chosen, s.no);
         return { no: s.no, level: s.level, good: rates.filter(r => r.rate >= 0.8).sort((a, b) => b.rate - a.rate).slice(0, 3).map(r => r.content), weak: rates.filter(r => r.rate < 0.6).sort((a, b) => a.rate - b.rate).slice(0, 3).map(r => r.content) };
       });
-      const res = normPyeongeo(await ai.generateJSON(pyeongeoPrompt(subject, chunk), { valid: v => Object.keys(normPyeongeo(v)).length > 0 }));
+      const res = normPyeongeo(await ai.generateJSON(pyeongeoPrompt(subject, chunk), { task: 'writing', valid: v => Object.keys(normPyeongeo(v)).length > 0 }));
       const cur = getPyeongeo(subject), now = pyStateFor(subject);
       for (const s of now.students) if (res[s.no] && !s.text) s.text = res[s.no];
       savePyeongeo(subject, { off: now.mine.map(t => t.id).filter(id => !now.ids.includes(id)), cuts: cur.cuts, students: Object.fromEntries(now.students.map(s => [s.no, { level: s.level, text: s.text, manual: s.manual }])) });

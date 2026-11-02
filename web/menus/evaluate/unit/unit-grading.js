@@ -194,7 +194,7 @@ async function gradeOne(id, i) {
     const images = await imagesFor(id, i);
     // 스캔이 없으면 AI를 부르지 않음 (이미지 없이 채점하면 0점이 그대로 저장됨)
     if (!images.length) throw { code: 'no_scan' };
-    const v = await ai.generateJSON(gradePrompt(t0, no), { images, signal: ctrl.signal, valid: validGrade });
+    const v = await ai.generateJSON(gradePrompt(t0, no), { images, signal: ctrl.signal, valid: validGrade, task: 'grade' });
     const res = normGrade(v, t0.key.items);
     const t = getTest(id), st = t && t.students[i];
     if (!st || st.no !== no) return;

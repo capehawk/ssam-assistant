@@ -323,7 +323,7 @@ async function runReview() {
   busy[id] = 'review'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(reviewPrompt(plan), { valid: x => x && !Array.isArray(x) && (Array.isArray(x.good) || Array.isArray(x.bad)) });
+    const v = await ai.generateJSON(reviewPrompt(plan), { task: 'plan', valid: x => x && !Array.isArray(x) && (Array.isArray(x.good) || Array.isArray(x.bad)) });
     const r = normReview(v);
     apply(id, p => { p.review = { ...r, picked: [] }; });
   } catch (e) {
@@ -347,7 +347,7 @@ async function runGuide() {
   busy[id] = 'guide'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(guidePrompt(plan), { valid: x => Array.isArray(x) && normGuide(x).length > 0 });
+    const v = await ai.generateJSON(guidePrompt(plan), { task: 'plan', valid: x => Array.isArray(x) && normGuide(x).length > 0 });
     apply(id, p => { p.guide = normGuide(v); });
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 'guide');
@@ -383,7 +383,7 @@ async function runDraft() {
   try {
     // 섹션이 몇 개 빠져도 받음 (빠진 섹션은 빈 글)
     const ok = x => { const d = normDraft(x); return !!d && (TEXT_SECTIONS.some(k => d[k].trim()) || d.schedule.length > 0); };
-    const v = await ai.generateJSON(draftPrompt(plan), { valid: ok });
+    const v = await ai.generateJSON(draftPrompt(plan), { task: 'plan', valid: ok });
     apply(id, p => { p.draft = normDraft(v); if (p.status === 'final') p.status = 'draft'; });
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 'draft');

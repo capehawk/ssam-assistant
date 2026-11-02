@@ -388,7 +388,7 @@ async function runItems() {
   busy[id] = 'items'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(itemsPrompt(ev), { valid: x => x && normItems(x.items).length >= 3 });
+    const v = await ai.generateJSON(itemsPrompt(ev), { task: 'plan', valid: x => x && normItems(x.items).length >= 3 });
     apply(id, e => { e.survey = { ...blankSurvey(), ...(e.survey || {}), items: normItems(v.items) }; });
   } catch (err) { errs[id] = ai.errorMessage(err && err.code, err); }
   finish(id, 'items');
@@ -459,7 +459,7 @@ async function runDocs() {
   busy[id] = 'docs'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(docsPrompt(ev), { valid: x => x && !Array.isArray(x) && typeof x === 'object' && (typeof x.letter === 'string' || typeof x.plan === 'string') });
+    const v = await ai.generateJSON(docsPrompt(ev), { task: 'plan', valid: x => x && !Array.isArray(x) && typeof x === 'object' && (typeof x.letter === 'string' || typeof x.plan === 'string') });
     const t = x => (Array.isArray(x) ? x.filter(y => typeof y === 'string').join('\n') : typeof x === 'string' ? x : '');
     apply(id, e => { e.docs = { plan: t(v.plan), safety: t(v.safety), letter: t(v.letter), rain: t(v.rain), roles: normRoles(v.roles, e.staff.filter(x => x.name.trim())), done: false }; e.refNotes = { ...e.refNotes, docs: normRefNotes(v.refNotes), stale: false }; if (e.status === 'final') e.status = 'draft'; });
   } catch (err) { errs[id] = ai.errorMessage(err && err.code, err); }
@@ -511,7 +511,7 @@ async function runOptions() {
   busy[id] = 'options'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(optionsPrompt(ev), { valid: x => x && normOptions(x.options).length > 0 });
+    const v = await ai.generateJSON(optionsPrompt(ev), { task: 'plan', valid: x => x && normOptions(x.options).length > 0 });
     apply(id, e => { e.options = normOptions(v.options); e.picked = null; e.refNotes = { ...e.refNotes, options: normRefNotes(v.refNotes), stale: false }; });
   } catch (err) { errs[id] = ai.errorMessage(err && err.code, err); }
   finish(id, 'options');

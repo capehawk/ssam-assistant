@@ -92,7 +92,7 @@ async function runAi() {
   render();
   try {
     const { days, notes } = sheet(mon);
-    const v = await ai.generateJSON(notesPrompt(days, notes), { valid: x => x && Array.isArray(x.days) });
+    const v = await ai.generateJSON(notesPrompt(days, notes), { task: 'notes', valid: x => x && Array.isArray(x.days) });
     const got = normNotes(v.days);
     const w = getWeekly(mon); // 그사이 선생님이 쓴 칸은 덮지 않음
     const filled = [];

@@ -58,7 +58,7 @@ async function writeFeedback(only) {
   try {
     for (let i = 0; i < list.length; i += 10) {
       const chunk = list.slice(i, i + 10), nos = new Set(chunk.map(s => s.no));
-      const res = normFeedback(await ai.generateJSON(feedbackPrompt(t, chunk), { valid: v => Object.keys(normFeedback(v)).length > 0 }));
+      const res = normFeedback(await ai.generateJSON(feedbackPrompt(t, chunk), { task: 'notes', valid: v => Object.keys(normFeedback(v)).length > 0 }));
       const t2 = getTest(id);
       if (!t2) break;
       // 다시 쓰기(only)는 두 칸 모두, 아니면 빈 칸만 채움 (선생님이 쓴 글은 그대로)

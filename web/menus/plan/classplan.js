@@ -350,7 +350,7 @@ async function runDraft() {
     if (plan.sources.guide.trim() && !plan.guide) {
       busy[id] = 'guide'; renderMain();
       try {
-        const v = await ai.generateJSON(guidePrompt(plan), { valid: x => Array.isArray(x) });
+        const v = await ai.generateJSON(guidePrompt(plan), { task: 'plan', valid: x => Array.isArray(x) });
         apply(id, p => { p.guide = normGuide(v, p.outline); });
       } catch (e) { notes[id] = `올해 지침에서 항목을 찾지 못해 지침 점검 없이 초안을 썼어요(${ai.errorMessage(e && e.code, e)}). [AI로 다시 쓰기]를 누르면 지침부터 다시 찾아요.`; }
     }
@@ -358,7 +358,7 @@ async function runDraft() {
     if (!target) { errs[id] = SAVE_FAIL; finish(id, 3); return; }
     busy[id] = 'draft'; if (visible() && plan.id === id) renderMain();
     const prompt = draftPrompt(target, { bodies: sectionBodies(target.sources.lastPlan, target.outline), hours: hoursRows(target.attach), evalCount: target.evalRows.length });
-    const v = await ai.generateJSON(prompt, { valid: x => Object.keys(normSections(x, target.outline)).length > 0 });
+    const v = await ai.generateJSON(prompt, { task: 'plan', valid: x => Object.keys(normSections(x, target.outline)).length > 0 });
     apply(id, p => {
       p.draft = normSections(v, p.outline);
       const m = normMonthly(v);
@@ -425,7 +425,7 @@ async function runEval() {
   delete errs[id];
   busy[id] = 'eval'; renderMain();
   try {
-    const v = await ai.generateJSON(evalPrompt(text), { valid: x => normEvalRows(x).length > 0 });
+    const v = await ai.generateJSON(evalPrompt(text), { task: 'plan', valid: x => normEvalRows(x).length > 0 });
     apply(id, p => { p.evalRows = normEvalRows(v); if (p.status === 'final') p.status = 'draft'; });
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 4);
