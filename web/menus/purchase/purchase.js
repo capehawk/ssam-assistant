@@ -11,6 +11,7 @@ import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPur
 import { aiRowHTML, pick } from '../../core/ai-roles.js';
 import { reviewJSON, purchaseReviewPrompt, normPurchaseReview, opinionHTML, REVIEW_FAIL } from '../../core/ai-review.js';
 import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor } from './intake.js';
+import { oneshotPrompt, normOneshot, confirmChips, GUESS_KEYS } from './oneshot.js';
 import { pushRecent, newId, listRecent, deleteRecent, listTemplates, saveTemplate, renameTemplate, deleteTemplate, templateForm } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
 import { registerInbox } from '../../core/inbox.js';
@@ -35,6 +36,9 @@ function normForm(v) {
   }
   const items = v && Array.isArray(v.items) ? v.items.filter(i => i && typeof i === 'object').map(i => ({ ...emptyItem(), ...Object.fromEntries(Object.keys(emptyItem()).map(k => [k, i[k] == null ? '' : String(i[k])])) })) : [];
   f.items = items.length ? items : [emptyItem()];
+  // typeSet: 선생님이 종류를 골랐음(AI가 종류를 바꾸지 않음), guessed: AI가 채운 칸(「AI가 짐작함」)
+  f.typeSet = !!(v && v.typeSet);
+  f.guessed = v && Array.isArray(v.guessed) ? v.guessed.filter(k => GUESS_KEYS.includes(k)) : [];
   return f;
 }
 /* 초안: 제목, AI가 쓴 첫 문장(intro), 사유 전체, 선생님이 사유를 손으로 고쳤는지(edited), 검토 의견(rv) */
@@ -58,6 +62,9 @@ let st = load();
 let box = null, curTab = 'new', busy = false, msg = '', tried = false;
 let rvBusy = null, rvFail = null; // 지금 검토 중인·검토하지 못한 초안
 const save = () => set(CUR_KEY, st);
+/* [자세히 고치기] 열림(학년도와 상관없이 기억) */
+const VIEW_KEY = 'purchase:view';
+const viewFull = () => get(VIEW_KEY, 'simple') === 'full';
 const checks = () => checkPurchase(st.form, { limit: getPurchaseLimit(), meetCap: getMeetCap() });
 
 /* 다른 화면(견적서·템플릿·최근 작성·행사계획)이 쓰는 입구 */
@@ -67,7 +74,7 @@ export function setForm(form) { st.form = normForm(form); save(); if (curTab ===
 /* 행사계획에서 [품의로 이어 가기] (P-10): 종류 「행사 운영」으로 칸을 채우고 품의 › 새 품의로 감 */
 export function openPurchase(prefill) {
   keepRecent();
-  st = { id: newId(), form: normForm({ ...emptyForm('event'), ...(prefill || {}), type: 'event' }), draft: null }; msg = ''; tried = false;
+  st = { id: newId(), form: normForm({ ...emptyForm('event'), ...(prefill || {}), type: 'event', typeSet: true }), draft: null }; msg = ''; tried = false;
   save();
   go('purchase', 'new');
 }
@@ -131,7 +138,7 @@ function render() {
   if (!box) return;
   const t = typeOf(st.form.type), ex = t.example;
   box.innerHTML = `<div class="m-page pc-page">
-    <div class="m-head pc-head"><div><h2>새 품의</h2><p class="muted">메모를 채우고 [초안 만들기]를 누르면 에듀파인에 붙여넣을 제목·품의 사유·산출 내역을 써요.</p></div>
+    <div class="m-head pc-head"><div><h2>새 품의</h2><p class="muted">사려는 것·견적서를 넣고 [초안 만들기]를 누르면 에듀파인에 붙여넣을 제목·품의 사유·산출 내역을 써요.</p></div>
       <div class="row pc-head-act"><button class="btn" type="button" data-pc="saveTpl">템플릿으로 저장</button><button class="btn text" type="button" data-pc="fresh">새로 쓰기</button></div></div>
     <div class="seg pc-types" role="radiogroup" aria-label="품의 종류">${TYPES.map(x => `<button type="button" role="radio" data-pctype="${x.id}" aria-pressed="${x.id === t.id}" aria-checked="${x.id === t.id}">${x.label}</button>`).join('')}</div>
     <p class="muted pc-hint" id="pcHint">${esc(t.hint)}</p>
@@ -139,17 +146,19 @@ function render() {
       <section class="pc-card" aria-labelledby="pcMemoH">
         <h3 id="pcMemoH">메모</h3>
         <div class="pc-intake" id="pcIntakeBox">
-          <label class="lab" for="pcIntake">아무거나 넣기</label>
-          <textarea class="field" id="pcIntake" rows="3" placeholder="엑셀·견적서 파일, 장바구니 캡처, 대충 쓴 글(예: A4 용지 5박스 2만원)을 여기에 붙여넣거나 끌어 놓으세요"></textarea>
-          <div class="row"><button class="btn tonal" type="button" data-pc="intake">넣기</button><button class="btn text" type="button" data-pc="intakeFile">파일 고르기</button>
+          <label class="lab" for="pcIntake">사려는 것·견적서를 넣으세요</label>
+          <textarea class="field" id="pcIntake" rows="4" placeholder="예) 3학년 과학 실험 알코올램프 10개 5,000원, 다음 주 화요일 과학실&#10;엑셀·견적서 파일, 장바구니 캡처도 붙여넣거나 끌어 놓으면 돼요"></textarea>
+          <div class="row"><button class="btn primary" type="button" data-pc="go" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'}</button>
+            <button class="btn text" type="button" data-pc="intake">칸에만 넣기</button><button class="btn text" type="button" data-pc="intakeFile">파일 고르기</button>
             <input type="file" id="pcIntakeFile" accept=".xlsx,.csv,.hwp,.hwpx,.txt,.pdf,.png,.jpg,.jpeg,.webp" hidden><span class="muted" id="pcIntakeMsg" role="status"></span></div>
-          <p class="muted pc-intake-note">${st.form.type === 'lecturer' ? '강사 수당은 강사 이름이 AI로 가지 않게 앱이 글만 읽어요(캡처·사진은 읽지 않아요).' : '글은 앱이 먼저 읽고, 못 읽은 줄과 캡처·사진은 AI가 읽어요.'} 이미 쓴 칸은 덮지 않아요.</p>
+          <p class="muted pc-intake-note">${st.form.type === 'lecturer' ? '강사 수당은 강사 이름이 AI로 가지 않게 앱이 글만 읽어요(캡처·사진은 읽지 않아요).' : '[초안 만들기]를 누르면 넣은 것을 읽어 칸을 채우고 바로 초안을 써요. 목적·일시·장소도 글에 있으면 채워요.'} 이미 쓴 칸은 덮지 않아요.</p>
         </div>
+        <details class="pc-more" id="pcMore"${viewFull() ? ' open' : ''}><summary>자세히 고치기 <span class="muted">사업명·목적·일시·대상·장소·예산 과목·품목·붙임</span></summary>
         <div class="pc-fields">
           ${field('project', '사업명', { ph: '예) ' + ex.project, wide: true })}
           ${field('purpose', '목적', { req: true, ph: '예) ' + ex.purpose, wide: true })}
-          ${field('date', '일시', { req: true, ph: '예) ' + ex.date })}
-          ${field('target', '대상', { req: true, ph: '예) ' + ex.target })}
+          ${field('date', '일시', { ph: '예) ' + ex.date })}
+          ${field('target', '대상', { ph: '예) ' + ex.target })}
           ${field('place', '장소', { ph: '예) ' + ex.place })}
           ${field('total', '총액 (선택)', { ph: '맞춰 볼 금액이 있으면' })}
           <div class="pc-f wide"><label class="lab" for="pcBudget">예산 과목</label>
@@ -164,6 +173,7 @@ function render() {
         ${attachHTML()}
         ${field('memo', '메모 (선택)', { ph: '그 밖에 초안에 넣을 내용', wide: true, area: true })}
         <div class="row pc-go"><button class="btn primary" type="button" data-pc="draft" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'}</button></div>
+        </details>
       </section>
       <section class="pc-card pc-draft" id="pcDraftCard" aria-labelledby="pcDraftH"></section>
     </div>
@@ -194,6 +204,23 @@ function checksHTML() {
   return `<h4 class="pc-checks-h">확인 목록</h4><ul class="pc-checks" id="pcChecks">${out.join('')}</ul>`;
 }
 
+/* 초안 위 「확인할 것」: 누르면 [자세히 고치기]의 그 칸으로 */
+const chipsHTML = () => confirmChips(st.form, checks(), st.form.guessed)
+  .map(c => `<button type="button" class="chip pc-chip ${c.level}" data-chip="${c.key}">${esc(c.text)}</button>`).join('');
+function openMore() {
+  const d = box && box.querySelector('#pcMore');
+  if (d && !d.open) d.open = true;
+  set(VIEW_KEY, 'full');
+}
+function goChip(key) {
+  openMore();
+  let el = null;
+  if (key === 'items') {
+    const i = st.form.items.findIndex(it => String(it.name || '').trim() && !(toNumber(it.qty) > 0 && toNumber(it.price) > 0));
+    el = box.querySelector(`[data-item="${Math.max(0, i)}"][data-f="${i >= 0 && !(toNumber(st.form.items[i].qty) > 0) ? 'qty' : 'price'}"]`);
+  } else if (key) el = box.querySelector(`[data-k="${key}"]`);
+  if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+}
 function renderDraft() {
   const card = box && box.querySelector('#pcDraftCard');
   if (!card) return;
@@ -203,7 +230,7 @@ function renderDraft() {
   card.innerHTML = `<h3 id="pcDraftH">에듀파인에 붙여넣을 초안</h3>
     ${aiRowHTML('purchase')}
     ${msg ? `<div class="banner err" id="pcMsg" role="alert"><span class="grow">${esc(msg)}</span></div>` : ''}
-    ${d ? `<div id="pcRvState">${rvStateHTML()}</div>
+    ${d ? `<div class="pc-chips" id="pcChips">${chipsHTML()}</div><div id="pcRvState">${rvStateHTML()}</div>
       <div class="pc-out"><div class="pc-out-h"><label class="lab" for="pcTitle">제목</label>${copyBtn('title', '복사')}</div>
         <input class="field${mark('title')}" id="pcTitle" data-d="title" value="${esc(d.title)}" autocomplete="off">
         <div id="pcRvTitle">${rvHTML('title')}</div></div>
@@ -214,7 +241,7 @@ function renderDraft() {
       <div class="pc-out"><div class="pc-out-h"><span class="lab">산출 내역</span>${copyBtn('calc', '표 복사')}</div>
         <div class="pc-calc-wrap" id="pcCalcWrap">${calcHTML()}</div></div>
       <div class="row">${exportButton('data-pc="export"')}</div>`
-    : `<p class="muted pc-empty">${busy ? '<span class="spin"></span> AI가 제목과 품의 사유를 쓰고 있어요…' : '왼쪽 메모를 채우고 [초안 만들기]를 누르면 제목·품의 사유·산출 내역을 써요. 금액과 합계는 앱이 계산해요.'}</p>`}
+    : `<p class="muted pc-empty">${busy ? '<span class="spin"></span> AI가 제목과 품의 사유를 쓰고 있어요…' : '사려는 것·견적서를 넣고 [초안 만들기]를 누르면 제목·품의 사유·산출 내역을 써요. 금액과 합계는 앱이 계산해요.'}</p>`}
     <div id="pcChecksBox">${checksHTML()}</div>`;
 }
 
@@ -281,6 +308,8 @@ function live() {
   if (wh) wh.innerHTML = whHTML();
   const bh = box.querySelector('#pcBudgetHints');
   if (bh) bh.innerHTML = hintsHTML();
+  const ch = box.querySelector('#pcChips');
+  if (ch) ch.innerHTML = chipsHTML();
   syncReason();
   if (tried) markBad(checks());
 }
@@ -321,46 +350,45 @@ function renderItems(focusRow) {
   if (focusRow != null) { const f = box.querySelector(`[data-item="${focusRow}"][data-f="name"]`); if (f) f.focus(); }
 }
 
-/* ---------- 초안 만들기 ---------- */
-function draftPrompt(f) {
-  const t = typeOf(f.type);
-  return '학교 행정 문서(에듀파인 품의)를 돕는 도우미예요. 아래 메모로 품의의 제목과 품의 사유 첫 문장을 써 주세요.\n\n'
-    + draftMemo(f)
-    + '\n규칙:\n'
-    + '- title: 한 줄, 30자 안쪽. 무엇을 왜 하는지 드러나게 씁니다. 예) 5학년 과학 실험 재료(용해와 용액) 구입\n'
-    + `- intro: 한 문장. 「…을(를) 다음과 같이 ${VERB[t.id]}하고자 합니다.」 꼴로 씁니다. 금액·날짜는 쓰지 않습니다.\n`
-    + '- 메모에 없는 사실은 지어내지 않습니다.\n'
-    + '\n답은 JSON 하나만: {"title": "…", "intro": "…"}';
-}
-
-async function makeDraft() {
+/* ---------- 초안 만들기 (한 칸 → 바로 초안, 스펙 2026-11-02 3.2) ---------- */
+/* text: 넣기 칸에 넣은 글(빈 칸·목적 짐작에 씀, 강사 수당은 보내지 않음) */
+async function makeDraft({ text = '' } = {}) {
   if (busy) return;
   tried = true;
-  const r = checks();
+  const can = ai.ready();
+  // 목적은 비어도 AI가 짐작해 씀(AI가 될 때)
+  const r = checkPurchase(st.form, { limit: getPurchaseLimit(), meetCap: getMeetCap(), guessPurpose: can });
   markBad(r);
   msg = '';
   if (!r.canDraft) {
     renderDraft();
+    if (r.missing.length || r.personal.length) openMore();
     const first = box.querySelector('.field.bad');
     if (first) first.focus();
     return;
   }
-  if (!ai.ready()) { renderDraft(); toast('초안을 쓸 AI를 먼저 정해 주세요'); if (window.SSAM && window.SSAM.ai) window.SSAM.ai.openSettings(); return; }
+  if (!can) { renderDraft(); toast('초안을 쓸 AI를 먼저 정해 주세요'); if (window.SSAM && window.SSAM.ai) window.SSAM.ai.openSettings(); return; }
   busy = true;
   setBusyUI();
   const mine = st; // 쓰는 중에 [새로 쓰기]·불러오기로 바뀌면 초안은 쓰던 품의에 붙여 최근 작성으로
   try {
     const form = getForm();
-    const v = await ai.generateJSON(draftPrompt(form), {
+    const askType = !form.typeSet && form.type !== 'lecturer';
+    const v = await ai.generateJSON(oneshotPrompt(form, text, { askType }), {
       task: 'purchase',
       valid: x => x && typeof x.title === 'string' && x.title.trim() && typeof x.intro === 'string' && x.intro.trim()
     });
-    mine.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: mine.form }), edited: false, tail: reasonTail(mine.form) };
+    const n = normOneshot(v, mine.form);
+    // 빈 칸만 채우고 AI가 채운 칸은 표시, 선생님이 종류를 고르지 않았으면 AI가 본 종류로
+    for (const [k, val] of Object.entries(n.fields)) if (!String(mine.form[k] || '').trim()) { mine.form[k] = val; if (!mine.form.guessed.includes(k)) mine.form.guessed.push(k); }
+    if (askType && n.type && n.type !== mine.form.type && cleanItems(mine.form.items).length) { mine.form.type = n.type; mine.form.attach = (ATTACH[n.type] || []).filter(a => a.on).map(a => a.id); }
+    mine.draft = { title: n.title, intro: n.intro, reason: composeReason({ intro: n.intro, form: mine.form }), edited: false, tail: reasonTail(mine.form) };
     if (st === mine) {
       save();
       keepRecent();
       document.dispatchEvent(new CustomEvent('ssam:purchase-draft', { detail: { form: getForm(), draft: getDraft() } }));
-      runReview(draftMemo(form));
+      runReview(draftMemo(mine.form));
+      if (!String(mine.form.purpose || '').trim()) { msg = '무엇에 쓰는지 목적을 적어 주세요(자세히 고치기 › 목적).'; }
     } else {
       pushRecent({ id: mine.id, at: Date.now(), form: JSON.parse(JSON.stringify(mine.form)), draft: { ...mine.draft } });
       toast('쓰던 품의의 초안은 「최근 작성」에 넣었어요', 5000);
@@ -369,11 +397,27 @@ async function makeDraft() {
     if (st === mine) msg = ai.errorMessage(e && e.code, e);
   }
   busy = false;
-  if (curTab === 'new' && box && box.isConnected) { setBusyUI(); renderDraft(); }
+  if (curTab === 'new' && box && box.isConnected) {
+    render();
+    if (msg && !String(st.form.purpose || '').trim()) goChip('purpose');
+  }
+}
+/* [초안 만들기](넣기 칸 옆): 넣기 칸 글을 먼저 넣고 바로 초안 */
+async function oneshot() {
+  if (busy || intakeBusy) return;
+  const ta = box && box.querySelector('#pcIntake'), text = ta ? ta.value : '';
+  if (text.trim()) {
+    const n = await runIntake({ text });
+    if (n < 0) return; // 더하기·바꾸기를 그만둠
+  } else if (!cleanItems(st.form.items).length) {
+    toast('넣기 칸에 사려는 것·견적서를 넣어 주세요. 예) 알코올램프 10개 5,000원', 6000);
+    if (ta) ta.focus();
+    return;
+  }
+  await makeDraft({ text });
 }
 function setBusyUI() {
-  const b = box && box.querySelector('[data-pc="draft"]');
-  if (b) { b.disabled = busy; b.innerHTML = busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'; }
+  for (const b of (box ? box.querySelectorAll('[data-pc="draft"],[data-pc="go"]') : [])) { b.disabled = busy; b.innerHTML = busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'; }
   if (busy) renderDraft();
 }
 
@@ -388,7 +432,7 @@ async function downloadDoc() {
 document.addEventListener('input', e => {
   if (!box || !box.contains(e.target) || curTab !== 'new') return;
   const el = e.target;
-  if (el.dataset.k) st.form[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value;
+  if (el.dataset.k) { st.form[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value; st.form.guessed = st.form.guessed.filter(k => k !== el.dataset.k); }
   else if (el.dataset.item != null && el.dataset.f) { const it = st.form.items[+el.dataset.item]; if (it) it[el.dataset.f] = el.value; }
   else if (el.dataset.d && st.draft) {
     st.draft[el.dataset.d] = el.value;
@@ -416,8 +460,11 @@ document.addEventListener('click', e => {
   const ty = e.target.closest('[data-pctype]');
   if (ty) {
     if (st.form.type !== ty.dataset.pctype) { st.form.type = ty.dataset.pctype; st.form.attach = (ATTACH[st.form.type] || []).filter(a => a.on).map(a => a.id); }
+    st.form.typeSet = true;
     save(); render(); return;
   }
+  const chip = e.target.closest('[data-chip]');
+  if (chip) { goChip(chip.dataset.chip); return; }
   const bh = e.target.closest('[data-budget-hint]');
   if (bh) { st.form.budget = bh.dataset.budgetHint; st.form.budgetUnknown = false; save(); const el = box.querySelector('#pcBudget'); if (el) el.value = st.form.budget; const u = box.querySelector('#pcBudgetUnknown'); if (u) u.checked = false; live(); return; }
   const ad = e.target.closest('[data-attach-del]');
@@ -447,6 +494,7 @@ document.addEventListener('click', e => {
     if (!st.form.items.length) st.form.items.push(emptyItem());
     save(); renderItems();
   } else if (a === 'draft') makeDraft();
+  else if (a === 'go') oneshot();
   else if (a === 'saveTpl') askSaveTemplate();
   else if (a === 'fresh') swapTo({ id: newId(), form: normForm(emptyForm(st.form.type)), draft: null }, { onlyIfLost: true, done: had => toast(had ? '새 품의를 시작해요. 쓰던 품의는 최근 작성에 남아요' : '새 품의를 시작해요') });
   else if (a === 'export') downloadDoc();
@@ -473,6 +521,10 @@ document.addEventListener('change', e => {
   const fs = [...e.target.files]; e.target.value = '';
   intakeFiles(fs);
 });
+document.addEventListener('toggle', e => {
+  if (!box || e.target.id !== 'pcMore' || !box.contains(e.target)) return;
+  set(VIEW_KEY, e.target.open ? 'full' : 'simple');
+}, true);
 /* 넣기 칸: 그림·파일을 붙여넣거나 끌어 놓으면 바로 읽음 (글 붙여넣기는 칸에 들어가고 [넣기]로) */
 document.addEventListener('paste', e => {
   if (!box || curTab !== 'new' || !e.target.closest || !e.target.closest('#pcIntakeBox')) return;
@@ -548,7 +600,7 @@ async function runIntake(input) {
     return 0;
   }
   let how = 'add';
-  if (r.items.length && hasItems()) { how = await askMerge(cleanItems(st.form.items).length); if (!how) return 0; }
+  if (r.items.length && hasItems()) { how = await askMerge(cleanItems(st.form.items).length); if (!how) return -1; }
   st.form = fillEmpty(st.form, r.fields);
   st.form.items = mergeItems(st.form.items, r.items, how);
   fresh = new Set(r.items);
@@ -638,7 +690,7 @@ document.addEventListener('click', e => {
   const b = e.target.closest('[data-tpl-load],[data-tpl-rename],[data-tpl-del],[data-recent-open],[data-recent-del]');
   if (!b) return;
   const d = b.dataset;
-  if (d.tplLoad) { const t = listTemplates().find(x => x.id === d.tplLoad); if (t) swapTo({ id: newId(), form: normForm(templateForm(t)), draft: null }); }
+  if (d.tplLoad) { const t = listTemplates().find(x => x.id === d.tplLoad); if (t) swapTo({ id: newId(), form: normForm({ ...templateForm(t), typeSet: true }), draft: null }); }
   else if (d.tplRename) {
     const t = listTemplates().find(x => x.id === d.tplRename); if (!t) return;
     SS().openSheet(`<h3>이름 바꾸기</h3><label class="yp-f"><span class="lab">이름</span><input class="field" id="pcTplRename" value="${esc(t.name)}" autocomplete="off"></label>
@@ -656,7 +708,7 @@ document.addEventListener('click', e => {
   } else if (d.recentOpen) { const r = listRecent().find(x => x.id === d.recentOpen); if (!r) return;
     // 지금 쓰고 있는 품의면 고치던 것 그대로 새 품의 탭으로(저장해 둔 옛 모습으로 바꾸지 않음)
     if (r.id === st.id) { go('purchase', 'new'); toast('지금 쓰고 있는 품의예요'); return; }
-    const f = normForm(r.form); swapTo({ id: r.id, form: f, draft: normDraft(r.draft, f) }); }
+    const f = normForm({ ...r.form, typeSet: true }); swapTo({ id: r.id, form: f, draft: normDraft(r.draft, f) }); }
   else if (d.recentDel) { deleteRecent(d.recentDel); renderOther(curTab); toast('최근 작성에서 지웠어요'); }
 });
 

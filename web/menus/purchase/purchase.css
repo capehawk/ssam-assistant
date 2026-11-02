@@ -81,3 +81,14 @@
 .pc-lib-list{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
 .pc-lib-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
 .pc-lib-row .grow{display:flex;flex-direction:column;gap:2px;min-width:0}.pc-lib-row .row{margin:0}
+
+/* 한 칸 → 바로 초안: [자세히 고치기]·확인할 것 칩 */
+.pc-more { margin-top: 10px; border-top: 1px solid var(--line, rgba(127,127,127,.25)); padding-top: 8px; }
+.pc-more > summary { cursor: pointer; font-weight: 600; padding: 6px 0; list-style-position: inside; }
+.pc-more > summary .muted { font-weight: 400; margin-left: 6px; font-size: .9em; }
+.pc-more[open] > summary { margin-bottom: 8px; }
+.pc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.pc-chips:empty { display: none; }
+.pc-chip { cursor: pointer; }
+.pc-chip.warn { background: var(--warn-bg, #fff4d6); color: var(--warn-fg, #7a5a00); border-color: transparent; }
+.pc-chip.info { opacity: .85; }

@@ -5,6 +5,8 @@ import { open, run, assert } from './helpers.mjs';
 
 const t = await open();
 const { page, url, errors } = t;
+// 품의 칸을 다루는 시험: [자세히 고치기]를 펼친 채로 (처음 화면은 purchase-oneshot.mjs)
+await page.addInitScript(() => { if (!localStorage.getItem('ssam:purchase:view')) localStorage.setItem('ssam:purchase:view', JSON.stringify('full')); });
 const HAIKU = { engine: 'claude', model: 'claude-haiku-5-5' }, OPUS = { engine: 'claude', model: 'claude-opus-5-5' };
 await page.addInitScript(() => {
   if (!localStorage.getItem('ssam:engine')) localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: 'sk-test' }, remember: true }));
@@ -40,7 +42,7 @@ await run('purchase-ai', [
     await page.waitForFunction(s => (document.querySelector(`${s} [data-ai-row="purchase"] .ai-row-t`) || {}).textContent === 'AI: Claude Haiku 5.5 · 검토 끔', P);
     await draft();
     const d = calls.at(-1);
-    assert(d.model === 'claude-haiku-5-5' && !d.head.startsWith('['), d.model + ' ' + d.head);
+    assert(d.model === 'claude-haiku-5-5' && d.head === '[품의 초안]', d.model + ' ' + d.head);
     await page.fill(`${P} #pcIntake`, '칭찬 도장 좀 사고');
     await page.click(`${P} [data-pc="intake"]`);
     await until(async () => calls.some(c => c.head === '[품의 넣기]'));

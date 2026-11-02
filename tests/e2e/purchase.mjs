@@ -3,6 +3,8 @@ import { open, run, assert, mockClaude } from './helpers.mjs';
 
 const t = await open();
 const { page, ctx, url, errors } = t;
+// 품의 칸을 다루는 시험: [자세히 고치기]를 펼친 채로 (처음 화면은 purchase-oneshot.mjs)
+await page.addInitScript(() => { if (!localStorage.getItem('ssam:purchase:view')) localStorage.setItem('ssam:purchase:view', JSON.stringify('full')); });
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url.replace(/\/$/, '') });
 await page.addInitScript(() => {
   if (!localStorage.getItem('ssam:engine')) localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: 'sk-test' }, remember: true }));
@@ -36,11 +38,12 @@ await run('purchase', [
     assert(bad === 0, '주민번호·계좌 칸이 있음');
     await page.click(`${P} [data-pctype="goods"]`);
   }],
-  ['목적·일시가 비면 AI를 부르지 않고 빨간 칸', async () => {
+  ['품목이 비면 AI를 부르지 않고 빨간 칸 (목적은 AI가 짐작, 일시는 필수 아님)', async () => {
     await fill('#pcTarget', '5학년 4개 반');
     await page.click(`${P} [data-pc="draft"]`);
     assert(prompts.length === 0, 'AI를 부름');
-    assert(await page.locator(`${P} #pcPurpose.bad`).count() === 1 && await page.locator(`${P} #pcDate.bad`).count() === 1, '빨간 칸 아님');
+    assert(await page.locator(`${P} [data-item="0"][data-f="name"].bad`).count() === 1, '품목 빨간 칸 아님');
+    assert(await page.locator(`${P} #pcPurpose.bad`).count() === 0 && await page.locator(`${P} #pcDate.bad`).count() === 0, '목적·일시가 빨간 칸');
   }],
   ['칸을 채우면 합계가 보이고 초안(제목·사유·산출 내역)이 나옴', async () => {
     await fill('#pcProject', '5학년 과학 실험 재료 구입');
