@@ -3,6 +3,7 @@
 import { toast } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
 import { aiRowHTML } from '../../../core/ai-roles.js';
+import { reviewJSON, gradeReviewPrompt, normGradeReview, gradeTargets, sameGrade, opinionHTML, reviewBar, REVIEW_FAIL } from '../../../core/ai-review.js';
 import * as store from '../../../core/store.js';
 import { ITEM_TYPES, autoJudge, gradeCell, mergeCells, needsCheck, studentTotal } from './unit-grade.js';
 import { getTest, getSet, saveSet, numbersFor, parseNos, renumber, maskOf, listTests } from './unit-model.js';
@@ -200,9 +201,11 @@ async function gradeOne(id, i) {
     const t = getTest(id), st = t && t.students[i];
     if (!st || st.no !== no) return;
     st.items = mergeCells(st.items, Object.fromEntries(t.key.items.map(it => [it.no, gradeCell(it, res[it.no])])));
-    st.status = 'done'; st.err = '';
+    st.status = 'done'; st.err = ''; delete st.rvErr;
     // 저장 공간이 꽉 차면 남은 학생은 부르지 않음 (AI를 불러도 결과를 버리게 되므로)
-    if (!saveOrWarn(t) && G.run && G.run.id === id) { G.run.stop = true; G.run.queue = []; }
+    if (!saveOrWarn(t) && G.run && G.run.id === id) { G.run.stop = true; G.run.queue = []; return; }
+    refresh(id);
+    await reviewOne(id, i, no, images, ctrl.signal);
   } catch (e) {
     if (ctrl.signal.aborted) return;
     const t = getTest(id), st = t && t.students[i];
@@ -215,6 +218,38 @@ async function gradeOne(id, i) {
     }
   } finally { G.running.delete(i); refresh(id); }
 }
+/* 검토 AI: 확신 없는 칸·서술형 부분 점수만 같은 그림으로 다시 봄. 메인 결과는 그대로 두고 칸에 rv를 붙임.
+   검토 AI가 키·한도·연결로 실패하면 「검토하지 못했어요」, 이 차례의 남은 학생은 검토하지 않음 */
+const REVIEW_STOP = ['auth', 'quota', 'rate_limited', 'blocked', 'no_engine', 'bad_model', 'upstream_error', 'session_expired'];
+async function reviewOne(id, i, no, images, signal) {
+  const run = G.run && G.run.id === id ? G.run : null;
+  if (run && run.noReview) return;
+  const t = getTest(id), st = t && t.students[i];
+  if (!st || st.no !== no) return;
+  const nos = gradeTargets(t, st);
+  if (!nos.length) return;
+  const v = await reviewJSON('grade', gradeReviewPrompt(t, no, nos), { images, signal, valid: validGrade });
+  if (v == null || signal.aborted) return;
+  const t2 = getTest(id), s2 = t2 && t2.students[i];
+  if (!s2 || s2.no !== no) return;
+  if (v.error) {
+    if (v.error === 'cancelled') return;
+    s2.rvErr = REVIEW_FAIL;
+    if (run && REVIEW_STOP.includes(v.error)) run.noReview = true;
+  } else {
+    const res = normGradeReview(v, nos);
+    for (const n of nos) {
+      const r = res[n], c = s2.items[n], it = t2.key.items.find(x => x.no === n);
+      if (!r || !c || !it || c.manual) continue;
+      const agree = sameGrade(it, c, r);
+      c.rv = { read: r.read, points: r.points, why: r.why, agree };
+      if (agree) c.ok = true;
+    }
+  }
+  saveOrWarn(t2);
+}
+const openRv = c => !!(c && c.rv && !c.rv.agree && !c.rv.done);
+const rvCount = t => t.students.filter(s => !s.skip && s.status === 'done').reduce((n, s) => n + t.key.items.filter(it => openRv(s.items[it.no])).length, 0);
 async function runQueue(id, list) {
   const run = { id, queue: list.slice(), stop: false };
   G.run = run;
@@ -276,10 +311,11 @@ function step3HTML(t) {
   const head = `<tr><th scope="col">번호</th>${items.map(it => `<th scope="col"><button class="un-ih" type="button" data-item="${it.no}" title="${esc(it.content)}">${it.no}<small>${TYPE[it.type] || ''}</small></button></th>`).join('')}<th scope="col">총점</th></tr>`;
   const rows = t.students.map((s, i) => {
     if (s.skip) return '';
-    const st = run && G.running.has(i) ? '<span class="spin" aria-label="채점 중"></span>' : s.status === 'error' ? `<span class="chip err" title="${esc(s.err || '')}">오류</span>` : '';
+    const st = (run && G.running.has(i) ? '<span class="spin" aria-label="채점 중"></span>' : s.status === 'error' ? `<span class="chip err" title="${esc(s.err || '')}">오류</span>` : '')
+      + (s.status === 'done' && s.rvErr ? `<span class="chip warn" title="검토 AI를 부르지 못했어요. 메인 AI의 채점은 그대로예요.">${esc(s.rvErr)}</span>` : '');
     const cells = items.map(it => {
       const c = s.status === 'done' ? s.items[it.no] : null;
-      return `<td><button class="un-cell${needsCheck(c) ? ' chk' : ''}${c && c.manual ? ' man' : ''}" type="button" data-cell="${s.no}-${it.no}" aria-label="${s.no}번 ${it.no}번 문항">${mark(it, c)}</button></td>`;
+      return `<td><button class="un-cell${needsCheck(c) ? ' chk' : ''}${c && c.manual ? ' man' : ''}${openRv(c) ? ' rvo' : ''}" type="button" data-cell="${s.no}-${it.no}" aria-label="${s.no}번 ${it.no}번 문항${openRv(c) ? ' · 검토 의견' : ''}">${mark(it, c)}</button></td>`;
     }).join('');
     const tot = s.status === 'done' ? studentTotal(t, s) : null;
     return `<tr data-strow="${s.no}"><th scope="row"><span class="un-sno">${s.no}번</span>${st}<button class="btn text tiny" type="button" data-un="retry" data-no="${s.no}">${s.status === 'done' ? '다시' : s.status === 'error' ? '다시 시도' : '채점'}</button></th>${cells}<td class="num">${tot ? `${tot.score}/${tot.total}` : ''}</td></tr>`;
@@ -287,6 +323,7 @@ function step3HTML(t) {
   return `${aiRowHTML('grade')}<div class="yp-card">
       <div class="row">${run ? `<span class="spin"></span><b>채점하는 중 · ${done}/${total}명</b><button class="btn" type="button" data-un="stop">멈추기</button>` : `<button class="btn primary" type="button" data-un="grade">채점 시작</button><span class="muted">${done}/${total}명 채점함</span>`}</div>
       ${up}${scanNote}
+      ${reviewBar(rvCount(t), 'data-un="nextRv"')}
       <div class="row"><b id="unPending">확인할 칸 ${pending(t)}개</b><button class="btn text" type="button" data-un="nextChk">다음 확인할 칸</button><span class="grow"></span><button class="btn primary" type="button" data-un="finish">채점 마치기</button></div>
       <p class="muted cls-note">노란 칸은 확인할 칸이에요: AI가 확신하지 못했거나, 앱과 AI의 판단이 다르거나, 단답이 정답과 글자가 다르거나, 서술형이에요. 문항 번호를 누르면 반 전체 답을 모아 봐요.</p>
     </div>
@@ -309,11 +346,26 @@ function openCell(no, itemNo) {
     <p class="muted" style="margin:0">${esc(it.content)} · 정답: <b>${esc(it.answer)}</b> · 배점 ${full}점${it.criteria ? ` · 채점 기준: ${esc(it.criteria)}` : ''}</p>
     <label class="yp-f"><span class="lab">학생이 쓴 답 (AI가 읽은 글, 고칠 수 있어요)</span><input class="field" id="unCellRead" value="${esc(c.read)}"></label>
     ${c.flag && !c.ok ? `<p class="banner warn" style="margin:0">${FLAG[c.flag] || ''}</p>` : ''}${c.why ? `<p class="muted" style="margin:0">AI: ${esc(c.why)}</p>` : ''}
+    ${openRv(c) ? opinionHTML({ title: '두 AI의 판단이 달라요', main: `${c.read || '(빈칸)'} · ${c.pts}점`, alt: `${c.rv.read || '(빈칸)'} · ${gradeCell(it, c.rv).pts}점`, why: c.rv.why, use: 'cell', keep: 'cell' }) : ''}
     ${ptsUI}${imgs}
     <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>닫기</button><button class="btn primary" type="button" id="unCellOk">확인</button></div>`,
   sh => {
     sh.classList.add('wide');
     sh.querySelectorAll('[data-pts]').forEach(b => b.addEventListener('click', () => { pick = Number(b.dataset.pts); sh.querySelectorAll('[data-pts]').forEach(x => x.setAttribute('aria-pressed', x === b)); }));
+    // 두 의견 고르기: 검토 안은 그 답을 같은 규칙으로 채점한 점수, 그대로 두기는 메인 안
+    const choose = useRv => {
+      const t2 = getTest(t.id), s2 = t2 && t2.students.find(x => x.no === no);
+      if (!s2 || !s2.items[itemNo] || !s2.items[itemNo].rv) { SS().closeSheet(); return; }
+      const c2 = s2.items[itemNo];
+      if (useRv) {
+        const g = gradeCell(it, c2.rv);
+        s2.items[itemNo] = { ...c2, read: g.read, pts: g.pts, ok: true, manual: c2.manual || g.pts !== c2.pts || g.read !== c2.read, rv: { ...c2.rv, done: 'review' } };
+      } else s2.items[itemNo] = { ...c2, ok: true, rv: { ...c2.rv, done: 'main' } };
+      saveOrWarn(t2); SS().closeSheet(); render();
+    };
+    const u = sh.querySelector('[data-rv-use]'), k = sh.querySelector('[data-rv-keep]');
+    if (u) u.addEventListener('click', () => choose(true));
+    if (k) k.addEventListener('click', () => choose(false));
     sh.querySelector('#unCellOk').addEventListener('click', () => {
       const read = sh.querySelector('#unCellRead').value.trim();
       const ip = sh.querySelector('#unCellPts');
@@ -321,7 +373,11 @@ function openCell(no, itemNo) {
       if (read !== c.read && pick === c.pts) { const a = autoJudge(it, read); if (a != null) pick = a; }
       const t2 = getTest(t.id), s2 = t2 && t2.students.find(x => x.no === no);
       if (!s2) { SS().closeSheet(); return; }
-      s2.items[itemNo] = { ...c, read, pts: pick, ok: true, manual: c.manual || pick !== c.pts || read !== c.read };
+      const changed = pick !== c.pts || read !== c.read;
+      const next = { ...c, read, pts: pick, ok: true, manual: c.manual || changed };
+      // 손으로 고치면 검토 의견은 사라짐, 고치지 않고 확인하면 메인 안을 고른 것
+      if (changed) delete next.rv; else if (openRv(c)) next.rv = { ...c.rv, done: 'main' };
+      s2.items[itemNo] = next;
       saveOrWarn(t2); SS().closeSheet(); render();
     });
   });
@@ -342,16 +398,21 @@ function openItem(itemNo) {
     const save = fn => { const t2 = getTest(t.id); if (!t2) return; for (const s of t2.students) if (!s.skip && s.status === 'done' && s.items[itemNo]) fn(s, s.items[itemNo]); saveOrWarn(t2); render(); };
     sh.querySelectorAll('[data-ipts]').forEach(inp => inp.addEventListener('change', () => {
       const no = Number(inp.dataset.ipts), v = Math.max(0, Math.min(full, Math.round(Number(inp.value) || 0)));
-      save((s, c) => { if (s.no === no) Object.assign(c, { pts: v, ok: true, manual: c.manual || v !== c.pts }); });
+      save((s, c) => { if (s.no === no) { if (v !== c.pts) delete c.rv; else if (openRv(c)) c.rv.done = 'main'; Object.assign(c, { pts: v, ok: true, manual: c.manual || v !== c.pts }); } });
       inp.closest('li').classList.remove('chk');
     }));
-    sh.querySelector('[data-un="itemOk"]').addEventListener('click', () => { save((s, c) => { c.ok = true; }); SS().closeSheet(); toast(`${itemNo}번 문항을 모두 확인했어요`); });
+    sh.querySelector('[data-un="itemOk"]').addEventListener('click', () => { save((s, c) => { c.ok = true; if (openRv(c)) c.rv.done = 'main'; }); SS().closeSheet(); toast(`${itemNo}번 문항을 모두 확인했어요`); });
   });
 }
 function nextCheck() {
   const t = cur();
   for (const s of t.students) if (!s.skip && s.status === 'done') for (const it of t.key.items) if (needsCheck(s.items[it.no])) { openCell(s.no, it.no); return; }
   toast('확인할 칸이 없어요');
+}
+function nextReview() {
+  const t = cur();
+  for (const s of t.students) if (!s.skip && s.status === 'done') for (const it of t.key.items) if (openRv(s.items[it.no])) { openCell(s.no, it.no); return; }
+  toast('검토 의견이 없어요');
 }
 function askFinish() {
   const t = cur(), n = pending(t);
@@ -385,6 +446,7 @@ document.addEventListener('click', e => {
   else if (a === 'stop') stopGrading();
   else if (a === 'retry') startGrading(Number(b.dataset.no));
   else if (a === 'nextChk') nextCheck();
+  else if (a === 'nextRv') nextReview();
   else if (a === 'finish') askFinish();
 });
 document.addEventListener('change', e => {
