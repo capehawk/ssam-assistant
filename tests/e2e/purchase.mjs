@@ -89,8 +89,8 @@ await run('purchase', [
     assert(await page.inputValue(`${P} #pcPurpose`) === '용해와 용액 모둠 실험', '입력이 사라짐');
     answer = 'ok';
   }],
-  ['[한글 파일로 내려받기]는 .hwpx', async () => {
-    const [dl] = await Promise.all([page.waitForEvent('download'), page.click(`${P} [data-pc="hwpx"]`)]);
+  ['[한글로 내려받기](처음 형식)는 .hwpx', async () => {
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click(`${P} [data-pc="export"]`)]);
     assert(dl.suggestedFilename().endsWith('.hwpx'), '이름: ' + dl.suggestedFilename());
   }],
   ['새로고침해도 쓰던 입력과 초안이 남음', async () => {

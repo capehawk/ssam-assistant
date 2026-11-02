@@ -1,7 +1,7 @@
 /* 설정 메뉴: 학급 명단 · AI · 화면 · 학교 정보 · 학년도 · 품의 기준 */
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { THEMES, getTheme, setTheme } from '../../core/theme.js';
-import { getSchool, setSchool, getPurchaseLimit, setPurchaseLimit } from '../../core/settings.js';
+import { getSchool, setSchool, getPurchaseLimit, setPurchaseLimit, getMeetCap, setMeetCap } from '../../core/settings.js';
 import * as ai from '../../core/ai.js';
 import { readTable } from '../../core/sheet.js';
 import { parseRoster } from '../../core/roster.js';
@@ -131,7 +131,11 @@ const VIEWS = {
         <input class="field" id="limitWon" type="number" min="1" step="10000" value="${getPurchaseLimit()}"></label>
       <p class="muted">지금: ${won(getPurchaseLimit())}원 · 학교마다 다를 수 있어요. 행정실에 확인해 주세요.</p>
       ${msg ? `<p class="set-msg err" role="alert">${esc(msg)}</p>` : ''}
-      <div class="row"><button class="btn primary" type="button" data-set="saveLimit">저장</button></div>`))
+      <div class="row"><button class="btn primary" type="button" data-set="saveLimit">저장</button></div>`)
+    + card('협의회 1인 상한', `<label class="set-f"><span class="lab">원 (협의회 품의에서 1인 단가가 이보다 크면 확인 목록에 알려요)</span>
+        <input class="field" id="meetCap" type="number" min="1" step="1000" value="${getMeetCap()}"></label>
+      <p class="muted">지금: ${won(getMeetCap())}원 · 교육청·학교마다 달라요(대체로 3만~4만 원). 행정실에 확인해 주세요.</p>
+      <div class="row"><button class="btn primary" type="button" data-set="saveMeetCap">저장</button></div>`))
 };
 
 let curTab = 'roster';
@@ -333,6 +337,11 @@ document.addEventListener('click', e => {
       const saved = setSchool(s);
       if (!saved) { msg = FULL; school = s; again(); return; }
       msg = ''; school = saved; again(); toast('학교 정보를 저장했어요');
+    } else if (a === 'saveMeetCap') {
+      const r = setMeetCap(box.querySelector('#meetCap').value);
+      if (r === 'full') { msg = FULL; again(); return; }
+      if (!r) { msg = '1인 상한은 1원 이상으로 넣어 주세요.'; again(); return; }
+      msg = ''; again(); toast(`협의회 1인 상한을 ${won(getMeetCap())}원으로 정했어요`);
     } else if (a === 'saveLimit') {
       const v = box.querySelector('#limitWon').value;
       const r = setPurchaseLimit(v);

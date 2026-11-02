@@ -3,10 +3,11 @@
 import { onEnter, go } from '../../core/shell.js';
 import { get, set } from '../../core/store.js';
 import * as ai from '../../core/ai.js';
-import { makeHwpx } from '../../core/hwpx.js';
-import { copyText, saveFile, toast } from '../../core/ui.js';
-import { getPurchaseLimit } from '../../core/settings.js';
-import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, purchaseDoc, toNumber, findPersonal } from './rules.js';
+import { copyText, toast } from '../../core/ui.js';
+import { getPurchaseLimit, getMeetCap } from '../../core/settings.js';
+import { exportButton, exportDoc } from '../../core/doc-export.js';
+import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, reasonTail, purchaseDoc, toNumber, findPersonal,
+  defaultUnit, quoteNote, withholding, INCOME, meetingItem, budgetHints, ATTACH, basisLine } from './rules.js';
 import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor } from './intake.js';
 import { pushRecent, newId } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
@@ -34,8 +35,12 @@ function normForm(v) {
   f.items = items.length ? items : [emptyItem()];
   return f;
 }
+/* 초안: 제목, AI가 쓴 첫 문장(intro), 사유 전체, 선생님이 사유를 손으로 고쳤는지(edited) */
+const firstPara = r => String(r || '').split(/\n\s*\n/)[0].trim();
 function normDraft(d) {
-  return d && typeof d === 'object' && typeof d.title === 'string' ? { title: d.title, reason: String(d.reason == null ? '' : d.reason) } : null;
+  if (!(d && typeof d === 'object' && typeof d.title === 'string')) return null;
+  const reason = String(d.reason == null ? '' : d.reason);
+  return { title: d.title, reason, intro: typeof d.intro === 'string' ? d.intro : firstPara(reason), edited: d.intro == null ? true : !!d.edited, ...(Array.isArray(d.rv) ? { rv: d.rv } : {}) };
 }
 function load() {
   const v = get(CUR_KEY, null);
@@ -45,6 +50,7 @@ function load() {
 let st = load();
 let box = null, curTab = 'new', busy = false, msg = '', tried = false;
 const save = () => set(CUR_KEY, st);
+const checks = () => checkPurchase(st.form, { limit: getPurchaseLimit(), meetCap: getMeetCap() });
 
 /* 다른 화면(견적서·템플릿·최근 작성·행사계획)이 쓰는 입구 */
 export const getForm = () => JSON.parse(JSON.stringify(st.form));
@@ -66,18 +72,52 @@ function field(key, label, { req, ph, wide, area } = {}) {
   return `<label class="pc-f${wide ? ' wide' : ''}"><span class="lab">${label}${req ? ' <b class="req" aria-hidden="true">*</b>' : ''}</span>`
     + (area ? `<textarea ${attrs} rows="2">${esc(st.form[key])}</textarea>` : `<input ${attrs} value="${esc(st.form[key])}">`) + '</label>';
 }
+const LEC = () => st.form.type === 'lecturer';
+const COLS = () => (LEC() ? { name: '강사(역할)', unit: '단위', qty: '시간', price: '시간당 단가' } : { name: '품명', unit: '단위', qty: '수량', price: '단가(원)' });
 function itemRow(it, i) {
+  const c = COLS();
   const inp = (f, ph, mode) => `<input class="field" data-item="${i}" data-f="${f}" value="${esc(it[f])}" placeholder="${ph}" aria-label="${i + 1}번째 품목 ${ph}" autocomplete="off"${mode ? ` inputmode="${mode}"` : ''}>`;
   const amt = cleanItems([it]).length ? won(itemAmount(cleanItems([it])[0])) : '';
-  return `<div class="pc-irow${fresh.has(it) ? ' new' : ''}" data-row="${i}">${inp('name', '품명')}${inp('spec', '규격')}${inp('unit', '단위')}${inp('qty', '수량', 'decimal')}${inp('price', '단가', 'numeric')}`
+  return `<div class="pc-irow${fresh.has(it) ? ' new' : ''}" data-row="${i}">${inp('name', LEC() ? '강사(역할) 예) 외부 강사 1' : '품명')}${inp('spec', '규격')}${inp('unit', defaultUnit(st.form.type))}${inp('qty', c.qty, 'decimal')}${inp('price', c.price, 'numeric')}`
     + (showVendor() ? inp('vendor', '구입처') : '')
     + `<span class="pc-amt num" data-amt="${i}">${amt}</span>`
     + `<button class="icon-btn pc-del" type="button" data-pc="delItem" data-i="${i}" aria-label="${i + 1}번째 품목 빼기" title="빼기">×</button></div>`;
 }
 const showVendor = () => st.form.items.some(it => String(it.vendor || '').trim());
-const itemsHTML = () => `<div class="pc-irow pc-ihead" aria-hidden="true"><span data-h="name">품명</span><span data-h="spec">규격</span><span data-h="unit">단위</span><span data-h="qty">수량</span><span data-h="price">단가(원)</span>${showVendor() ? '<span data-h="vendor">구입처</span>' : ''}<span data-h="amt">금액</span></div>`
+const itemsHTML = () => `<div class="pc-irow pc-ihead" aria-hidden="true"><span data-h="name">${COLS().name}</span><span data-h="spec">규격</span><span data-h="unit">단위</span><span data-h="qty">${COLS().qty}</span><span data-h="price">${COLS().price}</span>${showVendor() ? '<span data-h="vendor">구입처</span>' : ''}<span data-h="amt">금액</span></div>`
   + st.form.items.map(itemRow).join('');
 let fresh = new Set(); // 방금 넣은 품목 줄 (잠깐 노랗게)
+
+/* 종류별 계산 도우미 (스펙 4.2) */
+function whHTML() {
+  return cleanItems(st.form.items).map((it, i) => {
+    const w = withholding(itemAmount(it), st.form.income);
+    return `<li data-wh="${i}">${esc(it.name)} ${won(itemAmount(it))}원 → ${w.tax == null ? esc(w.note) : `원천징수(참고) ${won(w.tax)}원 · 실지급 ${won(w.net)}원 <span class="muted">(${esc(w.note)})</span>`}</li>`;
+  }).join('');
+}
+function helperHTML() {
+  const t = st.form.type;
+  if (t === 'lecturer') return `<div class="pc-helper"><label class="pc-f"><span class="lab">소득 구분</span><select class="field" id="pcIncome" data-k="income">${INCOME.map(([v, l]) => `<option value="${v}"${st.form.income === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <ul class="pc-wh" id="pcWh">${whHTML()}</ul>
+      <p class="muted" style="margin:0">원천징수는 참고용이에요(행정실 확인). 강의 확인서·지급 내역서는 강의 뒤 지출 때 붙여요. 주민번호·계좌는 행정실에 따로 내요.</p></div>`;
+  if (t === 'meeting') return `<div class="pc-helper"><div class="row pc-meet"><label class="cls-inline">인원 <input class="field num" id="pcMeetPeople" type="number" min="1" inputmode="numeric"></label>×
+      <label class="cls-inline">1인 단가 <input class="field num" id="pcMeetPrice" type="number" min="0" inputmode="numeric"></label>×
+      <label class="cls-inline">횟수 <input class="field num" id="pcMeetTimes" type="number" min="1" value="1" inputmode="numeric"></label>
+      <button class="btn text" type="button" data-pc="meetAdd">품목에 넣기</button></div>
+      <p class="muted" style="margin:0">1인 상한 ${won(getMeetCap())}원(설정 › 품의 기준) · 교육청·학교마다 달라요. 행정실 확인</p></div>`;
+  return `<div class="pc-helper"><label class="switch"><input type="checkbox" id="pcVat" data-k="vat"${st.form.vat ? ' checked' : ''}>단가는 부가세 포함이에요</label>
+      <p class="muted pc-qnote" id="pcQuoteNote">${esc(quoteNote(sumItems(st.form.items), st.form.vat).text)}</p></div>`;
+}
+const hintsHTML = () => `<span class="muted">추천</span>${budgetHints(st.form).map(h => `<button class="chip pc-hint-chip" type="button" data-budget-hint="${esc(h)}">${esc(h)}</button>`).join('')}<span class="muted">참고용 · 행정실 확인</span>`;
+/* 붙임 체크리스트: 지출품의서 1부는 늘 1번 */
+function attachHTML() {
+  const list = ATTACH[st.form.type] || ATTACH.goods;
+  return `<div class="pc-attach" id="pcAttach"><span class="lab">붙임</span>
+    <label class="pc-chk"><input type="checkbox" checked disabled> 지출품의서 1부 <span class="muted">(늘 1번)</span></label>
+    ${list.map(a => `<label class="pc-chk"><input type="checkbox" data-attach="${a.id}"${st.form.attach.includes(a.id) ? ' checked' : ''}> ${esc(a.label)}</label>`).join('')}
+    ${st.form.attachMore.map((x, i) => `<span class="pc-chk">${esc(x)} <button class="icon-btn tiny" type="button" data-attach-del="${i}" aria-label="${esc(x)} 빼기">×</button></span>`).join('')}
+    <div class="row pc-attach-add"><input class="field" id="pcAttachMore" placeholder="다른 붙임 서류 (예: 참고 자료)" autocomplete="off"><button class="btn text" type="button" data-pc="attachAdd">+ 붙임 더하기</button></div></div>`;
+}
 
 function render() {
   if (!box) return;
@@ -105,11 +145,14 @@ function render() {
           ${field('total', '총액 (선택)', { ph: '맞춰 볼 금액이 있으면' })}
           <div class="pc-f wide"><label class="lab" for="pcBudget">예산 과목</label>
             <div class="pc-budget"><input class="field" id="pcBudget" data-k="budget" value="${esc(st.form.budget)}" placeholder="예) 교육과정 운영 > 교과 운영비" autocomplete="off">
-            <label class="switch pc-unknown"><input type="checkbox" id="pcBudgetUnknown" data-k="budgetUnknown" ${st.form.budgetUnknown ? 'checked' : ''}>모르겠어요 · 행정실 확인</label></div></div>
+            <label class="switch pc-unknown"><input type="checkbox" id="pcBudgetUnknown" data-k="budgetUnknown" ${st.form.budgetUnknown ? 'checked' : ''}>모르겠어요 · 행정실 확인</label></div>
+            <div class="pc-hints" id="pcBudgetHints">${hintsHTML()}</div></div>
         </div>
         <div class="pc-sub"><span class="lab">품목 <b class="req" aria-hidden="true">*</b></span></div>
+        ${helperHTML()}
         <div class="pc-items${showVendor() ? ' has-vendor' : ''}" id="pcItems">${itemsHTML()}</div>
         <div class="row pc-iact"><button class="btn text" type="button" data-pc="addItem">+ 품목 더하기</button><span class="grow"></span><b class="pc-sum num" id="pcSum">합계 ${won(sumItems(st.form.items))}원</b></div>
+        ${attachHTML()}
         ${field('memo', '메모 (선택)', { ph: '그 밖에 초안에 넣을 내용', wide: true, area: true })}
         <div class="row pc-go"><button class="btn primary" type="button" data-pc="draft" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'}</button></div>
       </section>
@@ -117,19 +160,21 @@ function render() {
     </div>
   </div>`;
   renderDraft();
-  if (tried) markBad(checkPurchase(st.form, { limit: getPurchaseLimit() }));
+  if (tried) markBad(checks());
 }
 
 function calcHTML() {
   const items = cleanItems(st.form.items);
-  return `<table class="pc-calc" id="pcCalc"><thead><tr><th>품명</th><th>규격</th><th>수량</th><th>단가</th><th>금액</th></tr></thead><tbody>`
-    + items.map(it => `<tr><td>${esc(it.name)}</td><td>${esc(it.spec)}</td><td class="n">${won(toNumber(it.qty))}</td><td class="n">${won(toNumber(it.price))}</td><td class="n">${won(itemAmount(it))}</td></tr>`).join('')
-    + `</tbody><tfoot><tr><td colspan="4">합계</td><td class="n">${won(sumItems(st.form.items))}</td></tr></tfoot></table>`;
+  const unit = it => String(it.unit || '').trim() || defaultUnit(st.form.type);
+  return `<table class="pc-calc" id="pcCalc"><thead><tr><th>품명</th><th>규격</th><th>단위</th><th>수량</th><th>단가</th><th>금액</th></tr></thead><tbody>`
+    + items.map(it => `<tr><td>${esc(it.name)}</td><td>${esc(it.spec)}</td><td>${esc(unit(it))}</td><td class="n">${won(toNumber(it.qty))}</td><td class="n">${won(toNumber(it.price))}</td><td class="n">${won(itemAmount(it))}</td></tr>`).join('')
+    + `</tbody><tfoot><tr><td colspan="5">합계</td><td class="n">${won(sumItems(st.form.items))}</td></tr></tfoot></table>`
+    + `<p class="muted pc-basis">산출 근거: ${items.map(it => esc(basisLine(it, st.form.type))).join(' / ')}</p>`;
 }
 
 function checksHTML() {
   if (!tried && !st.draft) return '';
-  const r = checkPurchase(st.form, { limit: getPurchaseLimit() });
+  const r = checks();
   const li = (cls, text) => `<li class="${cls}">${esc(text)}</li>`;
   const out = [];
   if (r.missing.length) out.push(li('err', `빨간색 칸을 채워 주세요: ${r.missing.map(k => LABEL[k]).join('·')}`));
@@ -149,10 +194,11 @@ function renderDraft() {
     ${d ? `<div class="pc-out"><div class="pc-out-h"><label class="lab" for="pcTitle">제목</label>${copyBtn('title', '복사')}</div>
         <input class="field" id="pcTitle" data-d="title" value="${esc(d.title)}" autocomplete="off"></div>
       <div class="pc-out"><div class="pc-out-h"><label class="lab" for="pcReason">품의 사유</label>${copyBtn('reason', '복사')}</div>
-        <textarea class="field" id="pcReason" data-d="reason" rows="9">${esc(d.reason)}</textarea></div>
+        <textarea class="field" id="pcReason" data-d="reason" rows="12">${esc(d.reason)}</textarea>
+        <div id="pcResyncBox">${resyncHTML()}</div></div>
       <div class="pc-out"><div class="pc-out-h"><span class="lab">산출 내역</span>${copyBtn('calc', '표 복사')}</div>
         <div class="pc-calc-wrap" id="pcCalcWrap">${calcHTML()}</div></div>
-      <div class="row"><button class="btn" type="button" data-pc="hwpx">한글 파일로 내려받기</button></div>`
+      <div class="row">${exportButton('data-pc="export"')}</div>`
     : `<p class="muted pc-empty">${busy ? '<span class="spin"></span> AI가 제목과 품의 사유를 쓰고 있어요…' : '왼쪽 메모를 채우고 [초안 만들기]를 누르면 제목·품의 사유·산출 내역을 써요. 금액과 합계는 앱이 계산해요.'}</p>`}
     <div id="pcChecksBox">${checksHTML()}</div>`;
 }
@@ -170,7 +216,28 @@ function live() {
   if (cw) cw.innerHTML = calcHTML();
   const cb = box.querySelector('#pcChecksBox');
   if (cb) cb.innerHTML = checksHTML();
-  if (tried) markBad(checkPurchase(st.form, { limit: getPurchaseLimit() }));
+  const qn = box.querySelector('#pcQuoteNote');
+  if (qn) qn.textContent = quoteNote(sumItems(st.form.items), st.form.vat).text;
+  const wh = box.querySelector('#pcWh');
+  if (wh) wh.innerHTML = whHTML();
+  const bh = box.querySelector('#pcBudgetHints');
+  if (bh) bh.innerHTML = hintsHTML();
+  syncReason();
+  if (tried) markBad(checks());
+}
+/* 초안 뒤 입력이 바뀌면: 손대지 않은 사유는 가~붙임을 다시 맞추고, 손으로 고친 사유는 [사유 다시 맞추기]만 보임 */
+const tailOk = () => !st.draft || st.draft.reason.endsWith(reasonTail(st.form));
+const resyncHTML = () => (st.draft && st.draft.edited && !tailOk() ? '<p class="muted pc-resync">품목·붙임이 바뀌었어요 <button class="btn text tiny" type="button" data-pc="resync">사유 다시 맞추기</button></p>' : '');
+function syncReason() {
+  if (!st.draft || !box) return;
+  if (!st.draft.edited && !tailOk()) {
+    st.draft.reason = composeReason({ intro: st.draft.intro, form: st.form });
+    save();
+    const ta = box.querySelector('#pcReason');
+    if (ta && document.activeElement !== ta) ta.value = st.draft.reason;
+  }
+  const rb = box.querySelector('#pcResyncBox');
+  if (rb) rb.innerHTML = resyncHTML();
 }
 
 function markBad(r) {
@@ -186,6 +253,7 @@ function markBad(r) {
   }
 }
 
+function rerenderAttach() { const el = box && box.querySelector('#pcAttach'); if (el) el.outerHTML = attachHTML(); live(); }
 function renderItems(focusRow) {
   const el = box.querySelector('#pcItems');
   if (el) { el.innerHTML = itemsHTML(); el.classList.toggle('has-vendor', showVendor()); }
@@ -196,7 +264,11 @@ function renderItems(focusRow) {
 /* ---------- 초안 만들기 ---------- */
 function draftPrompt(f, total) {
   const t = typeOf(f.type);
-  const items = cleanItems(f.items).map(it => `${it.name}${it.spec ? `(${it.spec})` : ''} ${won(toNumber(it.qty))}개 × ${won(toNumber(it.price))}원`).join(', ');
+  const its = cleanItems(f.items);
+  // 강사 수당은 강사 칸 글(이름일 수 있음)을 보내지 않음
+  const items = f.type === 'lecturer'
+    ? `외부 강사 ${its.length}명, 모두 ${won(its.reduce((n, it) => n + toNumber(it.qty), 0))}시간`
+    : its.map(it => `${it.name}${it.spec ? `(${it.spec})` : ''} ${won(toNumber(it.qty))}${String(it.unit || '').trim() || '개'} × ${won(toNumber(it.price))}원`).join(', ');
   const line = (k, v) => (String(v || '').trim() ? `- ${k}: ${String(v).trim()}\n` : '');
   return '학교 행정 문서(에듀파인 품의)를 돕는 도우미예요. 아래 메모로 품의의 제목과 품의 사유 첫 문장을 써 주세요.\n\n'
     + line('종류', t.label) + line('사업명', f.project) + line('목적', f.purpose) + line('일시', f.date) + line('대상', f.target) + line('장소', f.place)
@@ -211,7 +283,7 @@ function draftPrompt(f, total) {
 async function makeDraft() {
   if (busy) return;
   tried = true;
-  const r = checkPurchase(st.form, { limit: getPurchaseLimit() });
+  const r = checks();
   markBad(r);
   msg = '';
   if (!r.canDraft) {
@@ -243,13 +315,11 @@ function setBusyUI() {
   if (busy) renderDraft();
 }
 
-async function downloadHwpx() {
+async function downloadDoc() {
   if (!st.draft) return;
-  const name = `${(st.draft.title || '품의').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 60) || '품의'}.hwpx`;
-  try {
-    const where = await saveFile(name, makeHwpx(purchaseDoc(st.form, st.draft)), 'application/hwp+zip');
-    toast(window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요');
-  } catch (e) { toast('한글 파일을 저장하지 못했어요'); }
+  const name = (st.draft.title || '품의').trim().slice(0, 60) || '품의';
+  try { toast(await exportDoc(purchaseDoc(st.form, st.draft), name), 6000); }
+  catch (e) { toast('파일을 저장하지 못했어요'); }
 }
 
 /* ---------- 입력·누르기 ---------- */
@@ -258,7 +328,16 @@ document.addEventListener('input', e => {
   const el = e.target;
   if (el.dataset.k) st.form[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value;
   else if (el.dataset.item != null && el.dataset.f) { const it = st.form.items[+el.dataset.item]; if (it) it[el.dataset.f] = el.value; }
-  else if (el.dataset.d && st.draft) { st.draft[el.dataset.d] = el.value; save(); return; }
+  else if (el.dataset.d && st.draft) {
+    st.draft[el.dataset.d] = el.value;
+    if (el.dataset.d === 'reason') { st.draft.edited = true; const rb = box.querySelector('#pcResyncBox'); if (rb) rb.innerHTML = resyncHTML(); }
+    save(); return;
+  }
+  else if (el.dataset.attach) {
+    const set = new Set(st.form.attach);
+    if (el.checked) set.add(el.dataset.attach); else set.delete(el.dataset.attach);
+    st.form.attach = (ATTACH[st.form.type] || ATTACH.goods).map(a => a.id).filter(id => set.has(id));
+  }
   else return;
   save();
   live();
@@ -266,7 +345,14 @@ document.addEventListener('input', e => {
 document.addEventListener('click', e => {
   if (!box || !box.contains(e.target) || curTab !== 'new') return;
   const ty = e.target.closest('[data-pctype]');
-  if (ty) { st.form.type = ty.dataset.pctype; save(); render(); return; }
+  if (ty) {
+    if (st.form.type !== ty.dataset.pctype) { st.form.type = ty.dataset.pctype; st.form.attach = (ATTACH[st.form.type] || []).filter(a => a.on).map(a => a.id); }
+    save(); render(); return;
+  }
+  const bh = e.target.closest('[data-budget-hint]');
+  if (bh) { st.form.budget = bh.dataset.budgetHint; st.form.budgetUnknown = false; save(); const el = box.querySelector('#pcBudget'); if (el) el.value = st.form.budget; const u = box.querySelector('#pcBudgetUnknown'); if (u) u.checked = false; live(); return; }
+  const ad = e.target.closest('[data-attach-del]');
+  if (ad) { st.form.attachMore.splice(+ad.dataset.attachDel, 1); save(); rerenderAttach(); return; }
   const cp = e.target.closest('[data-copy]');
   if (cp && st.draft) {
     const k = cp.dataset.copy;
@@ -283,7 +369,22 @@ document.addEventListener('click', e => {
     if (!st.form.items.length) st.form.items.push(emptyItem());
     save(); renderItems();
   } else if (a === 'draft') makeDraft();
-  else if (a === 'hwpx') downloadHwpx();
+  else if (a === 'export') downloadDoc();
+  else if (a === 'attachAdd') {
+    const inp = box.querySelector('#pcAttachMore'), v = inp.value.trim();
+    if (!v) return;
+    if (findPersonal(v)) { toast('개인정보는 넣지 말아 주세요'); return; }
+    st.form.attachMore.push(v.slice(0, 60)); save(); rerenderAttach();
+  } else if (a === 'meetAdd') {
+    const people = toNumber(box.querySelector('#pcMeetPeople').value), price = toNumber(box.querySelector('#pcMeetPrice').value), times = toNumber(box.querySelector('#pcMeetTimes').value) || 1;
+    if (!(people > 0) || !(price > 0)) { toast('인원과 1인 단가를 넣어 주세요'); return; }
+    st.form.items = mergeItems(st.form.items, [meetingItem({ people, price, times })], 'add');
+    save(); renderItems();
+  } else if (a === 'resync' && st.draft) {
+    st.draft.intro = firstPara(st.draft.reason) || st.draft.intro;
+    st.draft.reason = composeReason({ intro: st.draft.intro, form: st.form }); st.draft.edited = false;
+    save(); renderDraft();
+  }
   else if (a === 'intake') { const t = box.querySelector('#pcIntake').value; if (!t.trim()) { toast('넣을 글을 쓰거나 붙여넣어 주세요. 파일·캡처는 끌어 놓거나 붙여넣으면 바로 읽어요.'); return; } runIntake({ text: t }); }
   else if (a === 'intakeFile') box.querySelector('#pcIntakeFile').click();
 });
