@@ -40,6 +40,22 @@ jobs:
         run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.training.conf.json --features training-demo
       - name: Rust 릴리즈 테스트
         run: cargo test --release --manifest-path src-tauri/Cargo.toml --features training-demo
+      - name: WebView2 검사 환경 준비
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe" -ErrorAction SilentlyContinue
+          if (-not $runtime) {
+            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'WebView2 설치 파일 서명 확인 실패' }
+            Start-Process -FilePath $installer -ArgumentList '/silent','/install' -Wait -WindowStyle Hidden
+          }
+          $runtime = Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe" -ErrorAction Stop | Select-Object -Last 1
+          if (-not $runtime) { throw 'WebView2 실행 파일을 찾을 수 없습니다.' }
+          "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$($runtime.DirectoryName)" >> $env:GITHUB_ENV
+          Write-Output "WebView2: $($runtime.VersionInfo.ProductVersion)"
       - name: 실제 Windows 연수 화면 검사
         run: node tests/native/training-smoke.mjs
       - name: 테스트 파일과 안내 정리
