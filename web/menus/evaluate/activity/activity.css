@@ -1,0 +1,16 @@
+/* 평가 › 활동지 */
+.act-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.act-card{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;cursor:pointer}
+.act-card .act-c-t{flex:1 1 100%;font-size:15.5px}
+.act-card .grow{flex:1}
+.act-meta{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 12px}
+.act-text pre{white-space:pre-wrap;font:inherit;font-size:13px;max-height:260px;overflow:auto;background:var(--surface-2,#f5f6f8);border-radius:8px;padding:8px}
+.act-items-wrap{overflow-x:auto}
+.act-items{width:100%;border-collapse:collapse;font-size:13px}
+.act-items th,.act-items td{border-bottom:1px solid var(--line,#e4e6eb);padding:4px;vertical-align:top;text-align:left}
+.act-items td.no{width:32px;text-align:center;font-weight:600}
+.act-items textarea{min-width:120px;resize:vertical}
+.act-items .chip{white-space:nowrap}
+.chip.src-ai{background:#eef3fd}.chip.src-teacher,.chip.src-answer{background:#e9f7ef}.chip.src-edit{background:#fff4c2}
+.act-warn{color:var(--warn,#8c4a00);margin:4px 0 0}
+.act-next{justify-content:flex-end}

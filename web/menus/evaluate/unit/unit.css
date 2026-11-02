@@ -1,6 +1,6 @@
 /* 평가 › 단원평가 */
 /* 단원평가 탭일 때는 기존 평가 화면(평어·창체·행특·채점)을 숨김 */
-section[data-menu="evaluate"].ev-new > :not(.unit-box){display:none !important}
+section[data-menu="evaluate"].ev-new > :not(.unit-box):not(.act-box){display:none !important}
 .unit-box[hidden]{display:none !important}
 .un-seg{margin:0 0 12px}
 .un-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
