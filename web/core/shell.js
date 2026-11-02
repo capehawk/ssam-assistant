@@ -11,6 +11,7 @@ export const MENUS = [
   { id: 'plan', label: '계획', tabs: [['year', '연간계획'], ['event', '행사계획'], ['class', '학급운영계획']] },
   { id: 'class', label: '학급', tabs: [['today', '오늘 수업'], ['progress', '진도표·시수'], ['weekly', '주간학습안내']] },
   { id: 'purchase', label: '품의', tabs: [['new', '새 품의'], ['templates', '저장한 템플릿'], ['recent', '최근 작성']] },
+  { id: 'etc', label: '기타', tabs: [['message', '쪽지 작성']] },
   { id: 'settings', label: '설정', tabs: [['roster', '학급 명단'], ['ai', 'AI'], ['screen', '화면'], ['school', '학교 정보'], ['years', '학년도'], ['purchase', '품의 기준']] }
 ].map(m => ({ ...m, icon: m.id, tabs: m.tabs.map(([id, label]) => ({ id, label })) }));
 

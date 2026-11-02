@@ -14,7 +14,7 @@ function normDraft(d) {
   if (!isObj(d) || typeof d.id !== 'string' || !isObj(d.m)) return null;
   return { id: d.id, m: d.m, len: LENS.includes(d.len) ? d.len : 'base',
     attach: (Array.isArray(d.attach) ? d.attach : []).filter(isObj).map(a => ({ name: String(a.name || '').slice(0, 80), on: a.on !== false })).filter(a => a.name),
-    edited: !!d.edited, body: String(d.body || ''), title: String(d.title || '') };
+    edited: !!d.edited, body: String(d.body || ''), title: String(d.title || ''), again: !!d.again };
 }
 export const getDraft = () => normDraft(get(DRAFT, null));
 export const saveDraft = d => { const n = normDraft(d); return n ? set(DRAFT, n) : false; };

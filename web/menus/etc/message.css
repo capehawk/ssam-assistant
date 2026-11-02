@@ -1,0 +1,12 @@
+/* 기타 › 쪽지 작성 */
+.msg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 16px; }
+@media (max-width: 900px) { .msg-grid { grid-template-columns: 1fr; } }
+.msg-drop { border: 1.5px dashed var(--line, rgba(127,127,127,.35)); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.msg-drop.over { border-color: var(--accent, #4a7cf7); background: rgba(74,124,247,.06); }
+.msg-fields { display: flex; flex-direction: column; gap: 6px; }
+.msg-two { gap: 8px; align-items: end; }
+.msg-two > .yp-f { flex: 1; }
+.msg-attach { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.msg-attach li { display: flex; gap: 8px; align-items: center; }
+.msg-attach .field { flex: 1; }
+#msgBody { font-family: inherit; line-height: 1.6; }

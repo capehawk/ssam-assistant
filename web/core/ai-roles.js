@@ -2,7 +2,7 @@
    저장은 회사·모델 이름만(키는 설정 › AI에 그대로). 키가 없는 회사·Claude 계정이면 기본 AI로 */
 import * as store from './store.js';
 
-export const TASKS = [['grade', '채점'], ['writing', '평어·행특·창체'], ['plan', '계획 초안'], ['notes', '피드백·알림'], ['purchase', '품의']];
+export const TASKS = [['grade', '채점'], ['writing', '평어·행특·창체'], ['plan', '계획 초안'], ['notes', '피드백·알림'], ['purchase', '품의'], ['message', '쪽지']];
 const KEY = 'ai-roles';
 const ENGINES = ['claude', 'gemini', 'openai', 'upstage'];
 const TASK_IDS = TASKS.map(t => t[0]);
