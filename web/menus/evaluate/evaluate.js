@@ -3617,6 +3617,7 @@ async function grGrade(st) {
       status: 'done'
     });
     if (GR.single && prevLevel) { st.level = prevLevel; st.stale = true; }
+    delete st.rv; // 다시 채점하면 지난 검토 의견은 지움
     st.rl = 0; concOk();
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
@@ -3730,8 +3731,60 @@ async function grAfterGrading() {
   if (hadTexts) grAssign(true);
   else { grAssign(false); grActive().forEach(s => { if (s.status === 'done') s.stale = true; }); }
   GRStore.save();
+  GR.calCtl = ctl;
+  await grReviewScores(ctl.signal);
+  GR.calCtl = null;
+  if (ctl.signal.aborted || GR.phase !== 'ranking') return; // 멈추기를 눌렀음
   await grWrite();
 }
+/* 검토 AI: 「읽기 어려움」과 나눈 수준이 바뀌는 바로 위·아래 학생만 같은 그림·채점 기준으로 다시 채점.
+   10점 이상 다르면 두 의견(st.rv). 키·한도·연결로 실패하면 「검토하지 못했어요」, 남은 검토는 그만둠 */
+async function grReviewScores(signal) {
+  const R = RV(), use = R && R.pick ? R.pick('grade', 'review') : null;
+  if (!use) return;
+  const ids = R.grReviewNeeded(grActive());
+  if (!ids.length) return;
+  delete GR.rvErr;
+  GR.loading = '검토 AI가 수준 경계에 있는 학생을 다시 보고 있어요'; renderGRSoon();
+  try {
+    if (!GR._critCache) { GR._critCache = grCritImages(); GR._critCache.catch(() => { GR._critCache = null; }); }
+    const crit = await GR._critCache;
+    for (const id of ids) {
+      if (signal.aborted) return;
+      const st = grStudent(id);
+      if (!st || st.status !== 'done') continue;
+      try {
+        const imgs = await grStudentImages(st);
+        if (!imgs.length) continue;
+        const r = await generate(grGradePrompt(st, crit.length), { signal, images: [...imgs, ...crit], fresh: true, careful: true, use });
+        const j = grJSON(r.text), sc = Math.round(Number(j && j.score));
+        if (!Number.isFinite(sc)) continue;
+        const v = Math.max(0, Math.min(100, sc));
+        if (R.grDiffers(st.score, v)) st.rv = { score: v, summary: String(j.summary || '').trim().slice(0, 300) };
+        else delete st.rv;
+      } catch (e) {
+        const code = (e && e.code) || 'upstream_error';
+        if (code === 'cancelled') return;
+        if (code === 'bad_json') continue;
+        GR.rvErr = 1; return;
+      }
+    }
+  } finally { GR.loading = ''; GRStore.save(); renderGRSoon(); }
+}
+/* 두 의견 고르기: [검토 점수 쓰기]는 점수·요약을 바꾸고 수준을 다시 맞춤 */
+GR_RV.handle = (key, use) => {
+  if (!String(key).startsWith('grs:')) return false;
+  const s = grStudent(decodeURIComponent(String(key).slice(4)));
+  if (!s || !rvOpen(s)) return true;
+  if (use) {
+    s.score = s.rv.score; if (s.rv.summary) s.summary = s.rv.summary;
+    if (!GR.running.size && !GR.writeCtl) grAssign(true);
+  }
+  s.rv = { ...s.rv, done: use ? 'review' : 'main' };
+  GRStore.save(); renderGR();
+  toast(use ? '검토 점수를 썼어요' : '그대로 두었어요');
+  return true;
+};
 
 /* ---------- 평어 쓰기 ---------- */
 function grConfirmRewrite() {
@@ -3983,11 +4036,12 @@ function renderGRResults() {
         ${GR.phase === 'partial' && done.some(s => s.level && (!s.text || s.stale)) ? `<button class="btn primary" type="button" data-gr="writeRest">남은 평어 쓰기</button>` : ''}
       </div>
     </div>
+    ${GR.rvErr ? RV_FAIL_HTML : ''}${rvBarHTML(act.filter(s => rvOpen(s)).length + act.filter(s => rvOpen(s, 'trv')).length)}
     <ul class="gr-list">${list.map(s => {
       const p0 = GR.pages[s.pages[0]];
       const lvc = s.level ? LV.find(l => l.k === s.level).cls : '';
       const n = s.text ? s.text.length : 0;
-      return `<li class="gr-row ${s.skip ? 'skip' : ''} ${lvc}" data-grrow="${esc(s.id)}">
+      return `<li class="gr-row ${s.skip ? 'skip' : ''} ${lvc}${rvOpen(s) ? ' rv-mark' : ''}" data-grrow="${esc(s.id)}">
         <button class="thumb" type="button" data-grview1="${esc(s.id)}" aria-label="${s.no}번 평가지 크게 보기">${p0 ? `<img src="${p0.thumb || p0.url}" alt="" loading="lazy" decoding="async">${grMaskOverlay(0)}` : `<span class="noimg">${s.no}</span>`}${s.pages.length > 1 ? `<small>${s.pages.length}쪽</small>` : ''}</button>
         <div class="body">
           <div class="head">
@@ -4002,6 +4056,7 @@ function renderGRResults() {
           ${s.text && !s.skip ? `<div class="gr-text ${s.d ? 'done' : ''} ${s.stale ? 'stale' : ''}${rvOpen(s, 'trv') ? ' rv-mark' : ''}" role="button" tabindex="0" data-grcopy="${esc(s.id)}" aria-label="${s.d ? '사용함. ' : ''}${s.no}번 평어 복사">${esc(s.text)}</div>${rvInline(s, 'gr:' + encodeURIComponent(s.id), `${s.no}번 평어`, 'trv', 'text')}` : ''}
           ${s.stale && s.text && !s.writing ? `<p class="muted warn">수준이 바뀌었어요. 평어를 다시 쓰세요.</p>` : ''}
           ${s.summary && !s.skip ? `<p class="muted gr-sum">${esc(s.summary)}</p>` : ''}
+          ${rvOpen(s) && RV() ? `<div class="rv-inline" data-rv-for="grs:${esc(s.id)}">${RV().opinionHTML({ title: '두 AI의 점수가 10점 넘게 달라요', main: `${s.score}점 · ${s.summary || ''}`, alt: `${s.rv.score}점 · ${s.rv.summary || ''}`, use: 'grs:' + encodeURIComponent(s.id), keep: 'grs:' + encodeURIComponent(s.id), useLabel: '검토 점수 쓰기' })}</div>` : ''}
           ${s.err ? `<p class="muted err">${esc(s.err)}</p>` : ''}
           <div class="acts">
             ${s.text ? `<span class="muted num ${n < lo || n > hi ? 'warn' : ''}">${n}자</span>` : ''}
