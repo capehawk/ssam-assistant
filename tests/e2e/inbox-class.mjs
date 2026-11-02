@@ -13,6 +13,7 @@ const prompts = [];
 await mockClaude(page, async ({ prompt, images }) => {
   prompts.push({ prompt, images });
   if (prompt.startsWith('[견적서 읽기]') || prompt.startsWith('[품의 넣기]')) return JSON.stringify({ items: [{ name: '돋보기', spec: '10배', qty: 5, price: 2000 }, { name: '합계', price: 10000 }] });
+  if (prompt.startsWith('[품의 초안]')) return JSON.stringify({ title: '과학 실험 재료 구입', intro: '과학 실험 재료를 다음과 같이 구입하고자 합니다.' });
   return '{}';
 });
 const sheet = '#sheetRoot .sheet';
@@ -52,14 +53,16 @@ await run('inbox-class', [
     await page.waitForFunction(() => (JSON.parse(localStorage.getItem('ssam:class') || 'null') || {}).count > 0);
     assert(await page.isVisible('#menuTabs [data-tab="roster"][aria-current="page"]'), '학급 명단 탭');
   }],
-  ['견적서 CSV → 새 품의 품목 3줄(AI 없이)', async () => {
+  ['견적서 CSV → 새 품의 품목 3줄(읽기는 AI 없이) → 이어서 초안 AI 한 번', async () => {
     const n0 = prompts.length;
     await pick(join(FIXTURES, 'quote.csv'));
     await page.waitForSelector(sheet);
     assert((await page.textContent(sheet)).includes('견적서'), '종류');
     await runCard();
     await page.waitForFunction(() => (JSON.parse(localStorage.getItem('ssam:purchase:current') || 'null') || { form: { items: [] } }).form.items.filter(i => i.name).length === 3);
-    assert(prompts.length === n0 && await page.isVisible('#menuTabs [data-tab="new"][aria-current="page"]'), 'AI·탭');
+    await page.waitForFunction(() => { const s = JSON.parse(localStorage.getItem('ssam:purchase:current') || 'null'); return s && s.draft && s.draft.title; });
+    const heads = prompts.slice(n0).map(p => p.prompt.split('\n')[0]);
+    assert(heads.length === 1 && heads[0] === '[품의 초안]' && await page.isVisible('#menuTabs [data-tab="new"][aria-current="page"]'), 'AI·탭 ' + heads.join(','));
     assert((await items()).map(i => i.name).join() === '비커,스포이트,실험 장갑', JSON.stringify(await items()));
   }],
   ['지금 쓰는 품의가 있으면 더할지 새로 할지 고름 → 사진 견적서는 AI 한 번(이미지 1장)', async () => {

@@ -4,14 +4,14 @@ import { onEnter, go } from '../../core/shell.js';
 import { get, set } from '../../core/store.js';
 import * as ai from '../../core/ai.js';
 import { copyText, toast } from '../../core/ui.js';
-import { getPurchaseLimit, getMeetCap } from '../../core/settings.js';
+import { getPurchaseLimit, getMeetCap, getPurchaseFlow } from '../../core/settings.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, reasonTail, purchaseDoc, toNumber, findPersonal,
   defaultUnit, quoteNote, withholding, INCOME, meetingItem, budgetHints, ATTACH, basisLine, draftMemo } from './rules.js';
 import { aiRowHTML, pick } from '../../core/ai-roles.js';
 import { reviewJSON, purchaseReviewPrompt, normPurchaseReview, opinionHTML, REVIEW_FAIL } from '../../core/ai-review.js';
-import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor } from './intake.js';
-import { oneshotPrompt, normOneshot, confirmChips, GUESS_KEYS } from './oneshot.js';
+import { readIntake, fillEmpty, mergeItems, vendorsOf, splitByVendor, parseLines } from './intake.js';
+import { oneshotPrompt, normOneshot, confirmChips, askNeeds, GUESS_KEYS } from './oneshot.js';
 import { pushRecent, newId, listRecent, deleteRecent, listTemplates, saveTemplate, renameTemplate, deleteTemplate, templateForm } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
 import { registerInbox } from '../../core/inbox.js';
@@ -409,12 +409,37 @@ async function oneshot() {
   if (text.trim()) {
     const n = await runIntake({ text });
     if (n < 0) return; // 더하기·바꾸기를 그만둠
-  } else if (!cleanItems(st.form.items).length) {
+  } else if (!cleanItems(st.form.items).length && getPurchaseFlow() !== 'ask') {
     toast('넣기 칸에 사려는 것·견적서를 넣어 주세요. 예) 알코올램프 10개 5,000원', 6000);
     if (ta) ta.focus();
     return;
   }
+  // 「빠진 것만 물어보기」: 목적·품목이 비면 그것만 물어보고, 창을 닫으면 초안을 쓰지 않음
+  if (getPurchaseFlow() === 'ask') { const need = askNeeds(st.form); if (need.length && !(await askMissing(need))) return; }
   await makeDraft({ text });
+}
+function askMissing(need) {
+  return new Promise(res => {
+    let ok = false;
+    SS().openSheet(`<div id="pcAsk"><h3>초안 전에 이것만 알려 주세요</h3>
+      ${need.includes('purpose') ? '<label class="yp-f"><span class="lab">무엇에 쓰나요?</span><input class="field" id="pcAskPurpose" placeholder="예) 3학년 미술 수업" autocomplete="off"></label>' : ''}
+      ${need.includes('items') ? '<label class="yp-f"><span class="lab">무엇을 얼마나 사나요?</span><textarea class="field" id="pcAskItems" rows="3" placeholder="예) 색종이 10묶음 3,000원"></textarea></label>' : ''}
+      <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>그만두기</button><button class="btn primary" type="button" id="pcAskOk">초안 만들기</button></div></div>`, sh => {
+      sh.querySelector('#pcAskOk').addEventListener('click', () => {
+        const pu = sh.querySelector('#pcAskPurpose'), itx = sh.querySelector('#pcAskItems');
+        if (pu && pu.value.trim()) { st.form.purpose = pu.value.trim(); st.form.guessed = st.form.guessed.filter(k => k !== 'purpose'); }
+        if (itx && itx.value.trim()) {
+          const r = parseLines(itx.value);
+          if (!r.items.length) { toast('「품명 수량 금액」처럼 써 주세요. 예) 색종이 10묶음 3,000원', 5000); return; }
+          st.form.items = mergeItems(st.form.items, r.items, 'add');
+        }
+        ok = true; save(); SS().closeSheet(); render();
+      });
+    });
+    const root = document.getElementById('sheetRoot');
+    const obs = new MutationObserver(() => { if (!root.querySelector('#pcAsk')) { obs.disconnect(); res(ok); } });
+    obs.observe(root, { childList: true, subtree: true });
+  });
 }
 function setBusyUI() {
   for (const b of (box ? box.querySelectorAll('[data-pc="draft"],[data-pc="go"]') : [])) { b.disabled = busy; b.innerHTML = busy ? '<span class="spin"></span>쓰는 중…' : '초안 만들기'; }
@@ -640,7 +665,10 @@ registerInbox('quote', {
   async run(files, v) {
     if (v.where === 'new' || !busyForm()) { keepRecent(); st = { id: newId(), form: normForm(emptyForm('goods')), draft: null }; msg = ''; tried = false; save(); }
     go('purchase', 'new');
-    for (const f of files) await addQuote(f);
+    let n = 0;
+    for (const f of files) n += await addQuote(f);
+    // AI가 되면 초안까지(빈 칸은 AI가 채움)
+    if (n > 0 && ai.ready()) await makeDraft();
     return '';
   }
 });

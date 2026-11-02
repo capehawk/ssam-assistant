@@ -64,3 +64,7 @@ export function setMeetCap(won) {
   if (!Number.isFinite(v) || v < 1) return false;
   return set('purchaseMeetCap', Math.floor(v)) || 'full';
 }
+
+/* 품의 넣는 방식: 'oneshot'(넣기 칸 → 바로 초안, 기본) · 'ask'(빠진 것만 물어보고 초안). 학년도와 상관없이 */
+export const getPurchaseFlow = () => (get('purchase:flow', 'oneshot') === 'ask' ? 'ask' : 'oneshot');
+export const setPurchaseFlow = v => set('purchase:flow', v === 'ask' ? 'ask' : 'oneshot');

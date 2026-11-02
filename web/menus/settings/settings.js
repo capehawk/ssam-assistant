@@ -1,7 +1,7 @@
 /* 설정 메뉴: 학급 명단 · AI · 화면 · 학교 정보 · 학년도 · 품의 기준 */
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { THEMES, getTheme, setTheme } from '../../core/theme.js';
-import { getSchool, setSchool, getPurchaseLimit, setPurchaseLimit, getMeetCap, setMeetCap } from '../../core/settings.js';
+import { getSchool, setSchool, getPurchaseLimit, setPurchaseLimit, getMeetCap, setMeetCap, getPurchaseFlow, setPurchaseFlow } from '../../core/settings.js';
 import * as ai from '../../core/ai.js';
 import { readTable } from '../../core/sheet.js';
 import { parseRoster } from '../../core/roster.js';
@@ -127,7 +127,10 @@ const VIEWS = {
         <div class="row"><button class="btn" type="button" data-set="newYear">${(yrList || []).some(x => x.year === cur + 1) ? `${cur + 1}학년도 자료가 이미 있어요 · 그 학년도로 가기` : `${cur + 1}학년도 시작하기`}</button></div>`));
   },
   purchase: () => page('품의 기준', '',
-    card('계약 기준 금액', `<label class="set-f"><span class="lab">원 (합계가 이 금액을 넘으면 「별도 계약 절차 확인 필요」라고 알려요)</span>
+    card('넣는 방식', `<div class="set-radios" role="radiogroup" aria-label="품의 넣는 방식">
+        <label class="switch"><input type="radio" name="pcFlow" value="oneshot"${getPurchaseFlow() === 'oneshot' ? ' checked' : ''}>바로 초안 (기본) <span class="muted">넣기 칸에 넣고 [초안 만들기]를 누르면 빈 칸은 AI가 채워 바로 초안을 써요</span></label>
+        <label class="switch"><input type="radio" name="pcFlow" value="ask"${getPurchaseFlow() === 'ask' ? ' checked' : ''}>빠진 것만 물어보기 <span class="muted">목적·품목이 없으면 초안 전에 그것만 물어봐요</span></label></div>`)
+    + card('계약 기준 금액', `<label class="set-f"><span class="lab">원 (합계가 이 금액을 넘으면 「별도 계약 절차 확인 필요」라고 알려요)</span>
         <input class="field" id="limitWon" type="number" min="1" step="10000" value="${getPurchaseLimit()}"></label>
       <p class="muted">지금: ${won(getPurchaseLimit())}원 · 학교마다 다를 수 있어요. 행정실에 확인해 주세요.</p>
       ${msg ? `<p class="set-msg err" role="alert">${esc(msg)}</p>` : ''}
@@ -362,6 +365,7 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const ib = e.target.dataset && e.target.dataset.ibSet;
   if (ib && box && box.contains(e.target)) { setInboxSettings({ [ib]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }); toast('떠 있는 버튼 설정을 바꿨어요'); return; }
+  if (box && e.target.name === 'pcFlow' && box.contains(e.target)) { setPurchaseFlow(e.target.value); toast('품의 넣는 방식을 바꿨어요'); return; }
   if (box && e.target.id === 'setReviewAi' && box.contains(e.target)) { setDefaultReview(aiFromValue(e.target.value)); again(); toast('기본 검토 AI를 저장했어요'); return; }
   if (!box || !box.contains(e.target) || !['rosterFile', 'backupFile'].includes(e.target.id)) return;
   const f = e.target.files[0], id = e.target.id; e.target.value = '';
