@@ -166,6 +166,7 @@ function render() {
     </div>
   </div>`;
   renderDraft();
+  syncReason();
   if (tried) markBad(checks());
 }
 
@@ -343,19 +344,25 @@ async function makeDraft() {
   if (!ai.ready()) { renderDraft(); toast('초안을 쓸 AI를 먼저 정해 주세요'); if (window.SSAM && window.SSAM.ai) window.SSAM.ai.openSettings(); return; }
   busy = true;
   setBusyUI();
+  const mine = st; // 쓰는 중에 [새로 쓰기]·불러오기로 바뀌면 초안은 쓰던 품의에 붙여 최근 작성으로
   try {
     const form = getForm();
     const v = await ai.generateJSON(draftPrompt(form), {
       task: 'purchase',
       valid: x => x && typeof x.title === 'string' && x.title.trim() && typeof x.intro === 'string' && x.intro.trim()
     });
-    st.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: st.form }), edited: false };
-    save();
-    keepRecent();
-    document.dispatchEvent(new CustomEvent('ssam:purchase-draft', { detail: { form: getForm(), draft: getDraft() } }));
-    runReview(draftMemo(form));
+    mine.draft = { title: v.title.trim(), intro: v.intro.trim(), reason: composeReason({ intro: v.intro.trim(), form: mine.form }), edited: false };
+    if (st === mine) {
+      save();
+      keepRecent();
+      document.dispatchEvent(new CustomEvent('ssam:purchase-draft', { detail: { form: getForm(), draft: getDraft() } }));
+      runReview(draftMemo(form));
+    } else {
+      pushRecent({ id: mine.id, at: Date.now(), form: JSON.parse(JSON.stringify(mine.form)), draft: { ...mine.draft } });
+      toast('쓰던 품의의 초안은 「최근 작성」에 넣었어요', 5000);
+    }
   } catch (e) {
-    msg = ai.errorMessage(e && e.code, e);
+    if (st === mine) msg = ai.errorMessage(e && e.code, e);
   }
   busy = false;
   if (curTab === 'new' && box && box.isConnected) { setBusyUI(); renderDraft(); }
@@ -381,7 +388,13 @@ document.addEventListener('input', e => {
   else if (el.dataset.item != null && el.dataset.f) { const it = st.form.items[+el.dataset.item]; if (it) it[el.dataset.f] = el.value; }
   else if (el.dataset.d && st.draft) {
     st.draft[el.dataset.d] = el.value;
-    if (el.dataset.d === 'reason') { st.draft.edited = true; const rb = box.querySelector('#pcResyncBox'); if (rb) rb.innerHTML = resyncHTML(); }
+    if (el.dataset.d === 'reason') {
+      // 첫 문장만 고쳤으면(가~붙임은 앱이 만든 그대로) 계속 맞춤, 그 밖을 고쳤으면 손으로 고친 사유
+      const intro = firstPara(el.value);
+      if (intro && el.value.trim() === composeReason({ intro, form: st.form }).trim()) { st.draft.intro = intro; st.draft.edited = false; }
+      else st.draft.edited = true;
+      const rb = box.querySelector('#pcResyncBox'); if (rb) rb.innerHTML = resyncHTML();
+    }
     dropRv(el.dataset.d === 'title' ? 'title' : 'intro');
     save(); return;
   }
@@ -431,7 +444,7 @@ document.addEventListener('click', e => {
     save(); renderItems();
   } else if (a === 'draft') makeDraft();
   else if (a === 'saveTpl') askSaveTemplate();
-  else if (a === 'fresh') { keepRecent(); st = { id: newId(), form: normForm(emptyForm(st.form.type)), draft: null }; msg = ''; tried = false; save(); render(); toast(st.draft ? '' : '새 품의를 시작해요. 쓰던 품의(초안이 있으면)는 최근 작성에 남아요'); }
+  else if (a === 'fresh') swapTo({ id: newId(), form: normForm(emptyForm(st.form.type)), draft: null }, { onlyIfLost: true, done: had => toast(had ? '새 품의를 시작해요. 쓰던 품의는 최근 작성에 남아요' : '새 품의를 시작해요') });
   else if (a === 'export') downloadDoc();
   else if (a === 'attachAdd') {
     const inp = box.querySelector('#pcAttachMore'), v = inp.value.trim();
@@ -462,6 +475,9 @@ document.addEventListener('paste', e => {
   const files = [...((e.clipboardData && e.clipboardData.files) || [])];
   if (!files.length) return;
   e.preventDefault();
+  // 엑셀에서 칸을 복사하면 그림도 같이 와요: 탭으로 나뉜 글이 있으면 글로 읽음
+  const text = e.clipboardData.getData('text/plain') || '';
+  if (text.includes('\t')) { runIntake({ text, keepBox: true }); return; }
   intakeFiles(files);
 });
 document.addEventListener('dragover', e => { if (box && curTab === 'new' && e.target.closest && e.target.closest('#pcIntakeBox')) { e.preventDefault(); e.target.closest('#pcIntakeBox').classList.add('over'); } });
@@ -520,8 +536,9 @@ async function runIntake(input) {
   try { r = await readIntake(input); }
   catch (e) { intakeBusy = false; setIntakeMsg(''); toast(quoteError(e), 6000); return 0; }
   intakeBusy = false; setIntakeMsg('');
+  const note = (r.personal ? ` · 개인정보가 있는 줄 ${r.personal}개는 읽지 않았어요` : '') + (r.dropped ? ` · 전화번호·이메일 ${r.dropped}곳은 넣지 않았어요` : '');
   if (!r.items.length && !Object.keys(r.fields).length) {
-    toast(r.missed && r.missed.length ? `품목을 읽지 못했어요(못 읽은 줄 ${r.missed.length}개). 「품명 수량 금액」처럼 써 주세요. 예) A4 용지 5박스 2만원` : '품목을 찾지 못했어요. 직접 입력해 주세요.', 6000);
+    toast((r.missed && r.missed.length ? `품목을 읽지 못했어요(못 읽은 줄 ${r.missed.length}개). 「품명 수량 금액」처럼 써 주세요. 예) A4 용지 5박스 2만원` : '품목을 찾지 못했어요. 직접 입력해 주세요.') + note, 6000);
     return 0;
   }
   let how = 'add';
@@ -529,12 +546,12 @@ async function runIntake(input) {
   st.form = fillEmpty(st.form, r.fields);
   st.form.items = mergeItems(st.form.items, r.items, how);
   fresh = new Set(r.items);
-  if (input.text != null) { const ta = box && box.querySelector('#pcIntake'); if (ta) ta.value = ''; }
+  if (input.text != null && !input.keepBox) { const ta = box && box.querySelector('#pcIntake'); if (ta) ta.value = ''; }
   save();
   if (curTab === 'new' && box && box.isConnected) render();
   setTimeout(() => { fresh = new Set(); if (box) box.querySelectorAll('.pc-irow.new').forEach(el => el.classList.remove('new')); }, 3000);
   const ship = r.items.filter(it => it.name === '배송비').length;
-  toast(`품목 ${r.items.length}개${ship ? '(배송비 포함)' : ''}를 넣었어요${r.missed && r.missed.length ? ` · 못 읽은 줄 ${r.missed.length}개` : ''}${r.by === 'ai' ? ' · AI가 읽었어요. 금액을 확인해 주세요' : ''}`, 6000);
+  toast(`품목 ${r.items.length}개${ship ? '(배송비 포함)' : ''}를 넣었어요${r.missed && r.missed.length ? ` · 못 읽은 줄 ${r.missed.length}개` : ''}${r.by === 'ai' ? ' · AI가 읽었어요. 금액을 확인해 주세요' : ''}${note}`, 6000);
   const vs = vendorsOf(st.form.items);
   if (vs.length >= 2) askVendors(vs);
   return r.items.length;
@@ -555,12 +572,14 @@ export async function addQuote(file) {
 }
 
 /* 떠 있는 버튼: 견적서 → 품의 › 새 품의 품목. 쓰던 품의가 있으면 더할지 새로 할지 고름 */
-const busyForm = () => !!(st.form.project.trim() || st.form.items.some(i => i.name.trim()));
+const FORM_TEXT = ['project', 'purpose', 'date', 'target', 'place', 'budget', 'total', 'memo'];
+const busyForm = () => FORM_TEXT.some(k => String(st.form[k] || '').trim())
+  || st.form.items.some(i => ['name', 'spec', 'qty', 'price'].some(k => String(i[k] || '').trim())) || st.form.attachMore.length > 0;
 registerInbox('quote', {
   act: () => '품의 › 새 품의의 품목으로 넣기',
   fields: () => (busyForm() ? [{ key: 'where', label: '어디에 넣을까요', type: 'select', options: [['add', '지금 쓰는 품의에 더하기'], ['new', '새 품의로 (지금 쓰던 품의는 지워져요)']], value: 'add', required: true }] : []),
   async run(files, v) {
-    if (v.where === 'new' || !busyForm()) { st.form = normForm(emptyForm('goods')); st.draft = null; msg = ''; tried = false; save(); }
+    if (v.where === 'new' || !busyForm()) { keepRecent(); st = { id: newId(), form: normForm(emptyForm('goods')), draft: null }; msg = ''; tried = false; save(); }
     go('purchase', 'new');
     for (const f of files) await addQuote(f);
     return '';
@@ -587,10 +606,10 @@ function askSaveTemplate() {
     sh.querySelector('#pcTplName').addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
   });
 }
-/* 쓰던 품의가 있으면 먼저 물어보고 바꿈 */
-function swapTo(next) {
-  const doIt = () => { keepRecent(); st = next; msg = ''; tried = false; save(); go('purchase', 'new'); };
-  if (!busyForm() || next.id === st.id) { doIt(); return; }
+/* 쓰던 품의가 있으면 먼저 물어보고 바꿈. onlyIfLost: 초안이 있어 최근 작성에 남으면 묻지 않음([새로 쓰기]) */
+function swapTo(next, { onlyIfLost = false, done } = {}) {
+  const doIt = () => { const had = !!st.draft; keepRecent(); st = next; msg = ''; tried = false; save(); go('purchase', 'new'); if (curTab === 'new' && box && box.isConnected) render(); if (done) done(had); };
+  if (!busyForm() || next.id === st.id || (onlyIfLost && st.draft)) { doIt(); return; }
   SS().openSheet(`<h3>지금 쓰던 품의를 바꿀까요?</h3><p class="muted" style="margin:0">${st.draft ? '쓰던 품의는 초안이 있어서 「최근 작성」에 남아요.' : '쓰던 품의는 초안이 없어서 남지 않아요. 필요하면 [템플릿으로 저장]을 먼저 눌러 주세요.'}</p>
     <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="pcSwapOk">바꾸기</button></div>`,
   sh => sh.querySelector('#pcSwapOk').addEventListener('click', () => { SS().closeSheet(); doIt(); }));

@@ -15,7 +15,7 @@ export function quotePrompt() {
 export function normQuoteItems(v) {
   const list = Array.isArray(v) ? v : v && Array.isArray(v.items) ? v.items : [];
   return list.filter(x => x && String(x.name || '').trim() && !TOTAL.test(String(x.name)))
-    .map(x => ({ name: String(x.name).trim(), spec: String(x.spec || '').trim(), qty: num(x.qty) || 1, price: num(x.price) }));
+    .map(x => ({ name: String(x.name).trim(), spec: String(x.spec || '').trim(), ...(String(x.unit || '').trim() ? { unit: String(x.unit).trim().slice(0, 10) } : {}), qty: num(x.qty) || 1, price: num(x.price) }));
 }
 const fromRows = rows => normQuoteItems(findItems(rows));
 const rowsOf = text => String(text || '').split('\n').map(l => l.split(/\t|\s*\|\s*/));
