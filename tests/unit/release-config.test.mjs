@@ -13,9 +13,9 @@ test('tauri.conf.json 이름·실행 파일·식별자', () => {
   assert.equal(c.app.windows[0].title, '쌤비서');
 });
 
-test('package.json·Cargo.toml 버전이 0.11.0, tauri.conf.json은 package.json을 따름', () => {
-  assert.equal(JSON.parse(read('package.json')).version, '0.11.0');
-  assert.match(read('src-tauri/Cargo.toml'), /^version = "0\.11\.0"$/m);
+test('package.json·Cargo.toml 버전이 0.12.0, tauri.conf.json은 package.json을 따름', () => {
+  assert.equal(JSON.parse(read('package.json')).version, '0.12.0');
+  assert.match(read('src-tauri/Cargo.toml'), /^version = "0\.12\.0"$/m);
   assert.equal(JSON.parse(read('src-tauri/tauri.conf.json')).version, '../package.json'); // package.json 버전을 따름
 });
 
