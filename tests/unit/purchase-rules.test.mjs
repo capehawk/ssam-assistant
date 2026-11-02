@@ -29,10 +29,10 @@ test('주민번호·계좌번호 찾기', () => {
 
 const ok = { ...emptyForm(), purpose: '실험', date: '2026-11-10', target: '5학년', budget: '', budgetUnknown: false, total: 6000, items: [{ name: '비커', spec: '500ml', qty: 2, price: 3000 }] };
 
-test('필수 칸이 비면 초안을 만들지 않음', () => {
+test('필수 칸(목적·품목)이 비면 초안을 만들지 않음 — 일시·대상은 필수 아님', () => {
   const f = { ...emptyForm(), purpose: '', date: '', target: '5학년', items: [{ name: '', spec: '', qty: '', price: '' }] };
   const r = checkPurchase(f, { limit: 20000000 });
-  assert.deepEqual(r.missing.sort(), ['date', 'items', 'purpose']); assert.equal(r.canDraft, false);
+  assert.deepEqual(r.missing.sort(), ['items', 'purpose']); assert.equal(r.canDraft, false);
 });
 
 test('확인 목록: 예산 과목·총액·계약 기준·개인정보', () => {

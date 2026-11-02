@@ -158,11 +158,12 @@ export function attachText(lines) {
   return lines.map((l, i) => `${i ? '      ' : '붙임  '}${i + 1}. ${l}.`).join('\n') + '  끝.';
 }
 
-/* 확인 목록 (P-6·P-7). missing·personal은 칸 이름 */
-export function checkPurchase(form, { limit, meetCap } = {}) {
+/* 확인 목록 (P-6·P-7). missing·personal은 칸 이름. 필수는 목적·품목 1개(일시·대상은 아님, 스펙 3.2).
+   guessPurpose: 목적이 비어도 초안 AI가 짐작해 씀 */
+export function checkPurchase(form, { limit, meetCap, guessPurpose = false } = {}) {
   const f = form || {};
   const items = cleanItems(f.items);
-  const missing = ['purpose', 'date', 'target'].filter(k => blank(f[k]));
+  const missing = guessPurpose ? [] : ['purpose'].filter(k => blank(f[k]));
   if (!items.length) missing.push('items');
   const personal = TEXT_FIELDS.filter(k => findPersonal(f[k]));
   if ((Array.isArray(f.items) ? f.items : []).some(it => it && ['name', 'spec', 'unit', 'vendor'].some(k => findPersonal(it[k])))) personal.push('items');
