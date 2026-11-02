@@ -68,3 +68,15 @@ test('견적서 표: 단위 열이 있으면 단위도 가져옴', () => {
   assert.deepEqual(findItems([['품명', '규격', '단위', '수량', '단가'], ['A4 용지', '80g', '박스', '5', '20000']]), [{ name: 'A4 용지', spec: '80g', unit: '박스', qty: 5, price: 20000 }]);
   assert.deepEqual(normQuoteItems([{ name: 'A4 용지', unit: '박스', qty: 5, price: 20000 }])[0].unit, '박스');
 });
+
+test('강사 수당(noAI): 넣기 칸 글·그림을 AI로 보내지 않음(규칙만), 다른 종류도 「OOO 강사·선생님」 이름은 가려서 보냄', async () => {
+  calls.length = 0;
+  const r = await readIntake({ text: '김철수 강사 2시간 10만원\n특강 준비물 좀 사고', noAI: true });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(r.missed, ['특강 준비물 좀 사고']);
+  await assert.rejects(readIntake({ file: new File([new Uint8Array([137, 80, 78, 71])], 'cart.png', { type: 'image/png' }), noAI: true }), e => e && e.code === 'NO_AI_LECTURER');
+  calls.length = 0;
+  await readIntake({ text: '김철수 강사님 특강 꽃다발 좀 사고\n이영희 선생님 환영 현수막도' });
+  assert.equal(calls.length, 1);
+  assert.ok(!calls[0].prompt.includes('김철수') && !calls[0].prompt.includes('이영희') && calls[0].prompt.includes('○○○ 강사') && calls[0].prompt.includes('꽃다발'), calls[0].prompt.slice(-160));
+});

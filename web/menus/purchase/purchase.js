@@ -143,7 +143,7 @@ function render() {
           <textarea class="field" id="pcIntake" rows="3" placeholder="엑셀·견적서 파일, 장바구니 캡처, 대충 쓴 글(예: A4 용지 5박스 2만원)을 여기에 붙여넣거나 끌어 놓으세요"></textarea>
           <div class="row"><button class="btn tonal" type="button" data-pc="intake">넣기</button><button class="btn text" type="button" data-pc="intakeFile">파일 고르기</button>
             <input type="file" id="pcIntakeFile" accept=".xlsx,.csv,.hwp,.hwpx,.txt,.pdf,.png,.jpg,.jpeg,.webp" hidden><span class="muted" id="pcIntakeMsg" role="status"></span></div>
-          <p class="muted pc-intake-note">글은 앱이 먼저 읽고, 못 읽은 줄과 캡처·사진은 AI가 읽어요. 이미 쓴 칸은 덮지 않아요.</p>
+          <p class="muted pc-intake-note">${st.form.type === 'lecturer' ? '강사 수당은 강사 이름이 AI로 가지 않게 앱이 글만 읽어요(캡처·사진은 읽지 않아요).' : '글은 앱이 먼저 읽고, 못 읽은 줄과 캡처·사진은 AI가 읽어요.'} 이미 쓴 칸은 덮지 않아요.</p>
         </div>
         <div class="pc-fields">
           ${field('project', '사업명', { ph: '예) ' + ex.project, wide: true })}
@@ -498,6 +498,7 @@ document.addEventListener('drop', e => {
 /* 견적서를 못 읽은 까닭: 키 없음 · 파일(형식·암호·손상) · PDF 도구 · 그 밖은 AI 오류(키·한도·연결) */
 function quoteError(e) {
   const code = e && e.code;
+  if (code === 'NO_AI_LECTURER') return '강사 수당 품의는 넣기 칸의 캡처·사진을 AI로 보내지 않아요(강사 이름이 들어 있을 수 있어요). 「강사 2시간 10만원」처럼 글로 쓰거나 직접 입력해 주세요.';
   if (code === 'NO_AI') return '캡처·사진·PDF 견적서는 AI가 읽어요. 설정 › AI에서 키를 넣어 주세요. 글로 쓰면 AI 없이도 읽어요.';
   if (isFileCode(code)) return `${fileMessage(code)} 엑셀·CSV로 저장해 넣거나 직접 입력해도 돼요.`;
   if (e && e.message === 'PDFJS') return 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진·엑셀로 넣어 주세요.';
@@ -537,7 +538,8 @@ async function runIntake(input) {
   if (intakeBusy) return 0;
   intakeBusy = true; setIntakeMsg('<span class="spin"></span> 읽는 중…');
   let r;
-  try { r = await readIntake(input); }
+  // 강사 수당 품의는 넣기 칸 글·그림을 AI로 보내지 않음(앱 규칙으로만)
+  try { r = await readIntake({ ...input, noAI: st.form.type === 'lecturer' }); }
   catch (e) { intakeBusy = false; setIntakeMsg(''); toast(quoteError(e), 6000); return 0; }
   intakeBusy = false; setIntakeMsg('');
   const note = (r.personal ? ` · 개인정보가 있는 줄 ${r.personal}개는 읽지 않았어요` : '') + (r.dropped ? ` · 전화번호·이메일 ${r.dropped}곳은 넣지 않았어요` : '');
@@ -565,7 +567,7 @@ async function intakeFiles(files) { for (const f of files) await runIntake({ fil
 /* 떠 있는 버튼으로 넣은 견적서·캡처: 같은 넣기(품목은 더함, 묻지 않음) */
 export async function addQuote(file) {
   let r;
-  try { r = await readIntake({ file }); }
+  try { r = await readIntake({ file, noAI: st.form.type === 'lecturer' }); }
   catch (e) { toast(quoteError(e), 6000); return 0; }
   if (!r.items.length) { toast('견적서에서 품목을 찾지 못했어요. 직접 입력해 주세요.', 6000); return 0; }
   st.form = fillEmpty(st.form, r.fields);

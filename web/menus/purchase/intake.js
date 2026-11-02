@@ -183,23 +183,28 @@ export function splitByVendor(form) {
   return vs.map((v, i) => ({ ...form, items: form.items.filter(it => (vendorOf(it) || (i === 0 ? v : '')) === v && !emptyRow(it)) }));
 }
 
-/* 넣기: { text } | { file } → { items(배송비 줄 포함), fields, by: 'rule'|'table'|'ai', missed } */
+/* AI로 보내는 글의 사람 이름: 「김철수 강사」「이영희 선생님」 → 「○○○ 강사」 */
+export const maskNames = t => String(t || '').replace(/(^|[^가-힣])[가-힣]{2,4}(\s*)(강사님|강사|선생님|선생|교수님|교수|교사|님|씨)(?=[^가-힣]|$|께|이|가|은|는|을|를|의|과|와)/g, (m, pre, sp, role) => `${pre}○○○${sp || ' '}${role}`);
+
+/* 넣기: { text } | { file } → { items(배송비 줄 포함), fields, by: 'rule'|'table'|'ai', missed }
+   noAI: 강사 수당 품의 — 글은 앱 규칙으로만 읽고, 그림·글 없는 PDF는 읽지 않음(강사 이름이 AI로 가지 않게) */
 const IMAGE = /\.(png|jpe?g|webp|gif|bmp)$/i;
 async function aiRead(kind, { images, text } = {}) {
   const v = await ai.generateJSON(intakePrompt(kind, text), { images, task: 'purchase', valid: x => normIntake(x, kind).items.length > 0 });
   const r = normIntake(v, kind);
   return { items: [...r.items, ...shippingItems(r.shipping)], fields: r.fields, by: 'ai', missed: [], dropped: r.dropped || 0 };
 }
-export async function readIntake({ text, file } = {}) {
+export async function readIntake({ text, file, noAI = false } = {}) {
   if (file) {
     // 글 파일은 줄글로(탭으로 나뉜 표면 표로)
-    if (/\.txt$/i.test(String(file.name || ''))) return readIntake({ text: await readText(file) });
+    if (/\.txt$/i.test(String(file.name || ''))) return readIntake({ text: await readText(file), noAI });
     const isImage = IMAGE.test(String(file.name || '')) || /^image\//.test(String(file.type || ''));
     if (isImage) {
+      if (noAI) throw { code: 'NO_AI_LECTURER' };
       if (!ai.ready()) throw { code: 'NO_AI' };
       return aiRead('image', { images: await window.SSAM.files.toImages(file) });
     }
-    const q = await readQuote(file, { aiRead: images => aiRead('image', { images }) });
+    const q = await readQuote(file, { aiRead: images => { if (noAI) throw { code: 'NO_AI_LECTURER' }; return aiRead('image', { images }); } });
     if (q.by === 'ai' && q.fields) return q;
     return { items: q.items.map(it => ({ ...emptyItem(), name: it.name, spec: it.spec || '', unit: it.unit || '', qty: String(it.qty), price: String(it.price), vendor: it.vendor || '' })), fields: q.fields || {}, by: q.by, missed: [] };
   }
@@ -212,8 +217,8 @@ export async function readIntake({ text, file } = {}) {
     if (t.items.length) return { ...t, by: 'table', personal };
   }
   const r = parseLines(safe);
-  if (r.missed.length && ai.ready()) {
-    try { return { ...(await aiRead('text', { text: safe })), personal }; }
+  if (r.missed.length && ai.ready() && !noAI) {
+    try { return { ...(await aiRead('text', { text: maskNames(safe) })), personal }; }
     catch (e) { if (!r.items.length) throw e; }
   }
   return { ...r, by: 'rule', personal };

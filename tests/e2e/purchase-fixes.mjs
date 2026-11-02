@@ -137,6 +137,21 @@ await run('purchase-fixes', [
     const q = calls.slice(n0).filter(x => x.head === '[품의 넣기]');
     assert(q.length === 1 && !q[0].prompt.includes('800101') && !q[0].prompt.includes('김철수'), q.map(x => x.prompt.slice(-120)).join(' | '));
   }],
+  ['강사 수당: 넣기 칸 글·캡처는 AI로 보내지 않음(글은 앱이 읽고, 캡처는 안내)', async () => {
+    await fresh({ type: 'lecturer', items: [{ name: '', spec: '', qty: '', price: '' }] }); await go();
+    const n0 = calls.length;
+    await page.fill(`${P} #pcIntake`, '김철수 강사 2시간 10만원\n특강 준비물 좀 사고');
+    await page.click(`${P} [data-pc="intake"]`);
+    await until(async () => (await cur()).form.items.filter(i => i.name).length === 1);
+    await page.evaluate(async () => {
+      const c = document.createElement('canvas'); c.width = 40; c.height = 30;
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+      document.querySelector('#pcIntake').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await until(async () => (await page.textContent('#toast')).includes('강사 수당 품의는'));
+    assert(calls.length === n0, 'AI를 부름');
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();
