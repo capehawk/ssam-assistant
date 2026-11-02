@@ -58,10 +58,54 @@ export function numberedAnswers(text) {
   return out;
 }
 /* 고르기·짝짓기·빈칸은 정답 글의 답으로(출처 「정답에서」) */
+/* 교사용 글이 있으면 AI 없이 표 줄 맞추기(스펙 4.2): 학생용 글의 문항 줄(「1.」「(1)」로 시작하고 묻는 말·괄호·칸이 있는 줄, 머리 줄 빼고)과
+   교사용 글의 같은 번호 문항 — 채운 괄호, 달라진 칸, 학생용에 없는 줄이 예시 답안. ○·△ 기준은 비워 둠(선생님이 쓰거나 AI) */
+const QNO = /^\s*(?:\(\s*(\d{1,2})\s*\)|(\d{1,2})\s*[.)])\s*(\S.*)$/;
+const ASKY = /(까\?|시오\.|봅시다\.?|세요\.?|보세요|하나요\?|\?|\))\s*$/;
+const qLine = l => { const m = QNO.exec(l); return m && (ASKY.test(l.trim()) || l.includes('|') || l.includes('□')) && !/\[\s*\d+.*차시\s*\]|>/.test(l) ? { no: +(m[1] || m[2]), rest: m[3].trim() } : null; };
+const nz = t => String(t || '').replace(/\s+/g, '');
+function qBlocks(text) {
+  const out = new Map();
+  let cur = null;
+  for (const l of String(text || '').split('\n')) {
+    const q = qLine(l);
+    if (q) { cur = out.has(q.no) ? null : { line: l.trim(), rest: q.rest, more: [] }; if (cur) out.set(q.no, cur); continue; }
+    if (cur && l.trim()) cur.more.push(l.trim());
+  }
+  return out;
+}
+const unmark = t => String(t || '').replace(/^\s*\(\s*예시\s*\)\s*/, '').replace(/^\s*예시\s*답안?\s*[:：]?\s*/, '').trim();
+const askOf = rest => rest.split('|')[0].replace(/\(\s*[^()]*\)\s*$/, '').trim();
+function answerOf(sq, tq) {
+  const found = [];
+  if (sq && tq && nz(sq.line) !== nz(tq.line)) {
+    if (tq.line.includes('|')) {
+      const sc = sq.line.split('|').map(nz);
+      tq.line.split('|').forEach((c, i) => { if (nz(c) && nz(c) !== sc[i]) found.push(c.trim()); });
+    } else {
+      const sp = [...sq.line.matchAll(/\(([^()]*)\)/g)].map(m => nz(m[1])), tp = [...tq.line.matchAll(/\(([^()]*)\)/g)].map(m => m[1].trim());
+      tp.forEach((c, i) => { if (c && !sp[i]) found.push(c); });
+    }
+  }
+  if (tq) { const seen = new Set((sq ? sq.more : []).map(nz)); for (const l of tq.more) if (!seen.has(nz(l))) found.push(l); }
+  return unmark(found.filter(Boolean).join(' '));
+}
+const typeOf = (ask, answer) => (/그려|그림|색칠/.test(ask) ? 'draw' : /이어|짝\s*지어|선으로/.test(ask) ? 'match'
+  : /^[①-⑩㉠-㉭]$|^\d번?$/.test(nz(answer)) || /고르/.test(ask) ? 'choice' : answer && nz(answer).length <= 10 && !/[.!?]$/.test(answer) ? 'short' : 'write');
+export function itemsFromSheets(student, teacher) {
+  if (!String(teacher || '').trim()) return [];
+  const sb = qBlocks(student), tb = qBlocks(teacher);
+  return [...sb.entries()].sort((a, b) => a[0] - b[0]).map(([no, sq]) => {
+    const ask = askOf(sq.rest), answer = answerOf(sq, tb.get(no));
+    return { no, type: typeOf(ask, answer), ask, answer, ok: '', part: '', src: 'teacher' };
+  });
+}
 export function applyKey(items, teacherText) {
   let ans = numberedAnswers(teacherText);
   if (!Object.keys(ans).length) { const k = parseKey(teacherText); if (k) ans = Object.fromEntries(k.items.map(it => [it.no, it.answer])); }
-  return items.map(it => (['choice', 'match', 'short'].includes(it.type) && ans[it.no] ? { ...it, answer: String(ans[it.no]), src: 'answer' } : it));
+  // 채운 교사용 문항 줄(「1. 묻는 말 ( ② )」)은 답이 아님: 묻는 말이 든 값은 건너뜀
+  const isAsk = (it, v) => { const q = nz(it.ask).slice(0, 8); return q.length >= 4 && nz(v).includes(q); };
+  return items.map(it => (['choice', 'match', 'short'].includes(it.type) && ans[it.no] && !isAsk(it, ans[it.no]) ? { ...it, answer: String(ans[it.no]), src: 'answer' } : it));
 }
 
 /* ---------- 채점 ---------- */

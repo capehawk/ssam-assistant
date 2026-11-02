@@ -5,6 +5,7 @@ import { emptyItem, findPersonal, toNumber } from './rules.js';
 import { readQuote } from './quote.js';
 import { findItems } from '../../core/sheet.js';
 import { readText } from '../../core/files.js';
+import { nameCell, MASK } from '../../core/privacy.js';
 
 const UNITS = '박스|상자|개|권|자루|세트|장|통|묶음|팩|병|봉|EA|ea|Ea|명|시간|식|건|매|롤|켤레|대|부|kg|g|L|ml|m|판|타|다스|캔|포|입';
 const QTY = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNITS})(?![가-힣A-Za-z])`, 'g');
@@ -183,8 +184,13 @@ export function splitByVendor(form) {
   return vs.map((v, i) => ({ ...form, items: form.items.filter(it => (vendorOf(it) || (i === 0 ? v : '')) === v && !emptyRow(it)) }));
 }
 
-/* AI로 보내는 글의 사람 이름: 「김철수 강사」「이영희 선생님」 → 「○○○ 강사」 */
-export const maskNames = t => String(t || '').replace(/(^|[^가-힣])[가-힣]{2,4}(\s*)(강사님|강사|선생님|선생|교수님|교수|교사|님|씨)(?=[^가-힣]|$|께|이|가|은|는|을|를|의|과|와)/g, (m, pre, sp, role) => `${pre}○○○${sp || ' '}${role}`);
+/* AI로 보내는 글의 사람 이름: 「김철수 강사」「이영희 선생님」 → 「○○○ 강사」, 「강사 김철수」「외부강사: 박하늘」 → 「강사 ○○○」.
+   이름 모양(흔한 성 + 세 글자, 두 글자 성 + 두 글자)만 가림 — 「담임교사」「체육 강사님」은 그대로 */
+const ROLE_AFTER = /(^|[^가-힣])([가-힣]{3,4})(\s*)(강사님|강사|선생님|선생|교수님|교수|교사|님|씨)(?=[^가-힣]|$|께|이|가|은|는|을|를|의|과|와)/g;
+const ROLE_BEFORE = /(강사님?|선생님|교수님?|교사)(\s*[:：]\s*|\s+)([가-힣]{3,4})(?![가-힣])/g;
+export const maskNames = t => String(t || '')
+  .replace(ROLE_AFTER, (m, pre, n, sp, role) => (nameCell(n) ? `${pre}${MASK}${sp || ' '}${role}` : m))
+  .replace(ROLE_BEFORE, (m, role, sp, n) => (nameCell(n) ? `${role}${sp}${MASK}` : m));
 
 /* 넣기: { text } | { file } → { items(배송비 줄 포함), fields, by: 'rule'|'table'|'ai', missed }
    noAI: 강사 수당 품의 — 글은 앱 규칙으로만 읽고, 그림·글 없는 PDF는 읽지 않음(강사 이름이 AI로 가지 않게) */

@@ -1,4 +1,17 @@
 /* 활동지 머리 읽기(스펙 4.1): 교과·단원·차시·쪽·활동 이름, 그리고 학기. 못 찾으면 빈칸(선생님이 고침) */
+import { stripNames } from '../../../core/privacy.js';
+
+/* 넣은 활동지 글 다듬기: 주민번호 모양 줄은 빼고, 이름·전화번호가 적힌 줄(privacy.js)은 빼거나 가리고, 「이름: 김하늘」은 이름만 지움
+   (「이름: 교사용」·빈 이름 칸은 그대로) → { text, cut(뺀 줄·가린 이름 수) } */
+const RRN = /\d{6}\s*-\s*[1-4]\d{6}/;
+const FILLED = /((?:이\s*름|성\s*명)\s*[:：]\s*)(?!교사용|학생용)[가-힣]{2,4}(?![가-힣])/g;
+export function cleanSheet(text) {
+  const src = String(text || '').split('\n');
+  let named = 0;
+  const kept = src.filter(l => !RRN.test(l)).map(l => l.replace(FILLED, (m, pre) => { named++; return pre.replace(/\s+$/, ''); }));
+  const r = stripNames(kept.join('\n'));
+  return { text: r.text.trim(), cut: r.dropped + r.masked + named + (src.length - kept.length) };
+}
 
 export const SUBJECTS = ['국어', '수학', '사회', '과학', '도덕', '영어', '음악', '미술', '체육', '실과', '바른 생활', '슬기로운 생활', '즐거운 생활'];
 const SUBJ = new RegExp(`^(${SUBJECTS.join('|')})(?=\\s|\\d|$)`);

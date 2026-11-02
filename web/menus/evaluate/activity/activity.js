@@ -6,12 +6,11 @@ import { stepsHTML } from '../../../core/steps.js';
 import * as ai from '../../../core/ai.js';
 import { toast } from '../../../core/ui.js';
 import { getSchool } from '../../../core/settings.js';
-import { stripNames } from '../../../core/privacy.js';
 import { aiRowHTML } from '../../../core/ai-roles.js';
 import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle, bundleMsg } from '../../../core/bundle.js';
 import { newActivity, listActivities, getActivity, saveActivity, removeActivity, dropItems, addItem, getSet } from './activity-model.js';
-import { readMeta, termOf, SUBJECTS } from './activity-read.js';
-import { TYPES, criteriaPrompt, normCriteria, applyKey } from './activity-ai.js';
+import { readMeta, termOf, SUBJECTS, cleanSheet } from './activity-read.js';
+import { TYPES, criteriaPrompt, normCriteria, applyKey, itemsFromSheets } from './activity-ai.js';
 import { sampleActivity } from './activity-sample.js';
 
 export const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,7 +18,7 @@ export const SS = () => window.SSAM || {};
 const STEPS = ['활동지 넣기', '기준 확인', '학생 활동지', '채점·확인', '결과'];
 const SRC = { teacher: '교사용에서', answer: '정답에서', ai: 'AI가 만듦', edit: '선생님이 고침' };
 /* 화면 상태. critPages: 기준을 만들 빈 활동지·교사용 쪽 그림(이 화면에만), pending: 1단계에 같이 넣은 학생 쪽(3단계가 받음) */
-export const A = { view: 'list', id: null, draft: null, step: 1, msg: '', busy: '', critFor: null, critPages: [], pending: null };
+export const A = { view: 'list', id: null, draft: null, step: 1, msg: '', note: '', busy: '', critFor: null, critPages: [], pending: null };
 let box = null, curTab = '';
 const stepViews = {}, views = {};
 export const registerStep = (n, v) => { stepViews[n] = v; };
@@ -39,7 +38,7 @@ export const reach = a => (!a ? 1 : !hasContent(a) ? 1 : !a.confirmed ? 2 : !a.s
 export function openActivity(id, step) {
   const a = getActivity(id);
   if (!a) return;
-  A.view = 'act'; A.id = id; A.draft = null; A.msg = '';
+  A.view = 'act'; A.id = id; A.draft = null; A.msg = ''; A.note = '';
   A.step = step || (a.done ? 5 : reach(a));
   render();
 }
@@ -47,7 +46,7 @@ export const goStep = n => { A.step = n; render(); };
 export function startNew(meta = {}) {
   const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const a = newActivity({ date: today, term: termOf(today, getSchool().breaks), ...meta });
-  A.view = 'act'; A.id = null; A.draft = a; A.step = 1; A.msg = ''; A.critFor = a.id; A.critPages = []; A.pending = null;
+  A.view = 'act'; A.id = null; A.draft = a; A.step = 1; A.msg = ''; A.note = ''; A.critFor = a.id; A.critPages = []; A.pending = null;
   render();
   return a;
 }
@@ -106,6 +105,7 @@ function step2HTML(a) {
       <p class="muted" style="margin:0">${a.sheet.teacher ? '교사용·예시·정답에서 가져오고 모자란 기준만 AI가 만들어요.' : '정답·예시 답안이 없어서 AI가 빈 활동지를 읽고 기준을 만들어요. 고친 뒤 [기준 확정]을 누르면 모든 학생에게 같은 기준을 써요.'}</p>
       ${busy ? '<p class="muted"><span class="spin"></span> AI가 기준을 만들고 있어요…</p>' : ''}
       ${A.msg ? `<div class="banner err" role="alert"><span class="grow">${esc(A.msg)}</span></div>` : ''}
+      ${A.note ? `<div class="banner" id="actNote"><span class="grow">${esc(A.note)}</span></div>` : ''}
       ${itemsHTML(a)}
       <div class="row"><button class="btn" type="button" data-ac="criteria"${busy ? ' disabled' : ''}>${a.items.length ? 'AI로 기준 다시 만들기' : 'AI로 기준 만들기'}</button><button class="btn text" type="button" data-ac="addItem">+ 문항</button>
         <span class="grow"></span>${a.confirmed ? '<span class="chip ok">확정함</span>' : ''}</div>
@@ -135,13 +135,7 @@ export function render() {
 }
 
 /* ---------- 1단계: 넣기 ---------- */
-const RRN = /\d{6}\s*-\s*[1-4]\d{6}/;
-/* 이름·전화번호가 적힌 줄(privacy.js)과 주민번호 모양 줄은 빼고 넣음 */
-function clean(text) {
-  const kept = String(text || '').split('\n').filter(l => !RRN.test(l));
-  const r = stripNames(kept.join('\n'));
-  return { text: r.text.trim(), cut: r.dropped + r.masked + (String(text || '').split('\n').length - kept.length) };
-}
+const clean = cleanSheet;
 function freePages(pages) { if (pages && pages.length && SS().files) SS().files.freePages(pages); }
 /* 넣은 쪽 나누기: 정답·교사용·빈 쪽은 기준 그림, 학생 쪽은 3단계로. 문서 없이 1~2쪽만 넣으면 그 쪽이 활동지(빈 활동지) */
 export function sortPages(b) {
@@ -171,20 +165,44 @@ async function putFiles(files) {
   if (A.critFor !== id) { freePages(A.critPages); A.critPages = []; }
   A.critFor = id; A.critPages = [...A.critPages, ...crit];
   if (stu.length) { if (A.pending && A.pending.id !== id) freePages(A.pending.pages); A.pending = { id, pages: [...((A.pending && A.pending.id === id && A.pending.pages) || []), ...stu] }; }
-  if ((s.text || t.text) && a.items.length) { a.items = []; a.confirmed = false; }
+  // 기준이 있으면 지우기 전에 물어봄(선생님이 고친 기준까지 지워지지 않게)
+  if ((s.text || t.text) && a.items.length && await askRedo()) {
+    a.items = []; a.confirmed = false; autoFor = null;
+    a.students.forEach(x => { if (x.status === 'done') x.stale = true; });
+  }
   commitAct(a);
   const cut = s.cut + t.cut;
   toast([`넣었어요${b.skipped.length ? ` · 읽지 못한 파일 ${b.skipped.length}개` : ''}`, cut ? `이름·전화번호·주민번호가 적힌 줄 ${cut}곳은 빼고 넣었어요` : ''].filter(Boolean).join(' · '), 6000);
   if (visible() && curAct() && curAct().id === id) render();
+}
+function askRedo() {
+  return new Promise(res => {
+    let v = false;
+    SS().openSheet(`<div id="actRedoSheet"><h3>이미 만든 기준이 있어요</h3><p class="muted" style="margin:0">새로 넣은 활동지로 기준을 다시 만들까요? 다시 만들면 고친 기준도 지워지고, 채점한 학생은 다시 채점해야 해요.</p>
+      <div class="row" style="justify-content:flex-end"><button class="btn" type="button" id="actKeepCrit">기준 그대로</button><button class="btn primary" type="button" id="actRedoCrit">기준 다시 만들기</button></div></div>`, sh => {
+      sh.querySelector('#actKeepCrit').addEventListener('click', () => { v = false; SS().closeSheet(); });
+      sh.querySelector('#actRedoCrit').addEventListener('click', () => { v = true; SS().closeSheet(); });
+    });
+    const root = document.getElementById('sheetRoot');
+    if (!root) { res(false); return; }
+    const obs = new MutationObserver(() => { if (!root.querySelector('#actRedoSheet')) { obs.disconnect(); res(v); } });
+    obs.observe(root, { childList: true, subtree: true });
+  });
 }
 onBundle('act', files => { if (A.view === 'act' && A.step === 1) putFiles(files); else if (views.bundle) views.bundle(files); });
 
 /* ---------- 2단계: 기준 ---------- */
 let autoFor = null;
 function autoCriteria(a) {
-  if (a.items.length || A.busy || autoFor === a.id || !ai.ready() || !hasContent(a)) return;
+  if (a.items.length || A.busy || autoFor === a.id || !hasContent(a)) return;
+  if (ai.ready()) { autoFor = a.id; makeCriteria(a.id); return; }
+  // AI 키가 없으면 교사용 글에서 문항·예시 답안만(스펙 4.2 「글이면 AI 없이 표 줄을 맞추고」)
+  const items = a.sheet.teacher ? applyKey(itemsFromSheets(a.sheet.student, a.sheet.teacher), a.sheet.teacher) : [];
   autoFor = a.id;
-  makeCriteria(a.id);
+  if (!items.length) return;
+  a.items = items; a.confirmed = false; commitAct(a);
+  A.note = 'AI 키가 없어 교사용에서 문항·예시 답안만 가져왔어요. ○·△ 기준은 직접 적거나, 설정 › AI에서 키를 넣고 [AI로 기준 다시 만들기]를 눌러 주세요.';
+  render();
 }
 /* 기준 그림·쪽 나누기 그림에 쓰는 이름 칸: 정한 칸(이 활동지·기본), 없으면 맨 위 띠(이름 칸이 흔히 있는 곳). 「이름 칸 가리기」를 끄면 안 가림
    — 빈 활동지 대신 학생이 쓴 활동지를 기준 사진으로 넣어도 이름이 AI로 가지 않게 */
@@ -203,13 +221,16 @@ async function makeCriteria(id) {
   const a0 = curAct();
   if (!a0 || a0.id !== id || A.busy) return;
   if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
-  A.busy = 'criteria:' + id; A.msg = ''; render();
+  A.busy = 'criteria:' + id; A.msg = ''; A.note = ''; render();
   try {
     const images = await critImages(id);
     const v = await ai.generateJSON(criteriaPrompt({ meta: a0.meta, student: a0.sheet.student, teacher: a0.sheet.teacher, nImages: images.length }), { images, task: 'grade', valid: x => normCriteria(x).length > 0 });
     const a = (curAct() && curAct().id === id) ? curAct() : getActivity(id);
     if (a) {
       a.items = a.sheet.teacher ? applyKey(normCriteria(v), a.sheet.teacher) : normCriteria(v);
+      // AI가 비운 예시 답안은 교사용 글에서 맞춘 줄로 채움
+      const app = a.sheet.teacher ? itemsFromSheets(a.sheet.student, a.sheet.teacher) : [];
+      for (const it of a.items) { const x = app.find(y => y.no === it.no); if (x && x.answer && !String(it.answer || '').trim()) { it.answer = x.answer; it.src = 'teacher'; } }
       a.confirmed = false;
       // 새 기준은 문항이 달라질 수 있어 번호로 남은 선생님 고친 칸은 다시 채점할 때 새로 매김
       a.students.forEach(s => { if (s.status === 'done') s.stale = true; for (const c of Object.values(s.marks || {})) if (c) delete c.manual; });

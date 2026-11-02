@@ -29,7 +29,8 @@ function split(a, n, per) {
   G.idx = Array.from({ length: n }, (_, i) => Array.from({ length: Math.min(per, G.pages.length - i * per) }, (_, j) => i * per + j));
   if (a.students.length !== n) a.students = numbersFor(n, [...rosterExcept(), ...(a.absent || [])]).map(fresh);
 }
-export function loadPages(id, pages, raw = pages) {
+/* onCancel: 학생 수가 달라 묻는 창을 닫으면(새로 나누지 않음) 부름 */
+export function loadPages(id, pages, raw = pages, onCancel = null) {
   const a = id === (curAct() && curAct().id) ? curAct() : getActivity(id);
   if (!a || !pages.length) return;
   if (busy(id)) { toast('채점하는 중이에요. 끝나거나 멈춘 뒤에 다시 올려 주세요.', 5000); return; }
@@ -43,9 +44,12 @@ export function loadPages(id, pages, raw = pages) {
     commitAct(a); refresh(id);
   };
   if (a.students.length && a.students.length !== n && a.students.some(s => s.status === 'done')) {
+    let ok = false;
     SS().openSheet(`<h3>학생 수가 달라요</h3><p class="muted" style="margin:0">채점한 학생은 ${a.students.length}명인데 새 스캔은 ${n}명이에요. 새로 나누면 채점한 결과가 지워져요.</p>
       <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="acRedoOk">새로 나누기</button></div>`,
-    sh => sh.querySelector('#acRedoOk').addEventListener('click', () => { a.students = []; SS().closeSheet(); apply(); }));
+    sh => sh.querySelector('#acRedoOk').addEventListener('click', () => { ok = true; a.students = []; SS().closeSheet(); apply(); }));
+    const root = document.getElementById('sheetRoot');
+    if (onCancel && root) { const obs = new MutationObserver(() => { if (!root.querySelector('#acRedoOk')) { obs.disconnect(); if (!ok) onCancel(); } }); obs.observe(root, { childList: true, subtree: true }); }
     return;
   }
   apply();
@@ -193,7 +197,7 @@ async function gradeOne(id, i) {
       G.run.stop = true; G.run.queue = [];
       toast(`채점을 멈췄어요. ${why} 남은 학생은 [채점 시작]으로 이어서 해요.`, 9000);
     }
-  } finally { G.running.delete(i); refresh(id); }
+  } finally { if (G.running.get(i) === ctrl) G.running.delete(i); refresh(id); }
 }
 /* 검토 AI(업무별 AI 「채점」 검토): 노란 칸만 같은 그림으로 다시 봄. 다르면 칸에 rv(두 의견) */
 async function reviewOne(id, i, no, images, signal) {
@@ -220,11 +224,13 @@ async function gradeAll(id) {
   if (a.byNo && !G.nosOk) { matchNos(a, () => gradeAll(id)); return; }
   const queue = a.students.map((s, i) => ({ s, i })).filter(x => !x.s.skip && (x.s.status !== 'done' || x.s.stale)).map(x => x.i);
   if (!queue.length) { toast('채점할 학생이 없어요. 고칠 칸을 눌러 바꿀 수 있어요.', 5000); return; }
-  G.run = { id, queue, stop: false };
+  // 이 채점만의 표: 멈춘 앞 채점의 일꾼이 늦게 돌아와도 새 채점의 학생을 가져가거나 새 채점을 끝내지 않게
+  const run = G.run = { id, queue, stop: false };
   refresh(id);
-  const worker = async () => { while (G.run && G.run.id === id && !G.run.stop && G.run.queue.length) await gradeOne(id, G.run.queue.shift()); };
+  const worker = async () => { while (G.run === run && !run.stop && run.queue.length) await gradeOne(id, run.queue.shift()); };
   await Promise.all([worker(), worker()]);
-  G.run = null; refresh(id);
+  if (G.run === run) G.run = null;
+  refresh(id);
 }
 function stopGrading() {
   if (!G.run) return;
@@ -311,7 +317,12 @@ document.addEventListener('change', e => {
   if (!mine(e)) return;
   const a = curAct(), el = e.target;
   if (!a) return;
-  if (el.id === 'acPer') { saveSet({ ...getSet(), pagesPer: Math.max(1, Math.min(6, Number(el.value) || 1)) }); if (G.id === a.id && G.pages.length) loadPages(a.id, G.pages, G.raw); }
+  if (el.id === 'acPer') {
+    const prev = getSet().pagesPer;
+    saveSet({ ...getSet(), pagesPer: Math.max(1, Math.min(6, Number(el.value) || 1)) });
+    // 학생 수가 달라져 묻는 창을 닫으면 쪽 수도 그대로
+    if (G.id === a.id && G.pages.length) loadPages(a.id, G.pages, G.raw, () => { saveSet({ ...getSet(), pagesPer: prev }); render(); });
+  }
   else if (el.id === 'acTwoUp' || el.id === 'acFlipBack') {
     if (busy(a.id)) { toast('채점하는 중에는 바꿀 수 없어요.', 4000); render(); return; }
     // 쪽 모양·방향이 바뀌면 정해 둔 이름 칸 자리가 맞지 않아 이름이 AI로 갈 수 있음: 정한 칸(이 활동지·기본)은 지우고 다시 정하게

@@ -4,10 +4,11 @@ import { linkedTo, getActivity } from '../menus/evaluate/activity/activity-model
 import { LEVEL } from '../menus/evaluate/activity/activity-ai.js';
 import { unitLinkedTo, getTest, graded, makeTitle } from '../menus/evaluate/unit/unit-model.js';
 import { studentTotal } from '../menus/evaluate/unit/unit-grade.js';
+import { planUnits } from './eval-link.js';
 
 /* unit: 평가계획 영역 { id, subject, label } → [{ kind: 'unit'|'activity', id, title, date }] (날짜 늦은 것 먼저) */
 export function linked(unit) {
-  const link = { unitId: unit && unit.id, subject: unit && unit.subject, label: unit && unit.label };
+  const link = { unitId: unit && unit.id, subject: unit && unit.subject, label: unit && unit.label, known: planUnits().map(u => u.id) };
   return [...linkedTo(link), ...unitLinkedTo(link)].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 const clip = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);

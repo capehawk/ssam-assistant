@@ -45,7 +45,7 @@ function step5HTML(a) {
       <div class="ac-grid-wrap"><table class="ac-grid" id="acTable"><thead>${head}</thead><tbody>${rows}</tbody></table></div>
       <div class="row">${exportButton('data-ac="exportTable"', { prefix: '반 표 · ' })}<button class="btn text" type="button" data-ac="copyTable">표 복사</button>${exportButton('data-ac="exportSlips"', { prefix: '피드백 쪽지 · ' })}</div>
       <p class="muted" style="margin:0">피드백 쪽지는 한 쪽에 4명, 번호만 적혀요.</p></div>
-    <div class="yp-card"><h3>교과 평어</h3>${linkHTML(a.link, a.meta.subject, 'data-ac')}</div>
+    <div class="yp-card"><h3>교과 평어</h3>${linkHTML(a.link, a.meta.subject, 'data-ac')}${a.link && !a.done ? '<p class="muted" id="acLinkWait" style="margin:0">[확정]하면 평가지 채점의 참고 목록에 나와요.</p>' : ''}</div>
     <div class="row act-next">${a.done ? '<span class="chip ok">확정함 · 학생별 모아 보기에 남아요</span><button class="btn text" type="button" data-ac="undone">확정 풀기</button>' : `<button class="btn primary" type="button" data-ac="done"${g.length ? '' : ' disabled'}>확정</button>`}</div>`;
 }
 registerStep(5, { html: step5HTML });

@@ -14,6 +14,8 @@ const nameish = t => (/^[가-힣]{3}$/.test(t) && SURNAME.has(t[0]) && !COMMON.h
 /* 표 칸·직책 옆의 이름: 칸 전체가 세 글자 이름 모양 (조사·어미로 끝나면 낱말. 이름 끝에 흔한 「한·형·도」는 이름으로 봄) */
 const PART = /[을를의에과와할해요고며로만적께]$/;
 const cellName = c => (/^[가-힣]{3}$/.test(c) && SURNAME.has(c[0]) && !COMMON.has(c) && !PART.test(c)) || DOUBLE.test(c);
+/* 칸·낱말 하나가 사람 이름 모양인지(세 글자 흔한 성 + 흔한 낱말 아님, 두 글자 성 + 두 글자) */
+export const nameCell = c => cellName(String(c || ''));
 const ROLE = '부?담임|부?회장|부?반장|서기|총무|학생|교사|전담|대표|교감|교장';
 const ROLE_NAME = new RegExp(`((?:${ROLE})(?:\\s*[:：|]\\s*|\\s+))([가-힣]{3,4})(?![가-힣])`, 'g');
 const CUE = new RegExp(`^(\\d{1,2}|남|여|남자|여자|${ROLE})$`), HEAD = /^(이름|성명|성 명|학생명|학생 이름)$/;

@@ -5265,15 +5265,16 @@ function openCCSheetView(k, no) {
 const ccDropZone = t => t && t.closest && t.closest('[data-ccsheetbox]');
 // 파일을 학습지 칸 밖에 놓으면 창에 그 파일이 열려 앱 화면이 사라지므로 막음
 const hasFiles = e => !!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'));
+// 창체 화면이 보일 때만(모드는 남아 있어도 단원평가·활동지 탭·다른 메뉴의 끌어 놓기를 막지 않게)
 ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => {
-  if (S.mode !== 'cc' || !hasFiles(e)) return;
+  if (S.mode !== 'cc' || !evalShown() || !hasFiles(e)) return;
   e.preventDefault();
   const dz = ccDropZone(e.target);
   if (dz) dz.classList.add('on'); else e.dataTransfer.dropEffect = 'none';
 }));
 document.addEventListener('dragleave', e => { const dz = ccDropZone(e.target); if (dz && !dz.contains(e.relatedTarget)) dz.classList.remove('on'); });
 document.addEventListener('drop', e => {
-  if (S.mode !== 'cc' || !hasFiles(e)) return;
+  if (S.mode !== 'cc' || !evalShown() || !hasFiles(e)) return;
   e.preventDefault();
   const dz = ccDropZone(e.target); if (!dz) return;
   dz.classList.remove('on');

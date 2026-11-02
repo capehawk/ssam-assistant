@@ -68,6 +68,11 @@ await run('activity-results', [
     await page.waitForFunction(s => document.querySelector(`${s} .el-box`).textContent.includes('생명 · 식물의 한살이'), P);
     const a = (await acts())[0];
     assert(a.link && a.link.unitId === 'u2' && a.link.subject === '과학' && a.link.label === '생명 · 식물의 한살이', JSON.stringify(a.link));
+    // 확정 전이면 「[확정]하면 평가지 채점의 참고 목록에 나와요」(확정한 것만 참고 목록에 나옴)
+    if (a.done) { await page.click(`${P} [data-ac="undone"]`); await page.waitForSelector(`${P} [data-ac="done"]`); }
+    assert((await page.textContent(`${P} #acLinkWait`)).includes('[확정]'), '확정 안내');
+    await page.click(`${P} [data-ac="done"]`);
+    await page.waitForFunction(s => !document.querySelector(`${s} #acLinkWait`), P);
   }],
   ['평가계획 영역 id가 바뀌어도 이름으로 이어짐, 이름도 바뀌면 「이어 둔 영역을 찾지 못했어요」', async () => {
     const set = (id, elem) => page.evaluate(([id, elem]) => { const p = JSON.parse(localStorage.getItem('ssam:plan:P1')); p.subjects[0].units[1].id = id; p.subjects[0].units[1].elem = elem; localStorage.setItem('ssam:plan:P1', JSON.stringify(p)); }, [id, elem]);

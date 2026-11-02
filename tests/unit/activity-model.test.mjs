@@ -63,10 +63,10 @@ test('문항별 셈: ○·△·×·안 함, 채점 안 한 학생은 셈하지 �
 
 test('평가 영역 이음: unitId가 같거나, 없으면 교과·영역 이름이 같은 것', () => {
   const a = newActivity({ subject: '과학', title: '물', date: '2026-09-01', term: 2 });
-  a.link = { unitId: 'u1', subject: '과학', label: '물질 · 물의 상태 변화' };
+  a.link = { unitId: 'u1', subject: '과학', label: '물질 · 물의 상태 변화' }; a.done = true;
   saveActivity(a);
   const b = newActivity({ subject: '과학', title: '얼음', date: '2026-09-09', term: 2 });
-  b.link = { unitId: 'old', subject: '과학', label: '물질 · 물의 상태 변화' };
+  b.link = { unitId: 'old', subject: '과학', label: '물질 · 물의 상태 변화' }; b.done = true;
   saveActivity(b);
   assert.deepEqual(linkedTo({ unitId: 'u1', subject: '과학', label: '물질 · 물의 상태 변화' }).map(x => x.title), ['얼음', '물']);
   assert.deepEqual(linkedTo({ unitId: 'u2', subject: '과학', label: '다른 영역' }), []);

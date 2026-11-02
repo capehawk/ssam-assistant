@@ -60,8 +60,11 @@ export function markCounts(a) {
   return out;
 }
 /* 평가 영역에 이어 둔 활동지(스펙 4.8): unitId가 같거나, 교과·영역 이름이 같은 것. 날짜 늦은 것 먼저 */
-export function linkedTo({ unitId = '', subject = '', label = '' } = {}) {
-  return all().filter(a => a.link && ((unitId && a.link.unitId === unitId) || (label && a.link.subject === subject && a.link.label === label)))
+/* 평가 영역에 이어 둔 활동지(확정한 것만, 스펙 4.5). known: 지금 평가계획의 영역 id — 이어 둔 id가 아직 있으면 이름이 같은 다른 영역(1·2학기 같은 평가요소)에는 안 나옴 */
+export const linkMatch = (link, { unitId = '', subject = '', label = '', known = [] } = {}) => !!link && ((unitId && link.unitId === unitId)
+  || (!!label && !known.includes(link.unitId) && link.subject === subject && link.label === label));
+export function linkedTo(unit = {}) {
+  return all().filter(a => a.done && linkMatch(a.link, unit))
     .map(a => ({ kind: 'activity', id: a.id, title: a.meta.title || '', date: a.meta.date || '' }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }

@@ -182,7 +182,8 @@ export function openBundleCard(b, { what = '' } = {}) {
       ? `<div class="bundle-doc"><span><b>학생용</b> ${cur.doc.student.split('\n').length}줄 · <b>교사용</b> ${cur.doc.teacher.split('\n').length}줄</span><button class="btn text tiny" type="button" id="bundleNoSplit">나누지 않기</button></div>` : '');
     const pagesHTML = () => (cur.pages && cur.pages.length
       ? `<div class="bundle-pages">${cur.pages.map((p, i) => `<button type="button" class="bundle-pg role-${cur.roles[i]}" data-bundle-page="${i}" aria-label="${i + 1}쪽 ${ROLE_NAME[cur.roles[i]]}"><img src="${esc(p.thumb || p.url)}" alt=""><span>${i + 1}쪽 · ${ROLE_NAME[cur.roles[i]]}</span></button>`).join('')}</div>
-        <p class="muted" style="margin:0">쪽을 누르면 학생 → 정답·교사용 → 빈 활동지로 바뀌어요. 정답·교사용·빈 쪽은 채점 기준으로만 쓰고 학생으로 세지 않아요.</p>` : '');
+        <p class="muted" style="margin:0">쪽을 누르면 학생 → 정답·교사용 → 빈 활동지로 바뀌어요. 정답·교사용·빈 쪽은 채점 기준으로만 쓰고 학생으로 세지 않아요.</p>
+        ${cur.roles.includes('blank') ? '<p class="act-warn" id="bundleBlankNote" style="margin:0">「빈 활동지」로 본 쪽에 학생 이름이 적혀 있으면 눌러서 「학생」으로 바꿔 주세요. AI는 이름 칸을 가린 그림만 봐서 이름만 쓰고 비운 쪽을 빈 활동지로 볼 수 있어요.</p>' : ''}` : '');
     const draw = sh => {
       sh.querySelector('#bundleSum').textContent = bundleSummary(cur);
       sh.querySelector('#bundleBody').innerHTML = docHTML() + pagesHTML();
