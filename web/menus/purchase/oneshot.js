@@ -7,18 +7,23 @@ const FIELD_NAME = { project: '사업명', purpose: '목적', date: '일시', ta
 export const GUESS_KEYS = Object.keys(FIELD_NAME);
 const TYPE_IDS = TYPES.map(t => t.id);
 const blank = v => String(v == null ? '' : v).trim() === '';
+/* 「다음 주 화요일」 같은 말을 날짜로 바꿀 때 쓰는 오늘 */
+const dayLine = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '')); if (!m) return ''; const w = '일월화수목금토'[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()]; return `오늘: ${iso}(${w}). 「다음 주 화요일」처럼 쓴 날은 오늘을 기준으로 「2026. 11. 10.(화)」 꼴로 바꿉니다.`; };
+const TYPE_LABEL = Object.fromEntries(TYPES.map(t => [t.id, t.label]));
 const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 
 /* 초안 AI 한 번: 제목·첫 문장 + 비어 있는 칸(목적은 짐작해도 됨) + (askType이면) 종류.
    강사 수당은 넣은 글(강사 이름일 수 있음)을 보내지 않고 메모(사람 수·시간)만 */
-export function oneshotPrompt(form, text = '', { askType = false } = {}) {
+export function oneshotPrompt(form, text = '', { askType = false, today = '' } = {}) {
   const f = form || {}, type = TYPE_IDS.includes(f.type) ? f.type : 'goods';
   const empty = GUESS_KEYS.filter(k => blank(f[k]));
   const said = type === 'lecturer' ? '' : maskNames(String(text || '').split(/\r?\n/).filter(l => !findPersonal(l)).join('\n')).trim().slice(0, 4000);
   return ['[품의 초안]',
     '학교 행정 문서(에듀파인 품의)를 돕는 도우미예요. 아래 메모로 품의의 제목과 품의 사유 첫 문장을 써 주세요.',
-    '', draftMemo(f).trim(),
+    // 품목 이름에 든 「김철수 강사」 같은 이름도 가림(종류를 고르지 않은 강사 품의)
+    '', maskNames(draftMemo(f)).trim(),
     ...(said ? ['', '[선생님이 넣은 글]', said] : []),
+    ...(dayLine(today) ? ['', dayLine(today)] : []),
     '', '규칙:',
     '- title: 한 줄, 30자 안쪽. 무엇을 왜 하는지 드러나게 씁니다. 예) 5학년 과학 실험 재료(용해와 용액) 구입',
     `- intro: 한 문장. 「…을(를) 다음과 같이 ${askType ? '구입(물품)·지급(강사)·운영(행사·협의회)' : VERB[type]}하고자 합니다.」 꼴로 씁니다. 금액·날짜는 쓰지 않습니다.`,
@@ -49,6 +54,8 @@ export function confirmChips(form, check, guessed = []) {
   const noPrice = named.filter(it => !(toNumber(it.qty) > 0) || !(toNumber(it.price) > 0)).length;
   if (noPrice) out.push({ key: 'items', text: `단가 없는 품목 ${noPrice}개`, level: 'warn' });
   if ((guessed || []).includes('purpose')) out.push({ key: 'purpose', text: '목적 · AI가 짐작함', level: 'warn' });
+  for (const k of GUESS_KEYS) if (k !== 'purpose' && (guessed || []).includes(k) && !blank(f[k])) out.push({ key: k, text: `${FIELD_NAME[k]} · AI가 채움`, level: 'warn' });
+  if (f.typeGuessed) out.push({ key: 'type', text: `종류 · AI가 「${TYPE_LABEL[f.type] || f.type}」로 봄`, level: 'warn' });
   for (const w of (check && check.warnings) || []) if (!w.includes('예산 과목')) out.push({ key: '', text: w, level: 'warn' });
   if (blank(f.date) && blank(f.target)) out.push({ key: 'date', text: '일시·대상 없이 썼어요', level: 'info' });
   return out;

@@ -23,7 +23,8 @@ export const clearDraft = () => set(DRAFT, null);
 /* 최근 쪽지: [{ id, at, title, kind, m, len, attachNames }] 늦은 것 먼저 */
 const normItem = x => (isObj(x) && typeof x.id === 'string' && isObj(x.m)
   ? { id: x.id, at: Number(x.at) || 0, title: String(x.title || ''), kind: String(x.kind || 'etc'), m: x.m, len: LENS.includes(x.len) ? x.len : 'base',
-    attachNames: (Array.isArray(x.attachNames) ? x.attachNames : []).map(String).filter(Boolean).slice(0, 20) } : null);
+    attachNames: (Array.isArray(x.attachNames) ? x.attachNames : []).map(String).filter(Boolean).slice(0, 20),
+    body: String(x.body || '').slice(0, 6000), edited: !!x.edited, again: !!x.again } : null);
 export const listMessages = () => { const v = get(LIST, []); return (Array.isArray(v) ? v : []).map(normItem).filter(Boolean).sort((a, b) => b.at - a.at); };
 /* 같은 id는 그 자리를 고쳐 맨 앞으로, 20개까지 */
 export function pushMessage(x) {

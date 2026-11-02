@@ -33,7 +33,7 @@ function compose(force = false) {
 function persist() {
   const x = cur();
   saveDraft(x);
-  if (hasContent(x)) pushMessage({ id: x.id, title: x.title, kind: x.again ? 'again' : x.m.kind, m: x.m, len: x.len, attachNames: x.attach.map(a => a.name) });
+  if (hasContent(x)) pushMessage({ id: x.id, title: x.title, kind: x.m.kind, m: x.m, len: x.len, attachNames: x.attach.map(a => a.name), body: x.body, edited: x.edited, again: !!x.again });
 }
 
 /* ---------- 붙임 파일 (Windows 앱): 다운로드 폴더에 모아 클립보드 파일 복사·폴더 열기 (스펙 4.5) ---------- */
@@ -131,20 +131,25 @@ function refreshOut() {
 
 /* ---------- 넣기·읽기 ---------- */
 const setState = m => { M.msg = m; const el = box && box.querySelector('#msgState'); if (el) el.textContent = m; };
+/* M.files[i]는 붙임 x.attach[i]의 파일. 파일이 없는(다시 연·새로 고친) 붙임과 이름이 같으면 그 자리에 넣고, 아니면 붙임을 더함 */
 function addFiles(files) {
   const x = cur();
-  for (const f of files) { M.files.push(f); x.attach.push({ name: baseName(f.name), on: true }); }
+  for (const f of files) {
+    const i = x.attach.findIndex((a, k) => !M.files[k] && a.name === baseName(f.name));
+    if (i >= 0) M.files[i] = f;
+    else { x.attach.push({ name: baseName(f.name), on: true }); M.files[x.attach.length - 1] = f; }
+  }
 }
 /* 넣은 파일·붙여 넣은 글을 읽어 AI 한 번 → 칸 → 쪽지 */
 export async function readAll() {
   if (M.busy) return;
   const x = cur(), paste = box && box.querySelector('#msgPaste') ? box.querySelector('#msgPaste').value : '';
-  if (!M.files.length && !paste.trim()) { toast('공문·계획 파일을 넣거나 글을 붙여 넣어 주세요.', 5000); return; }
+  if (!M.files.some(Boolean) && !paste.trim()) { toast('공문·계획 파일을 넣거나 글을 붙여 넣어 주세요.', 5000); return; }
   if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
   M.busy = true; render(); setState('읽는 중…');
   try {
     const texts = paste.trim() ? [paste] : [], images = [];
-    for (const f of M.files) {
+    for (const f of M.files.filter(Boolean)) {
       let t = '';
       if (!IMAGE.test(f.name || '')) { try { t = await readText(f); } catch (e) { t = ''; } }
       if (String(t).trim()) texts.push(t);
@@ -189,8 +194,9 @@ document.addEventListener('click', e => {
     if (!r) return;
     const again = !!op.dataset.msgAgain;
     M.files = [];
-    d = { id: again ? newMessageId() : r.id, m: r.m, len: r.len, attach: r.attachNames.map(name => ({ name, on: true })), edited: false, body: '', title: '', again };
-    compose(true); persist(); render(); return;
+    d = { id: again ? newMessageId() : r.id, m: r.m, len: r.len, attach: r.attachNames.map(name => ({ name, on: true })), edited: false, body: '', title: '', again: again || r.again };
+    if (!again && r.edited && r.body) { d.body = r.body; d.title = r.title; d.edited = true; } else compose(true);
+    persist(); render(); return;
   }
   const b = e.target.closest('[data-msg]');
   if (!b) return;
@@ -224,7 +230,7 @@ document.addEventListener('input', e => {
   }
   if (el.dataset.attName != null) { const at = x.attach[+el.dataset.attName]; if (at) { at.name = el.value; compose(); persist(); refreshOut(); } return; }
   if (el.id === 'msgSender') { setSender(el.value); compose(); persist(); refreshOut(); return; }
-  if (el.id === 'msgTitle' || el.id === 'msgBody') { x[el.id === 'msgTitle' ? 'title' : 'body'] = el.value; x.edited = true; saveDraft(x); refreshOut(); }
+  if (el.id === 'msgTitle' || el.id === 'msgBody') { x[el.id === 'msgTitle' ? 'title' : 'body'] = el.value; x.edited = true; persist(); refreshOut(); }
 });
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-msg-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('[data-msg-drop]'); if (z) z.classList.remove('over'); });

@@ -96,6 +96,29 @@ await run('message', [
     await page.waitForFunction(() => window.__calls.some(c => c[0] === 'note_open_dir'));
     assert((await page.evaluate(() => window.__calls.find(c => c[0] === 'note_open_dir')[1].dir)) === 'C:/붙임', '폴더');
   }],
+  ['I3 새로고침 뒤 붙임 파일을 하나만 다시 넣으면 그 이름의 붙임에 들어가고(늘지 않음) 그 파일만 복사', async () => {
+    await page.reload(); await page.waitForTimeout(500);
+    await page.evaluate(() => { window.__calls = []; window.__TAURI__ = { core: { invoke: async (cmd, args) => { window.__calls.push([cmd, JSON.parse(JSON.stringify(args))]); return cmd === 'note_save_attachments' ? { dir: 'C:/붙임', paths: args.files.map(f => 'C:/붙임/' + f.name) } : null; } } }; });
+    await page.click('nav.app-side [data-menu-go="etc"]');
+    await page.waitForSelector(`${P} #msgFile`, { state: 'attached' });
+    const n0 = await page.locator(`${P} [data-att]`).count();
+    await page.setInputFiles(`${P} #msgFile`, [{ name: 'AI 활용 연수 계획.hwpx', mimeType: 'application/octet-stream', buffer: readFileSync(join(ROOT, 'samples', '활동지-예시.hwpx')) }]);
+    await page.waitForFunction(() => !document.querySelector('[data-msg="read"][disabled]'));
+    await page.waitForTimeout(300);
+    assert(await page.locator(`${P} [data-att]`).count() === n0, '붙임이 늘어남');
+    await page.click(`${P} [data-msg="copyFiles"]`);
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'note_save_attachments'));
+    const f = (await page.evaluate(() => window.__calls.find(c => c[0] === 'note_save_attachments')))[1].files;
+    assert(f.length === 1 && f[0].name === 'AI 활용 연수 계획.hwpx' && f[0].bytes[0] === 80 && f[0].bytes[1] === 75, JSON.stringify(f.map(x => [x.name, x.bytes.slice(0, 2)])));
+  }],
+  ['I5 본문을 손으로 고친 쪽지는 최근 쪽지 [열기]로 그 본문 그대로', async () => {
+    const b0 = await page.inputValue(`${P} #msgBody`);
+    await page.fill(`${P} #msgBody`, b0 + '\n덧붙인 한 줄');
+    await page.waitForTimeout(200);
+    await page.click(`${P} [data-msg="new"]`);
+    await page.click(`${P} #msgRecent [data-msg-open]`);
+    await page.waitForFunction(s => document.querySelector(`${s} #msgBody`).value.includes('덧붙인 한 줄'), P);
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();

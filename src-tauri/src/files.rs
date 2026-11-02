@@ -67,9 +67,19 @@ pub struct NoteSaved {
     pub paths: Vec<String>,
 }
 
+/// 쪽지 붙임을 모으는 곳: `base/쌤비서 쪽지 붙임`
+pub fn notes_root(base: &Path) -> PathBuf {
+    base.join("쌤비서 쪽지 붙임")
+}
+
 /// `base/쌤비서 쪽지 붙임/<폴더 이름>` (폴더 이름에 쓸 수 없는 글자는 `_`)
 pub fn note_dir(base: &Path, folder: &str) -> PathBuf {
-    base.join("쌤비서 쪽지 붙임").join(safe_name(folder))
+    notes_root(base).join(safe_name(folder))
+}
+
+/// 붙임 폴더 안의 경로인지(`..` 없이). 복사·열기는 이 안만 — 다른 파일·프로그램을 열지 않게
+pub fn inside_notes(base: &Path, p: &Path) -> bool {
+    p.starts_with(notes_root(base)) && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
 /// 쪽지 붙임을 폴더에 씀. 같은 이름에 같은 내용이면 그 파일을 다시 쓰고(다시 눌러도 늘지 않게), 다르면 「이름 (2)」
@@ -101,6 +111,10 @@ pub fn note_save_attachments(folder: String, files: Vec<NoteFile>) -> Result<Not
 /// 파일들을 클립보드에 파일로 넣음(탐색기에서 Ctrl+C 한 것처럼) — 쪽지 창 첨부 칸에 Ctrl+V
 #[tauri::command]
 pub fn note_copy_files(paths: Vec<String>) -> Result<(), String> {
+    let base = downloads_dir();
+    if paths.iter().any(|p| !inside_notes(&base, Path::new(p))) {
+        return Err("쪽지 붙임 폴더 밖의 파일은 복사하지 않아요".into());
+    }
     let mut cb = arboard::Clipboard::new().map_err(|e| format!("클립보드를 열지 못했어요: {e}"))?;
     cb.set().file_list(&paths).map_err(|e| format!("파일을 클립보드에 넣지 못했어요: {e}"))
 }
@@ -109,6 +123,9 @@ pub fn note_copy_files(paths: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 pub fn note_open_dir(app: tauri::AppHandle, dir: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    if !inside_notes(&downloads_dir(), Path::new(&dir)) || !Path::new(&dir).is_dir() {
+        return Err("쪽지 붙임 폴더만 열 수 있어요".into());
+    }
     app.opener().open_path(dir, None::<&str>).map_err(|e| format!("폴더를 열지 못했어요: {e}"))
 }
 
@@ -146,5 +163,15 @@ mod tests {
         assert!(again.paths[1].ends_with("계획 (2).hwpx"), "{}", again.paths[1]);
         assert_eq!(again.dir, saved.dir);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn notes_paths_only() {
+        let base = std::path::PathBuf::from("C:/Users/t/Downloads");
+        assert!(inside_notes(&base, &base.join("쌤비서 쪽지 붙임").join("2026-11-12 연수").join("계획.hwpx")));
+        assert!(inside_notes(&base, &base.join("쌤비서 쪽지 붙임").join("2026-11-12 연수")));
+        assert!(!inside_notes(&base, &base.join("다른 폴더").join("a.txt")));
+        assert!(!inside_notes(&base, &base.join("쌤비서 쪽지 붙임").join("..").join("a.exe")));
+        assert!(!inside_notes(&base, std::path::Path::new("C:/Windows/notepad.exe")));
     }
 }

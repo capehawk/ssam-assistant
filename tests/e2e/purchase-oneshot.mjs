@@ -38,7 +38,8 @@ await run('purchase-oneshot', [
     assert(reason.includes('가. 목적: 과학 실험 수업') && reason.includes('일시: 2026. 11. 12.') && reason.includes('장소: 과학실') && !reason.includes('대상:'), reason);
     assert((await page.textContent(`${P} #pcCalc`)).includes('알코올램프'), '산출 내역');
     const chips = await page.textContent(`${P} #pcChips`);
-    assert(chips.includes('예산 과목 · 행정실 확인') && chips.includes('목적 · AI가 짐작함'), chips);
+    assert(chips.includes('예산 과목 · 행정실 확인') && chips.includes('목적 · AI가 짐작함') && chips.includes('일시 · AI가 채움') && chips.includes('장소 · AI가 채움'), chips);
+    assert(/오늘: \d{4}-\d{2}-\d{2}\(.\)/.test(drafts()[0]), '오늘 날짜');
     assert((await state()).form.guessed.includes('purpose'), '짐작 표시 저장');
   }],
   ['칩 「예산 과목」 → [자세히 고치기]가 열리고 예산 과목 칸, 다시 그려도 열림', async () => {
@@ -112,6 +113,46 @@ await run('purchase-oneshot', [
     await page.click('#sheetRoot .sheet #ibRun');
     await page.waitForFunction(() => { const s = JSON.parse(localStorage.getItem('ssam:purchase:current') || 'null'); return s && s.draft && s.draft.title; }, null, { timeout: 10000 });
     assert(drafts().length === n0 + 1, '초안 AI');
+  }],
+  ['C1 손으로 고친 초안이 있는 품의에 떠 있는 버튼으로 견적서를 더하면 품목만 더하고 초안은 그대로(사유 다시 맞추기)', async () => {
+    await page.click('nav.app-side [data-menu-go="purchase"]');
+    await page.waitForSelector(`${P} #pcReason`);
+    const r0 = await page.inputValue(`${P} #pcReason`);
+    await page.fill(`${P} #pcReason`, r0 + '\n손으로 쓴 줄');
+    await page.waitForTimeout(200);
+    const n0 = drafts().length, items0 = (await state()).form.items.filter(i => i.name).length;
+    await page.setInputFiles('#inboxFile', join(FIXTURES, 'quote.csv'));
+    await page.waitForSelector('#sheetRoot .sheet [data-ib-field="where"]');
+    await page.click('#sheetRoot .sheet #ibRun');
+    await page.waitForFunction(n => (JSON.parse(localStorage.getItem('ssam:purchase:current')) || { form: { items: [] } }).form.items.filter(i => i.name).length > n, items0);
+    await page.waitForTimeout(400);
+    const s = await state();
+    assert(s.draft.reason.includes('손으로 쓴 줄') && drafts().length === n0, JSON.stringify({ n: drafts().length - n0, r: s.draft.reason.slice(-40) }));
+  }],
+  ['I6 간단히 화면에서 템플릿을 불러오면 [자세히 고치기]가 열려 일시 칸이 보임', async () => {
+    await page.evaluate(() => {
+      localStorage.setItem('ssam:purchase:view', JSON.stringify('simple'));
+      localStorage.setItem('ssam:purchase:templates', JSON.stringify([{ id: 't1', name: '과학 실험 재료', savedAt: 1, form: { type: 'goods', project: '과학 실험 재료 구입', purpose: '실험', items: [{ name: '비커', spec: '', unit: '개', qty: '5', price: '3000', vendor: '' }] } }]));
+    });
+    await page.reload(); await page.waitForTimeout(400);
+    await page.click('nav.app-side [data-menu-go="purchase"]'); await page.click('#menuTabs [data-tab="templates"]');
+    await page.click(`${P} [data-tpl-load="t1"]`);
+    await page.click('#sheetRoot .sheet #pcSwapOk'); // 쓰던 품의가 있어 「바꿀까요?」
+    await page.waitForSelector(`${P} #pcDate`, { state: 'visible' });
+    assert(await page.inputValue(`${P} #pcProject`) === '과학 실험 재료 구입', '불러옴');
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(() => JSON.parse(localStorage.getItem('ssam:purchase:view'))) === 'simple', '한 번 펼친 것을 기억해 버림');
+  }],
+  ['[자세히 고치기]를 눌러 열고 닫으면 그대로 기억(새로고침 뒤에도)', async () => {
+    await page.click(`${P} #pcMore > summary`); // 위에서 한 번 펼쳐진 것 → 닫기
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => JSON.parse(localStorage.getItem('ssam:purchase:view'))) === 'simple', '닫힘 기억');
+    await page.click(`${P} #pcMore > summary`);
+    await page.waitForTimeout(100);
+    assert(await page.evaluate(() => JSON.parse(localStorage.getItem('ssam:purchase:view'))) === 'full', '열림 기억');
+    await page.reload(); await page.waitForTimeout(400);
+    await page.click('nav.app-side [data-menu-go="purchase"]');
+    await page.waitForSelector(`${P} #pcDate`, { state: 'visible' });
   }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
