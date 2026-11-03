@@ -37,7 +37,8 @@ function normForm(v) {
   const items = v && Array.isArray(v.items) ? v.items.filter(i => i && typeof i === 'object').map(i => ({ ...emptyItem(), ...Object.fromEntries(Object.keys(emptyItem()).map(k => [k, i[k] == null ? '' : String(i[k])])) })) : [];
   f.items = items.length ? items : [emptyItem()];
   // typeSet: 선생님이 종류를 골랐음(AI가 종류를 바꾸지 않음), guessed: AI가 채운 칸(「AI가 짐작함」)
-  f.typeSet = !!(v && v.typeSet);
+  // 예전에 저장한 품의(typeSet 없음)는 물품이 아닌 종류면 선생님이 고른 것으로 봄
+  f.typeSet = v && typeof v === 'object' && 'typeSet' in v ? !!v.typeSet : !!(v && v.type && v.type !== 'goods');
   f.typeGuessed = !!(v && v.typeGuessed);
   f.guessed = v && Array.isArray(v.guessed) ? v.guessed.filter(k => GUESS_KEYS.includes(k)) : [];
   return f;
@@ -68,7 +69,8 @@ const VIEW_KEY = 'purchase:view';
 let moreOnce = false; // 템플릿·최근 작성(초안 없음)을 불러올 때 그 그리기에서만 펼침(기억하지 않음)
 const viewFull = () => get(VIEW_KEY, 'simple') === 'full' || moreOnce;
 const localDay = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
-const checks = () => checkPurchase(st.form, { limit: getPurchaseLimit(), meetCap: getMeetCap() });
+// AI가 되면 빈 목적은 빠진 칸이 아님(초안 때 AI가 짐작, 위 칩과 같게)
+const checks = () => checkPurchase(st.form, { limit: getPurchaseLimit(), meetCap: getMeetCap(), guessPurpose: ai.ready() });
 
 /* 다른 화면(견적서·템플릿·최근 작성·행사계획)이 쓰는 입구 */
 export const getForm = () => JSON.parse(JSON.stringify(st.form));
@@ -139,6 +141,8 @@ function attachHTML() {
 
 function render() {
   if (!box) return;
+  // 넣기 칸에 쓰던 글·초점은 다시 그려도 그대로(AI가 초안을 쓰는 동안 친 글)
+  const ta0 = box.querySelector('#pcIntake'), intake = ta0 ? ta0.value : '', typing = ta0 && document.activeElement === ta0;
   const t = typeOf(st.form.type), ex = t.example;
   box.innerHTML = `<div class="m-page pc-page">
     <div class="m-head pc-head"><div><h2>새 품의</h2><p class="muted">사려는 것·견적서를 넣고 [초안 만들기]를 누르면 에듀파인에 붙여넣을 제목·품의 사유·산출 내역을 써요.</p></div>
@@ -184,6 +188,8 @@ function render() {
   renderDraft();
   syncReason();
   if (tried) markBad(checks());
+  const ta = box.querySelector('#pcIntake');
+  if (ta && intake) { ta.value = intake; if (typing) ta.focus(); }
 }
 
 function calcHTML() {
@@ -200,7 +206,7 @@ function checksHTML() {
   const r = checks();
   const li = (cls, text) => `<li class="${cls}">${esc(text)}</li>`;
   const out = [];
-  if (r.missing.length) out.push(li('err', `빨간색 칸을 채워 주세요: ${r.missing.map(k => LABEL[k]).join('·')}`));
+  if (r.missing.length) out.push(li('err', `${viewFull() ? '빨간색 칸을' : '[자세히 고치기]에서'} 채워 주세요: ${r.missing.map(k => LABEL[k]).join('·')}`));
   if (r.personal.length) out.push(li('err', `개인정보는 넣지 말아 주세요 (${r.personal.map(k => LABEL[k]).join('·')})`));
   r.warnings.forEach(w => out.push(li('warn', w)));
   r.oks.forEach(o => out.push(li('ok', o)));
@@ -524,7 +530,7 @@ document.addEventListener('click', e => {
   } else if (a === 'draft') makeDraft();
   else if (a === 'go') oneshot();
   else if (a === 'saveTpl') askSaveTemplate();
-  else if (a === 'fresh') swapTo({ id: newId(), form: normForm(emptyForm(st.form.type)), draft: null }, { onlyIfLost: true, done: had => toast(had ? '새 품의를 시작해요. 쓰던 품의는 최근 작성에 남아요' : '새 품의를 시작해요') });
+  else if (a === 'fresh') swapTo({ id: newId(), form: normForm({ ...emptyForm(st.form.type), typeSet: st.form.typeSet }), draft: null }, { onlyIfLost: true, done: had => toast(had ? '새 품의를 시작해요. 쓰던 품의는 최근 작성에 남아요' : '새 품의를 시작해요') });
   else if (a === 'export') downloadDoc();
   else if (a === 'attachAdd') {
     const inp = box.querySelector('#pcAttachMore'), v = inp.value.trim();
@@ -674,7 +680,11 @@ registerInbox('quote', {
     let n = 0;
     for (const f of files) n += await addQuote(f);
     // AI가 되면 초안까지(빈 칸은 AI가 채움). 쓰던 초안이 있는 품의에 더했으면 초안은 그대로(사유는 다시 맞추거나 [사유 다시 맞추기])
-    if (n > 0 && ai.ready() && (fresh || !st.draft)) await makeDraft();
+    if (n > 0 && ai.ready() && (fresh || !st.draft)) {
+      // 「빠진 것만 물어보기」면 목적이 없을 때 먼저 물어봄(창을 닫으면 초안을 쓰지 않음)
+      if (getPurchaseFlow() === 'ask') { const need = askNeeds(st.form); if (need.length && !(await askMissing(need))) return ''; }
+      await makeDraft();
+    }
     return '';
   }
 });

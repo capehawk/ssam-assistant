@@ -16,7 +16,7 @@ test('날짜 꼴: 2026. 11. 12.(목), 없는 날은 빈 글', () => {
 test('답 다듬기: 연도 없는 날은 지금 학년도, 없는 날은 날짜를 비우고 글은 남김, 모르는 종류는 etc, 주요 내용 5줄, 전화번호 지움', () => {
   const m = normMessage(RAW, { year: 2026 });
   assert.equal(m.kind, 'training');
-  assert.deepEqual(m.when, [{ date: '2026-11-12', time: '15:00~16:30', note: '' }]);
+  assert.deepEqual(m.when, [{ date: '2026-11-12', end: '', time: '15:00~16:30', note: '' }]);
   assert.equal(m.apply.due, '2026-11-06');
   assert.equal(m.points.length, 5);
   const bad = normMessage({ kind: '?', when: [{ date: '2026-13-40', note: '13월 40일' }], place: '강당(문의 041-123-4567)' }, { year: 2026 });

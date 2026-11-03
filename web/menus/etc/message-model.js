@@ -4,6 +4,7 @@ import { get, set } from '../../core/store.js';
 const SENDER = 'msg:sender', DRAFT = 'msg:draft', LIST = 'msg:list';
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const LENS = ['short', 'base', 'long'];
+const TOUCH = ['title', 'date', 'time', 'place', 'target', 'due', 'how', 'bring', 'notes']; // 선생님이 고친 칸(다시 읽어도 그대로)
 export const newMessageId = () => 'msg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 export const getSender = () => String(get(SENDER, '') || '').trim();
@@ -14,7 +15,8 @@ function normDraft(d) {
   if (!isObj(d) || typeof d.id !== 'string' || !isObj(d.m)) return null;
   return { id: d.id, m: d.m, len: LENS.includes(d.len) ? d.len : 'base',
     attach: (Array.isArray(d.attach) ? d.attach : []).filter(isObj).map(a => ({ name: String(a.name || '').slice(0, 80), on: a.on !== false })).filter(a => a.name),
-    edited: !!d.edited, body: String(d.body || ''), title: String(d.title || ''), again: !!d.again };
+    edited: !!d.edited, body: String(d.body || ''), title: String(d.title || ''), again: !!d.again,
+    touched: (Array.isArray(d.touched) ? d.touched : []).filter(k => TOUCH.includes(k)) };
 }
 export const getDraft = () => normDraft(get(DRAFT, null));
 export const saveDraft = d => { const n = normDraft(d); return n ? set(DRAFT, n) : false; };

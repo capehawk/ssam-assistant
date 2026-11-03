@@ -17,7 +17,8 @@ const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 export function oneshotPrompt(form, text = '', { askType = false, today = '' } = {}) {
   const f = form || {}, type = TYPE_IDS.includes(f.type) ? f.type : 'goods';
   const empty = GUESS_KEYS.filter(k => blank(f[k]));
-  const said = type === 'lecturer' ? '' : maskNames(String(text || '').split(/\r?\n/).filter(l => !findPersonal(l)).join('\n')).trim().slice(0, 4000);
+  // 주민번호·계좌 줄과 전화번호·이메일 줄은 보내지 않음(넣기 칸에서 읽을 때와 같음)
+  const said = type === 'lecturer' ? '' : maskNames(String(text || '').split(/\r?\n/).filter(l => !findPersonal(l) && !hasContact(l)).join('\n')).trim().slice(0, 4000);
   return ['[품의 초안]',
     '학교 행정 문서(에듀파인 품의)를 돕는 도우미예요. 아래 메모로 품의의 제목과 품의 사유 첫 문장을 써 주세요.',
     // 품목 이름에 든 「김철수 강사」 같은 이름도 가림(종류를 고르지 않은 강사 품의)
@@ -51,8 +52,9 @@ export function confirmChips(form, check, guessed = []) {
   const f = form || {}, out = [];
   if (f.budgetUnknown || blank(f.budget)) out.push({ key: 'budget', text: '예산 과목 · 행정실 확인', level: 'warn' });
   const named = (Array.isArray(f.items) ? f.items : []).filter(it => it && !blank(it.name));
-  const noPrice = named.filter(it => !(toNumber(it.qty) > 0) || !(toNumber(it.price) > 0)).length;
+  const noPrice = named.filter(it => !(toNumber(it.price) > 0)).length, noQty = named.filter(it => !(toNumber(it.qty) > 0)).length;
   if (noPrice) out.push({ key: 'items', text: `단가 없는 품목 ${noPrice}개`, level: 'warn' });
+  if (noQty) out.push({ key: 'items', text: `수량 없는 품목 ${noQty}개`, level: 'warn' });
   if ((guessed || []).includes('purpose')) out.push({ key: 'purpose', text: '목적 · AI가 짐작함', level: 'warn' });
   for (const k of GUESS_KEYS) if (k !== 'purpose' && (guessed || []).includes(k) && !blank(f[k])) out.push({ key: k, text: `${FIELD_NAME[k]} · AI가 채움`, level: 'warn' });
   if (f.typeGuessed) out.push({ key: 'type', text: `종류 · AI가 「${TYPE_LABEL[f.type] || f.type}」로 봄`, level: 'warn' });

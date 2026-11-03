@@ -10,7 +10,8 @@ export function cleanSheet(text) {
   let named = 0;
   const kept = src.filter(l => !RRN.test(l)).map(l => l.replace(FILLED, (m, pre) => { named++; return pre.replace(/\s+$/, ''); }));
   const r = stripNames(kept.join('\n'));
-  return { text: r.text.trim(), cut: r.dropped + r.masked + named + (src.length - kept.length) };
+  const lines = r.dropped + (src.length - kept.length), names = r.masked + named; // 뺀 줄 · 가린 이름
+  return { text: r.text.trim(), cut: lines + names, lines, names };
 }
 
 export const SUBJECTS = ['국어', '수학', '사회', '과학', '도덕', '영어', '음악', '미술', '체육', '실과', '바른 생활', '슬기로운 생활', '즐거운 생활'];

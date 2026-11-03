@@ -51,7 +51,8 @@ test('확인할 것 칩: 예산 과목·단가 없는 품목·AI가 짐작한 �
   const r = checkPurchase(f, { limit: 20000000 });
   const c = confirmChips(f, r, ['purpose']);
   assert.deepEqual(c[0], { key: 'budget', text: '예산 과목 · 행정실 확인', level: 'warn' });
-  assert.ok(c.some(x => x.key === 'items' && x.text === '단가 없는 품목 2개' && x.level === 'warn'), JSON.stringify(c));
+  assert.ok(c.some(x => x.key === 'items' && x.text === '단가 없는 품목 1개' && x.level === 'warn'), JSON.stringify(c));
+  assert.ok(c.some(x => x.key === 'items' && x.text === '수량 없는 품목 1개' && x.level === 'warn'), JSON.stringify(c));
   assert.ok(c.some(x => x.key === 'purpose' && x.text === '목적 · AI가 짐작함'), JSON.stringify(c));
   assert.ok(c.some(x => x.key === 'date' && x.text === '일시·대상 없이 썼어요' && x.level === 'info'), JSON.stringify(c));
   assert.ok(!c.some(x => x.key === '' && x.text.includes('예산 과목')), '예산 경고 겹침');

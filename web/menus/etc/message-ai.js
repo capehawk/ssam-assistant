@@ -19,20 +19,24 @@ function normDate(v, year) {
   if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return '';
   return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
-/* '2026-11-12' → '2026. 11. 12.(목)' (학교 공문 꼴), 틀린 날은 '' */
-export function fmtDay(iso) {
+/* '2026-11-12' → '2026. 11. 12.(목)' (학교 공문 꼴), 틀린 날은 ''. noYear: 연도 빼고 '11. 13.(금)' */
+export function fmtDay(iso, { noYear = false } = {}) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
   if (!m || normDate(iso) !== iso) return '';
   const t = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  return `${+m[1]}. ${+m[2]}. ${+m[3]}.(${WD[t.getUTCDay()]})`;
+  return `${noYear ? '' : `${+m[1]}. `}${+m[2]}. ${+m[3]}.(${WD[t.getUTCDay()]})`;
 }
+/* 「2026-11-12~2026-11-13」·「11-12 ~ 11-13」 → ['시작', '끝'] (물결만 기간으로 봄, 날짜 안의 - 는 그대로) */
+const splitRange = v => String(v == null ? '' : v).split(/\s*[~∼〜]\s*/);
+/* 「2026. 11. 12.(목) 15:00~16:30」에서 앞의 날짜를 뺀 나머지(요일 괄호도 뺌) */
+const afterDate = s => String(s).replace(/^(\d{4}\s*[-./년]\s*)?\d{1,2}\s*[-./월]\s*\d{1,2}\s*[.일]?\s*(\([월화수목금토일]\))?/, '').trim();
 
 export function messagePrompt(text, { nImages = 0 } = {}) {
   return ['[쪽지 안내]',
     `아래 글(공문·계획서)을 읽고 선생님들께 보낼 안내 쪽지에 쓸 내용을 뽑습니다.${nImages ? ` 첨부한 그림 ${nImages}장도 같은 공문·계획서의 쪽입니다.` : ''}`,
     '- kind: training(연수)·meeting(회의·협의회)·event(행사·대회)·submit(제출·신청 안내)·etc(그 밖) 중 하나',
     '- title: 짧은 제목(예: 2026 AI 활용 수업 연수). 「안내」·「알림」 같은 말과 기관 이름은 빼도 됩니다.',
-    '- when: 일시마다 {"date":"YYYY-MM-DD","time":"15:00~16:30","note":""}. 여러 번이면 여러 개, 연도가 없으면 날짜만(MM-DD).',
+    '- when: 일시마다 {"date":"YYYY-MM-DD","time":"15:00~16:30","note":""}. 여러 번이면 여러 개, 연도가 없으면 날짜만(MM-DD). 며칠에 걸친 기간이면 {"date":"시작","end":"끝"}.',
     '- place: 장소, target: 대상, apply: {"due":"YYYY-MM-DD"(신청·회신·제출 기한), "how":"방법(예: 이음 쪽지로 회신)"}',
     '- bring: 준비물, notes: 유의 사항 한두 개(짧게), points: 주요 내용 최대 5줄(짧게)',
     '- 글에 없는 것은 빈 글로 둡니다. 지어내지 않습니다. 사람 이름·전화번호·이메일은 쓰지 않습니다.',
@@ -45,14 +49,20 @@ export function messagePrompt(text, { nImages = 0 } = {}) {
 export function normMessage(v, { year } = {}) {
   const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   const ap = o.apply && typeof o.apply === 'object' ? o.apply : {};
-  const when = (Array.isArray(o.when) ? o.when : []).filter(x => x && typeof x === 'object').slice(0, 5).map(x => {
-    const date = normDate(x.date, year);
-    return { date, time: clean(x.time, 40), note: clean(x.note, 60) || (date ? '' : clean(x.date, 40)) };
-  }).filter(x => x.date || x.time || x.note);
+  // 일시가 글 하나·글 목록으로 와도 받음: 날짜는 읽고 나머지는 시간
+  const raw = Array.isArray(o.when) ? o.when : typeof o.when === 'string' ? [o.when] : [];
+  const when = raw.map(x => (typeof x === 'string' ? (normDate(x, year) ? { date: x, time: afterDate(x) } : { note: x }) : x))
+    .filter(x => x && typeof x === 'object').slice(0, 5).map(x => {
+      const [d0, d1] = splitRange(x.date);
+      const date = normDate(d0, year);
+      const end = date ? normDate(x.end || d1, Number(date.slice(0, 4))) : '';
+      return { date, end: end > date ? end : '', time: clean(x.time, 40), note: clean(x.note, 60) || (date ? '' : clean(x.date, 40)) };
+    }).filter(x => x.date || x.time || x.note);
+  const due = normDate(ap.due, year);
   return {
     kind: Object.prototype.hasOwnProperty.call(KINDS, o.kind) ? o.kind : 'etc',
     title: clean(o.title, 80), when, place: clean(o.place, 100), target: clean(o.target, 100),
-    apply: { due: normDate(ap.due, year), how: clean(ap.how, 100) },
+    apply: { due, dueNote: due ? '' : clean(ap.due, 40), how: clean(ap.how, 100) },
     bring: clean(o.bring, 200), notes: clean(o.notes, 200),
     points: (Array.isArray(o.points) ? o.points : []).map(p => clean(p, 120)).filter(Boolean).slice(0, 5)
   };
@@ -60,7 +70,8 @@ export function normMessage(v, { year } = {}) {
 
 /* 받침 있으면 「을」, 없으면 「를」 */
 const eul = w => { const c = String(w || '').trim().slice(-1).charCodeAt(0) - 0xac00; return c >= 0 && c < 11172 ? (c % 28 ? '을' : '를') : '을(를)'; };
-const whenText = w => [fmtDay(w.date), w.time].filter(Boolean).join(' ') + (w.note ? (w.date || w.time ? ` (${w.note})` : w.note) : '');
+const dayText = w => (w.end ? `${fmtDay(w.date)}~${fmtDay(w.end, { noYear: w.end.slice(0, 4) === w.date.slice(0, 4) })}` : fmtDay(w.date));
+const whenText = w => [dayText(w), w.time].filter(Boolean).join(' ') + (w.note ? (w.date || w.time ? ` (${w.note})` : w.note) : '');
 
 /* 쪽지 칸 → { title, body }. len: short(일시·장소·대상·신청) · base(+ 준비물·유의 사항) · long(+ 주요 내용) */
 export function composeMessage(m, { len = 'base', attach = [], sender = '', again = false } = {}) {
@@ -73,7 +84,7 @@ export function composeMessage(m, { len = 'base', attach = [], sender = '', agai
   row('장소', x.place);
   row('대상', x.target);
   const ap = x.apply || {};
-  row('신청', [ap.due ? `${fmtDay(ap.due)}까지` : '', ap.how].filter(Boolean).join(' '));
+  row('신청', [ap.due ? `${fmtDay(ap.due)}까지` : ap.dueNote || '', ap.how].filter(Boolean).join(' '));
   if (len !== 'short') row('준비물·유의 사항', [x.bring, x.notes].filter(s => String(s || '').trim()).join(' / '));
   if (len === 'long' && (x.points || []).length) lines.push('□ 주요 내용', ...x.points.map(p => `  - ${p}`));
   const names = (attach || []).map(a => String(a || '').trim()).filter(Boolean);
@@ -82,4 +93,21 @@ export function composeMessage(m, { len = 'base', attach = [], sender = '', agai
   if (String(sender || '').trim()) lines.push(`문의: ${String(sender).trim()}`);
   lines.push('감사합니다.');
   return { title: title ? `${head} ${title}` : head, body: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
+}
+
+/* 다시 읽을 때 선생님이 고친 칸은 그대로: keys는 쪽지 칸 이름(title·date·time·place·target·due·how·bring·notes) */
+export const FIELD_KEYS = ['title', 'date', 'time', 'place', 'target', 'due', 'how', 'bring', 'notes'];
+export function keepFields(next, prev, keys = []) {
+  const n = JSON.parse(JSON.stringify(next || {})), p = prev || {};
+  for (const k of keys) {
+    if (k === 'date' || k === 'time') {
+      const w0 = (p.when || [])[0] || {};
+      n.when = Array.isArray(n.when) && n.when.length ? n.when : [{ date: '', end: '', time: '', note: '' }];
+      n.when[0] = { ...n.when[0], [k]: w0[k] || '', ...(k === 'date' ? { end: w0.end || '' } : {}) };
+    } else if (k === 'due' || k === 'how') {
+      const pa = p.apply || {};
+      n.apply = { ...(n.apply || {}), [k]: pa[k] || '', ...(k === 'due' ? { dueNote: pa.dueNote || '' } : {}) };
+    } else if (FIELD_KEYS.includes(k)) n[k] = p[k] || '';
+  }
+  return n;
 }

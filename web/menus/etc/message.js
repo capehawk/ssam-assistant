@@ -8,7 +8,7 @@ import { toast, copyText } from '../../core/ui.js';
 import { readText } from '../../core/files.js';
 import { aiRowHTML } from '../../core/ai-roles.js';
 import { cleanSheet } from '../evaluate/activity/activity-read.js';
-import { KINDS, messagePrompt, normMessage, composeMessage } from './message-ai.js';
+import { KINDS, messagePrompt, normMessage, composeMessage, keepFields } from './message-ai.js';
 import { getSender, setSender, getDraft, saveDraft, clearDraft, listMessages, pushMessage, newMessageId } from './message-model.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -17,10 +17,10 @@ const IMAGE = /\.(png|jpe?g|webp|gif|bmp)$/i;
 const baseName = n => String(n || '').replace(/\.[^.]+$/, '').trim() || '붙임';
 const LENS = [['short', '짧게'], ['base', '기본'], ['long', '자세히']];
 /* 화면 상태: files(넣은 파일, 붙임 후보 — 저장 안 함, attach와 같은 차례), busy, msg */
-export const M = { files: [], busy: false, msg: '' };
+export const M = { files: [], busy: false, msg: '', paste: '' }; // paste: 붙여 넣은 글([새 쪽지]까지 남음)
 let box = null, d = null;
 
-const blankDraft = () => ({ id: newMessageId(), m: normMessage(null), len: 'base', attach: [], edited: false, body: '', title: '', again: false });
+const blankDraft = () => ({ id: newMessageId(), m: normMessage(null), len: 'base', attach: [], edited: false, body: '', title: '', again: false, touched: [] });
 const cur = () => (d || (d = getDraft() || blankDraft()));
 const hasContent = x => !!(x.m.title || (x.m.when || []).length || x.m.place || x.m.target);
 /* 칸·길이·붙임·보내는 사람이 바뀌면 다시 맞춤(본문을 손으로 고쳤으면 그대로 두고 [다시 맞추기]) */
@@ -96,7 +96,7 @@ export function render() {
     <div class="msg-grid">
       <section class="pc-card"><h3>넣기</h3>
         <div class="msg-drop" data-msg-drop>
-          <textarea class="field" id="msgPaste" rows="4" placeholder="공문·계획 글을 붙여 넣거나, 파일(한글·PDF·사진)을 여기에 끌어 놓으세요"></textarea>
+          <textarea class="field" id="msgPaste" rows="4" placeholder="공문·계획 글을 붙여 넣거나, 파일(한글·PDF·사진)을 여기에 끌어 놓으세요">${esc(M.paste)}</textarea>
           <div class="row"><button class="btn primary" type="button" data-msg="read"${M.busy ? ' disabled' : ''}>${M.busy ? '<span class="spin"></span>읽는 중…' : '쪽지 쓰기'}</button>
             <button class="btn text" type="button" data-msg="pick">파일 고르기</button>
             <input type="file" id="msgFile" multiple hidden accept=".hwp,.hwpx,.pdf,.txt,.png,.jpg,.jpeg,.webp"><span class="muted" id="msgState" role="status">${esc(M.msg)}</span></div>
@@ -143,7 +143,7 @@ function addFiles(files) {
 /* 넣은 파일·붙여 넣은 글을 읽어 AI 한 번 → 칸 → 쪽지 */
 export async function readAll() {
   if (M.busy) return;
-  const x = cur(), paste = box && box.querySelector('#msgPaste') ? box.querySelector('#msgPaste').value : '';
+  const x = cur(), paste = M.paste;
   if (!M.files.some(Boolean) && !paste.trim()) { toast('공문·계획 파일을 넣거나 글을 붙여 넣어 주세요.', 5000); return; }
   if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
   M.busy = true; render(); setState('읽는 중…');
@@ -159,12 +159,16 @@ export async function readAll() {
     if (!c.text && !images.length) throw { code: 'empty' };
     setState('AI가 쪽지 칸을 찾는 중…');
     const v = await ai.generateJSON(messagePrompt(c.text, { nImages: images.length }), { images, task: 'message', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
-    x.m = normMessage(v, { year: new Date().getFullYear() });
+    // 선생님이 고친 칸은 그대로, 본문을 손으로 고쳤으면 본문도 그대로([칸으로 다시 맞추기])
+    const touched = x.touched || [];
+    x.m = keepFields(normMessage(v, { year: new Date().getFullYear() }), x.m, touched);
     x.again = false;
-    compose(true); persist();
+    compose(); persist();
     M.busy = false; setState('');
-    if (c.cut) toast(`쪽지를 썼어요 · 명단·전화번호가 적힌 줄 ${c.cut}곳은 뺐어요(AI로 보내지 않았어요)`, 6000);
-    else toast('쪽지를 썼어요. 칸과 본문을 확인해 주세요', 4000);
+    const kept = touched.length || x.edited ? ` · 고치신 ${[touched.length ? '칸' : '', x.edited ? '본문' : ''].filter(Boolean).join('·')}은 그대로 두었어요` : '';
+    const cut = [c.lines ? `명단·전화번호가 적힌 줄 ${c.lines}곳은 뺐어요` : '', c.names ? `이름 ${c.names}개는 가렸어요` : ''].filter(Boolean).join(' · ');
+    if (cut) toast(`쪽지를 썼어요 · ${cut}(AI로 보내지 않았어요)${kept}`, 6000);
+    else toast(`쪽지를 썼어요. 칸과 본문을 확인해 주세요${kept}`, 4000);
   } catch (e) {
     M.busy = false; setState('');
     toast(e && e.code === 'empty' ? '글을 읽지 못했어요. 글을 붙여 넣어 주세요.' : e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. 다시 눌러 주세요.' : ai.errorMessage(e && e.code, e), 6000);
@@ -174,10 +178,9 @@ export async function readAll() {
 /* 떠 있는 버튼 등: 기타 › 쪽지 작성으로 가서 새 쪽지로 넣고 바로 읽기 */
 export async function putMessageFiles(files, { text = '' } = {}) {
   go('etc', 'message');
-  d = blankDraft(); M.files = []; saveDraft(d);
+  d = blankDraft(); M.files = []; M.paste = String(text || ''); saveDraft(d);
   addFiles(files || []);
   render();
-  const p = box && box.querySelector('#msgPaste'); if (p && text) p.value = text;
   await readAll();
 }
 
@@ -203,7 +206,7 @@ document.addEventListener('click', e => {
   const a = b.dataset.msg;
   if (a === 'pick') box.querySelector('#msgFile').click();
   else if (a === 'read') readAll();
-  else if (a === 'new') { d = blankDraft(); M.files = []; clearDraft(); render(); }
+  else if (a === 'new') { d = blankDraft(); M.files = []; M.paste = ''; clearDraft(); render(); }
   else if (a === 'resync') { compose(true); persist(); render(); }
   else if (a === 'copyFiles' && T()) copyFiles();
   else if (a === 'openDir' && T()) openDir();
@@ -223,13 +226,15 @@ document.addEventListener('input', e => {
   const el = e.target, x = cur();
   if (el.dataset.mf) {
     const k = el.dataset.mf, v = el.value, m = x.m;
-    if (k === 'date' || k === 'time') { m.when = m.when && m.when.length ? m.when : [{ date: '', time: '', note: '' }]; m.when[0] = { ...m.when[0], [k]: v }; }
-    else if (k === 'due' || k === 'how') m.apply = { ...(m.apply || {}), [k]: v };
+    if (k === 'date' || k === 'time') { m.when = m.when && m.when.length ? m.when : [{ date: '', end: '', time: '', note: '' }]; m.when[0] = { ...m.when[0], [k]: v }; }
+    else if (k === 'due' || k === 'how') m.apply = { ...(m.apply || {}), [k]: v, ...(k === 'due' ? { dueNote: '' } : {}) };
     else m[k] = v;
+    x.touched = [...new Set([...(x.touched || []), k])];
     compose(); persist(); refreshOut(); return;
   }
   if (el.dataset.attName != null) { const at = x.attach[+el.dataset.attName]; if (at) { at.name = el.value; compose(); persist(); refreshOut(); } return; }
   if (el.id === 'msgSender') { setSender(el.value); compose(); persist(); refreshOut(); return; }
+  if (el.id === 'msgPaste') { M.paste = el.value; return; }
   if (el.id === 'msgTitle' || el.id === 'msgBody') { x[el.id === 'msgTitle' ? 'title' : 'body'] = el.value; x.edited = true; persist(); refreshOut(); }
 });
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-msg-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });
@@ -240,7 +245,7 @@ document.addEventListener('drop', e => {
   e.preventDefault(); z.classList.remove('over');
   const fs = [...((e.dataTransfer && e.dataTransfer.files) || [])];
   if (fs.length) { addFiles(fs); render(); readAll(); }
-  else { const t = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (t) { const p = box.querySelector('#msgPaste'); if (p) p.value = t; } }
+  else { const t = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (t) { M.paste = t; const p = box.querySelector('#msgPaste'); if (p) p.value = t; } }
 });
 
 /* 떠 있는 버튼: 연수·회의·행사 안내 공문·계획 → 기타 › 쪽지 작성(넣은 파일이 붙임) */

@@ -6,6 +6,9 @@ export const TASKS = [['grade', '채점'], ['writing', '평어·행특·창체']
 const KEY = 'ai-roles';
 const ENGINES = ['claude', 'gemini', 'openai', 'upstage'];
 const TASK_IDS = TASKS.map(t => t[0]);
+/* 검토 AI가 없는 업무(쪽지는 칸만 뽑고 글은 앱이 맞춤 — 스펙 2026-11-02 4장) */
+const NO_REVIEW = ['message'];
+export const hasReview = task => TASK_IDS.includes(task) && !NO_REVIEW.includes(task);
 
 const normAI = a => (a && ENGINES.includes(a.engine) && typeof a.model === 'string' && a.model.trim() ? { engine: a.engine, model: a.model.trim() } : null);
 const blank = () => ({ main: null, reviewOn: false, review: null });
@@ -26,7 +29,7 @@ export function setTaskRole(task, patch) {
   const r = getRoles();
   const cur = r.tasks[task];
   if ('main' in patch) cur.main = normAI(patch.main);
-  if ('reviewOn' in patch) cur.reviewOn = !!patch.reviewOn;
+  if ('reviewOn' in patch) cur.reviewOn = !!patch.reviewOn && hasReview(task);
   if ('review' in patch) cur.review = normAI(patch.review);
   save(r);
 }
@@ -58,7 +61,7 @@ export function pick(task, role, env = providerEnv()) {
   if (!TASK_IDS.includes(task) || !env || env.engine === 'account') return null;
   const r = getRoles(), t = r.tasks[task];
   if (role === 'main') return usable(t.main, env) ? t.main : null;
-  if (role !== 'review' || !t.reviewOn) return null;
+  if (role !== 'review' || !t.reviewOn || !hasReview(task)) return null;
   if (usable(t.review, env)) return t.review;
   return usable(r.review, env) ? r.review : null;
 }
@@ -95,6 +98,7 @@ export function rowText(task, env = providerEnv()) {
   const dflt = defaultLabel(env);
   let s = `AI: ${main ? aiLabel(main, env) : dflt || '아직 정하지 않았어요'}`;
   if (t.main && !main) s += env.keys[t.main.engine] ? ' (쓸 수 없는 모델이라 기본 AI로)' : ' (키가 없어 기본 AI로)';
+  if (!hasReview(task)) return s;
   if (!t.reviewOn) return s + ' · 검토 끔';
   const rv = pick(task, 'review', env);
   return s + (rv ? ` · 검토: ${aiLabel(rv, env)}` : ' · 검토: 검토 AI를 골라 주세요');
@@ -134,7 +138,7 @@ export function openRoleSheet(task) {
     <label class="ar-f"><span class="lab">이 업무의 AI</span>
       <select class="field" id="arMain"><option value="">기본 AI 따름 (지금: ${escH(dflt || '정하지 않음')})</option>${optHTML(mainV)}</select></label>
     ${t.main && !usable(t.main, env) ? `<p class="muted warn" style="margin:0">정해 둔 ${escH(aiLabel(t.main, env))}는 ${env.keys[t.main.engine] ? '이제 쓸 수 없는 모델이라' : '키가 없어'} 기본 AI로 써요.</p>` : ''}
-    <label class="switch"><input type="checkbox" id="arReviewOn"${t.reviewOn ? ' checked' : ''}>검토 AI로 한 번 더 보기</label>
+    <label class="switch"${hasReview(task) ? '' : ' hidden'}><input type="checkbox" id="arReviewOn"${t.reviewOn && hasReview(task) ? ' checked' : ''}>검토 AI로 한 번 더 보기</label>
     <label class="ar-f" id="arReviewF"><span class="lab">검토 AI</span>
       <select class="field" id="arReview"><option value="">기본 검토 AI 따름 (지금: ${escH(dRv || '정하지 않음')})</option>${optHTML(rvV)}</select></label>
     <p class="muted" id="arNote" style="margin:0"></p>
