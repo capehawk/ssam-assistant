@@ -1,5 +1,5 @@
 /* 한글 파일(.hwpx) 만들기: 무압축 zip + 한글 문서 XML(OWPML).
-   doc = { title, blocks: [{ type: 'h', text } | { type: 'p', text } | { type: 'table', rows: string[][], head?: boolean } | { type: 'break' }
+   doc = { title, blocks: [{ type: 'h', text } | { type: 'p', text } | { type: 'c', text, bold? }(가운데 줄) | { type: 'table', rows: string[][], head?: boolean } | { type: 'break' }
      | { type: 'photos', items: [{ bytes: Uint8Array(JPEG), w, h (픽셀), caption }] }] } — 사진은 2열 표, 칸마다 사진과 설명(스펙 2026-11-03 5.4)
    글자 모양 0 보통 10pt · 1 굵게 10pt · 2 제목 굵게 16pt · 3 소제목 굵게 12pt
    문단 모양 0 양쪽 · 1 가운데 · 2 왼쪽(위 여백) / 테두리 1 없음 · 2 없음(글자용) · 3 실선 · 4 실선+회색(머리줄) */
@@ -191,6 +191,7 @@ function sectionXml(doc, photos = photoList(doc)) {
     const pb = brk; brk = false;
     if (b.type === 'h') body += lines(2, 3, b.text, pb);
     else if (b.type === 'table') { const rows = (b.rows || []).filter(Array.isArray); if (rows.length) body += table(rows, !!b.head, pb); else brk = pb; }
+    else if (b.type === 'c') body += lines(1, b.bold ? 1 : 0, b.text, pb); // 가운데 줄(굵게 고를 수 있음)
     else if (b.type === 'photos') { const x = photosTable((b.items || []).filter(it => it && it.bytes && it.bytes.length), pb); if (x) body += x; else brk = pb; }
     else body += lines(0, 0, b.text, pb);
   }

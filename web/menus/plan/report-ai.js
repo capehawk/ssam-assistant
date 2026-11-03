@@ -69,7 +69,7 @@ export function reportBase(r) {
 }
 export const reportTitle = r => `${reportBase(r)} 결과 보고서`;
 const dotDate = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '')); return m ? `${+m[1]}. ${+m[2]}. ${+m[3]}.` : ''; };
-const relText = x => [x.no ? `${x.no}${x.date ? `(${dotDate(x.date)})` : ''}` : '', x.title ? `「${x.title}」` : ''].filter(Boolean).join(' ');
+export const relText = x => [x.no ? `${x.no}${x.date ? `(${dotDate(x.date)})` : ''}` : '', x.title ? `「${x.title}」` : ''].filter(Boolean).join(' ');
 const periodText = p => [p.start ? (p.end ? `${fmtDay(p.start)}~${fmtDay(p.end, { noYear: p.end.slice(0, 4) === p.start.slice(0, 4) })}` : fmtDay(p.start)) : '', p.time].filter(Boolean).join(' ');
 const targetText = r => (r.target && r.count ? `${r.target}(${r.count})` : r.target || r.count || '');
 

@@ -49,7 +49,7 @@ function docxPic(n, cx, cy) {
 
 function docxBody(doc, photos = photoList(doc)) {
   let out = '', brk = false, ph = 0;
-  const para = (text, { style, bold, pb, keep } = {}) => `<w:p><w:pPr>${style ? `<w:pStyle w:val="${style}"/>` : ''}${keep ? '<w:keepNext/>' : ''}${pb ? '<w:pageBreakBefore/>' : ''}</w:pPr>`
+  const para = (text, { style, bold, pb, keep, center } = {}) => `<w:p><w:pPr>${style ? `<w:pStyle w:val="${style}"/>` : ''}${keep ? '<w:keepNext/>' : ''}${pb ? '<w:pageBreakBefore/>' : ''}${center ? '<w:jc w:val="center"/>' : ''}</w:pPr>`
     + `<w:r>${bold ? '<w:rPr><w:b/></w:rPr>' : ''}<w:t xml:space="preserve">${xesc(text)}</w:t></w:r></w:p>`;
   const lines = (text, opt) => linesOf(text).map((l, i) => para(l, { ...opt, pb: opt.pb && !i })).join('');
   out += para(doc.title || '', { style: 'Title' });
@@ -58,6 +58,7 @@ function docxBody(doc, photos = photoList(doc)) {
     if (b.type === 'break') { brk = true; continue; }
     const pb = brk; brk = false;
     if (b.type === 'h') out += lines(b.text, { style: 'Heading1', pb, keep: true });
+    else if (b.type === 'c') out += lines(b.text, { pb, center: true, bold: !!b.bold });
     else if (b.type === 'table') {
       const rows = rowsOf(b);
       if (!rows.length) { brk = pb; continue; }
@@ -127,6 +128,7 @@ export function docHtml(doc) {
     if (!b) continue;
     if (b.type === 'break') { out += '<div class="pd-break"></div>'; continue; }
     if (b.type === 'h') out += linesOf(b.text).map(l => `<h2>${hesc(l)}</h2>`).join('');
+    else if (b.type === 'c') out += linesOf(b.text).map(l => `<p class="c">${b.bold ? `<b>${hesc(l)}</b>` : hesc(l)}</p>`).join('');
     else if (b.type === 'table') {
       const rows = rowsOf(b);
       if (!rows.length) continue;
@@ -169,6 +171,7 @@ const PRINT_CSS = `#printDoc{display:none}
   #printDoc tr{break-inside:avoid}
   #printDoc .nw{white-space:nowrap}
   #printDoc .pd-break{break-before:page}
+  #printDoc p.c{text-align:center}
   #printDoc .pd-photos td{width:50%;text-align:center;vertical-align:middle}
   #printDoc .pd-photos img{display:block;margin:0 auto 3pt;max-width:100%;max-height:60mm;object-fit:contain}
   #printDoc .pd-photos p{text-align:center}
