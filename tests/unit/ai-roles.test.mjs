@@ -17,9 +17,10 @@ const env = (over = {}) => ({
 });
 
 test('업무 6개(품의가 5번째, 쪽지가 6번째)', () => {
-  assert.deepEqual(TASKS.map(t => t[0]), ['grade', 'writing', 'plan', 'notes', 'purchase', 'message']);
+  assert.deepEqual(TASKS.map(t => t[0]), ['grade', 'writing', 'plan', 'notes', 'purchase', 'message', 'report']);
   assert.equal(TASKS[4][1], '품의');
   assert.equal(TASKS[5][1], '쪽지');
+  assert.equal(TASKS[6][1], '결과 보고');
 });
 
 test('예전 ai-roles(품의 칸 없음)도 읽힘: 다른 업무는 그대로, 품의는 기본', () => {

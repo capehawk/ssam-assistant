@@ -9,7 +9,7 @@ const clean = (v, n) => String(v == null ? '' : v).replace(PHONE, '').replace(EM
 const WD = '일월화수목금토';
 
 /* 'YYYY-MM-DD'·'YYYY.MM.DD'·'MM-DD'(연도는 year) → 'YYYY-MM-DD', 없는 날이면 '' */
-function normDate(v, year) {
+export function normDate(v, year) {
   const s = String(v == null ? '' : v).trim();
   let m = /^(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/.exec(s), y, mo, d;
   if (m) [, y, mo, d] = m.map(Number);
