@@ -187,4 +187,8 @@ impl Io for WinIo {
     fn keys_held(&mut self) -> bool {
         keys_held()
     }
+
+    fn ctrl_held(&mut self) -> bool {
+        ctrl_held()
+    }
 }

@@ -36,7 +36,8 @@ pub const MAX_TABS: u32 = 9;
 const CHUNK: usize = 24;
 /// 차례로 붙여넣기(에듀파인): 쓰지 않으면 풀리는 시간(붙일 때마다 다시)
 pub const QUEUE_SECS: u64 = 900;
-const MAX_ITEMS: usize = 50;
+/// 품의 산출 내역 칸마다(제목·사유 + 품목마다 5칸)도 품목 40개 넘게 들어가게
+const MAX_ITEMS: usize = 250;
 const MAX_ITEM: usize = 20000;
 /// 나이스를 여는 브라우저 (이 프로그램 창에서 누른 Ctrl+V만 자동으로 넣기 시작)
 const BROWSERS: &[&str] = &[
@@ -70,6 +71,8 @@ pub enum Step {
     Wait(u64),
     /// 이만큼의 학생을 마치고 다음 학생 칸으로 옮겨 감
     Done(usize),
+    /// 붙여넣기 키: 보내는 순간 사용자가 Ctrl을 누르고 있으면 V만, 아니면 Ctrl+V (차례로 붙여넣기)
+    Paste,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +189,8 @@ pub trait Io {
     fn foreground(&mut self) -> isize;
     /// 사용자가 키를 누르고 있는지
     fn keys_held(&mut self) -> bool;
+    /// 사용자가 Ctrl을 누르고 있는지
+    fn ctrl_held(&mut self) -> bool;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -217,7 +222,7 @@ pub fn run(
     for step in steps {
         // 키를 보내기 전마다: 다른 창으로 옮겼거나 사용자가 키를 누르고 있으면 바로 멈춤
         // (Ctrl을 누른 채 Tab이 가면 브라우저 탭이 바뀌고, Shift면 거꾸로 감)
-        if matches!(step, Step::Press(_) | Step::Type(_)) {
+        if matches!(step, Step::Press(_) | Step::Type(_) | Step::Paste) {
             if io.foreground() != target {
                 return (done, End::Focus);
             }
@@ -228,6 +233,10 @@ pub fn run(
         let r = match step {
             Step::Clip(text) => io.set_clip(text),
             Step::Press(keys) => io.press(keys),
+            Step::Paste => {
+                let keys: &[Key] = if io.ctrl_held() { &[Key::V] } else { &[Key::Ctrl, Key::V] };
+                io.press(keys)
+            }
             Step::Type(text) => io.type_text(text),
             Step::Wait(ms) => {
                 io.wait(*ms);
@@ -253,12 +262,12 @@ pub fn run(
 /* ---------- 차례로 붙여넣기 (에듀파인 품의·공문 기안, 스펙 2026-11-03 3장) ----------
    Ctrl+V를 누를 때마다 다음 조각을 클립보드에 넣고 그 칸에 붙여 넣음(글 그대로, 여러 줄도) */
 
-/// 한 조각 붙이기: 클립보드에 넣고 Ctrl+V. 사용자가 아직 Ctrl을 누르고 있으면 V만 (눌린 Ctrl과 합쳐짐)
-pub fn queue_plan(text: &str, ctrl_held: bool) -> Vec<Step> {
+/// 한 조각 붙이기: 클립보드에 넣고 붙여넣기 키. Ctrl은 키를 보내는 순간에 봄(계획 때 보면 그사이 뗀 Ctrl 때문에 「v」만 들어감)
+pub fn queue_plan(text: &str) -> Vec<Step> {
     vec![
         Step::Clip(text.to_string()),
         Step::Wait(60),
-        Step::Press(if ctrl_held { vec![Key::V] } else { vec![Key::Ctrl, Key::V] }),
+        Step::Paste,
         Step::Wait(150),
     ]
 }
@@ -271,6 +280,10 @@ pub fn play(steps: &[Step], io: &mut dyn Io) -> Result<(), String> {
             Step::Press(k) => io.press(k)?,
             Step::Type(t) => io.type_text(t)?,
             Step::Wait(ms) => io.wait(*ms),
+            Step::Paste => {
+                let keys: &[Key] = if io.ctrl_held() { &[Key::V] } else { &[Key::Ctrl, Key::V] };
+                io.press(keys)?
+            }
             Step::Done(_) => {}
         }
     }
@@ -763,7 +776,7 @@ fn queue_paste(app: &AppHandle, own: bool, exe: String) {
 #[cfg(windows)]
 fn paste_item(text: &str) -> Result<(), String> {
     let mut io = win::WinIo::default();
-    play(&queue_plan(text, win::ctrl_held()), &mut io)
+    play(&queue_plan(text), &mut io)
 }
 
 #[cfg(not(windows))]
@@ -863,6 +876,8 @@ mod tests {
         switch_after: Option<usize>,
         /// 이 횟수만큼 보낸 뒤 사용자가 키를 누름
         hold_after: Option<usize>,
+        /// 사용자가 Ctrl을 누르고 있음
+        ctrl: bool,
         sent: usize,
         fail_clip: bool,
     }
@@ -918,6 +933,9 @@ mod tests {
         }
         fn keys_held(&mut self) -> bool {
             matches!(self.hold_after, Some(n) if self.sent >= n)
+        }
+        fn ctrl_held(&mut self) -> bool {
+            self.ctrl
         }
     }
 
@@ -1109,13 +1127,36 @@ mod tests {
     #[test]
     fn queue_plan_puts_item_in_clipboard_then_pastes_once() {
         let mut io = Fake::default();
-        play(&queue_plan("제목", false), &mut io).unwrap();
+        play(&queue_plan("제목"), &mut io).unwrap();
         assert_eq!(io.log, vec!["paste:제목"]);
-        // 사용자가 Ctrl을 아직 누르고 있으면 V만 보냄 (Ctrl+V가 두 번 되지 않게)
-        let mut io = Fake::default();
-        play(&queue_plan("사유", true), &mut io).unwrap();
+        // 보내는 순간에도 사용자가 Ctrl을 누르고 있으면 V만 보냄 (Ctrl+V가 두 번 되지 않게)
+        let mut io = Fake {
+            ctrl: true,
+            ..Default::default()
+        };
+        play(&queue_plan("사유"), &mut io).unwrap();
         assert_eq!(io.clip, "사유");
         assert_eq!(io.log, vec!["V"]);
+    }
+
+    #[test]
+    fn queue_checks_ctrl_when_pressing_not_when_planning() {
+        // 계획을 만들 때는 Ctrl을 누르고 있었어도, 키를 보내기 전에 떼었으면 Ctrl+V를 보냄
+        // (V만 보내면 칸에 「v」·「ㅍ」가 들어가고 그 조각은 넣은 것으로 넘어감)
+        let steps = queue_plan("본문");
+        let mut io = Fake {
+            ctrl: false,
+            ..Default::default()
+        };
+        play(&steps, &mut io).unwrap();
+        assert_eq!(io.log, vec!["paste:본문"]);
+    }
+
+    #[test]
+    fn queue_has_room_for_many_purchase_items() {
+        // 품의 칸마다: 제목·사유 + 품목마다 5칸 → 품목 40개까지
+        assert!(MAX_ITEMS >= 2 + 5 * 40);
+        assert!(check_items(vec!["가".into(); 2 + 5 * 40]).is_ok());
     }
 
     #[test]
@@ -1144,7 +1185,7 @@ mod tests {
             fail_clip: true,
             ..Default::default()
         };
-        assert!(play(&queue_plan("가", false), &mut io).is_err());
+        assert!(play(&queue_plan("가"), &mut io).is_err());
         assert!(io.log.is_empty());
     }
 
