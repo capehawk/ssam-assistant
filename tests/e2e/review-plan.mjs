@@ -13,7 +13,7 @@ const calls = [];
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   calls.push({ model: body.model, head: prompt.split('\n')[0], prompt });
   let out = '{}';
   if (prompt.startsWith('[연간계획 초안]')) out = JSON.stringify({ purpose: '책 읽는 습관을 기른다.', policy: '2025년 3월부터 운영한다.', details: '가. 아침 독서', schedule: [], budget: [], evaluation: '설문으로 평가한다.' });

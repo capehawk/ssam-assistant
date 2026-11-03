@@ -17,7 +17,7 @@ let slow = 0;
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const head = prompt.split('\n')[0];
   calls.push({ head, prompt, images: typeof c === 'string' ? 0 : c.filter(x => x.type === 'image').length });
   let out = JSON.stringify({ title: '교실 물품 구입', intro: '교실 물품을 다음과 같이 구입하고자 합니다.' });

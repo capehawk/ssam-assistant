@@ -14,7 +14,7 @@ let cart = [{ name: '물티슈', spec: '100매', unit: '팩', qty: 2, price: 300
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   let out = JSON.stringify({ title: '교실 물품 구입', intro: '교실 물품을 다음과 같이 구입하고자 합니다.' });
   if (prompt.startsWith('[품의 넣기]')) out = JSON.stringify({ items: cart, shipping: [], fields: {} });
   await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: [{ type: 'content_block_delta', delta: { type: 'text_delta', text: out } }, { type: 'message_delta', delta: { stop_reason: 'end_turn' } }].map(e => 'data: ' + JSON.stringify(e) + '\n\n').join('') }).catch(() => {});

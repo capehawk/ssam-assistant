@@ -41,12 +41,11 @@ test('채점 검토할 칸: 확신 없음·뜻으로 판단·다름·서술형 �
   assert.deepEqual(R.gradeTargets(TEST, { no: 1, items: { 1: C({ read: '②', pts: 0, ai: 10, flag: 'differ' }) } }), [1]);
 });
 
-test('채점 검토 프롬프트: 머리, 그 문항의 정답표 줄만, 학생은 번호로만, 메인 답은 보내지 않음', () => {
+test('채점 검토 프롬프트: 머리, 정답표 전체(공통·캐시), 다시 볼 문항과 번호는 끝에, 메인 답은 보내지 않음', () => {
   const p = R.gradeReviewPrompt(TEST, 7, [2, 3]);
   assert.ok(p.startsWith('[채점 검토]'));
-  assert.ok(p.includes('2 | 단답 | 도서관 | 10') && p.includes('3 | 서술형 | 예시 답 | 15 | 까닭 포함'));
-  assert.ok(!p.includes('1 | 고르기'), '다른 문항 줄');
-  assert.ok(p.trimEnd().endsWith('[학생] 7번'));
+  assert.ok(p.includes('2 | 단답 | 도서관 | 10') && p.includes('3 | 서술형 | 예시 답 | 15 | 까닭 포함') && p.includes('1 | 고르기'));
+  assert.ok(p.includes('[학생] 7번') && p.trimEnd().endsWith('다시 볼 문항: 2, 3'), p.slice(-80));
 });
 
 test('채점 검토 답 읽기: 고른 문항만, 모양 틀린 것 버림', () => {

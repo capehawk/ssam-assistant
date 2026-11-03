@@ -20,7 +20,7 @@ const pngs = n => page.evaluate(async n => { const out = []; for (let i = 0; i <
 let inflight = 0, maxIn = 0, gradeCalls = 0;
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
-  const c = body.messages[0].content, prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const c = body.messages[0].content, prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   let out = '{}';
   if (prompt.startsWith('[활동지 채점]')) {
     gradeCalls++; inflight++; maxIn = Math.max(maxIn, inflight);

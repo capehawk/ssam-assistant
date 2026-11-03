@@ -32,27 +32,28 @@ export function gradeTargets(test, st) {
   return out;
 }
 
-export function gradeReviewPrompt(test, no, nos) {
-  const set = new Set(nos);
-  const key = test.key.items.filter(i => set.has(i.no)).map(i => `${i.no} | ${TYPE_NAME[i.type] || '단답'} | ${i.answer} | ${i.points} | ${i.criteria || ''}`);
+/* 공통(shared): 검토 지시·정답표 전체·평가지 글 — 학생마다 같아 캐시. 학생 글(own): 번호·다시 볼 문항 */
+export function gradeReviewParts(test, no, nos) {
+  const key = test.key.items.map(i => `${i.no} | ${TYPE_NAME[i.type] || '단답'} | ${i.answer} | ${i.points} | ${i.criteria || ''}`);
   const paper = String((test.paper && test.paper.text) || '').slice(0, 12000);
-  return [
+  const shared = [
     '[채점 검토]',
-    '당신은 초등학교 단원평가 채점을 한 번 더 확인하는 교사입니다. 첨부한 이미지는 한 학생이 답을 쓴 평가지입니다. 이름 칸은 가려져 있을 수 있습니다.',
+    '당신은 초등학교 단원평가 채점을 한 번 더 확인하는 교사입니다. 이 글 뒤에 오는 그림은 한 학생이 답을 쓴 평가지입니다. 이름 칸은 가려져 있을 수 있습니다.',
     `[평가] ${makeTitle(test.meta)}`,
-    '', '[확인할 문항의 정답표] 번호 | 유형 | 정답 | 배점 | 채점 기준', ...key,
+    '', '[정답표] 번호 | 유형 | 정답 | 배점 | 채점 기준', ...key,
     ...(paper ? ['', '[평가지 글]', paper] : []),
     '', '[할 일]',
-    '1. 위 문항만 학생이 쓴 답을 그대로 읽어 read에 적습니다. 비어 있으면 ""로 둡니다. 맞춤법을 고치지 않습니다.',
+    '1. 맨 끝에 적은 「다시 볼 문항」만 학생이 쓴 답을 그대로 읽어 read에 적습니다. 비어 있으면 ""로 둡니다. 맞춤법을 고치지 않습니다.',
     '2. 고르기는 고른 번호를 ③처럼, ○표 문항은 (3)처럼, 기호는 ㉯처럼, 선 잇기는 (1)-①, (2)-②처럼 적습니다.',
     '3. points는 정답표와 채점 기준으로 본 점수입니다(0부터 배점까지 정수). 서술형은 채점 기준에 비추어 부분 점수를 줄 수 있습니다.',
     '4. why에는 그렇게 판단한 까닭을 40자 안팎으로 씁니다.',
     '5. 가려진 부분은 무시하고, 학생 이름을 추측하거나 적지 않습니다.',
     '', '[출력] JSON 하나만 출력합니다.',
-    '{"items":[{"no":1,"read":"학생이 쓴 답","points":0,"why":"판단 까닭"}]}',
-    '', `[학생] ${no}번`
+    '{"items":[{"no":1,"read":"학생이 쓴 답","points":0,"why":"판단 까닭"}]}'
   ].join('\n');
+  return { shared, own: `[학생] ${no}번 — 바로 위 그림이 이 학생의 평가지예요.\n다시 볼 문항: ${nos.join(', ')}` };
 }
+export function gradeReviewPrompt(test, no, nos) { const p = gradeReviewParts(test, no, nos); return `${p.shared}\n\n${p.own}`; }
 
 export function normGradeReview(v, nos) {
   const set = new Set(nos), out = {};

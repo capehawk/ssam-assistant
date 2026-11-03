@@ -29,7 +29,7 @@ const calls = [];
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   calls.push(prompt);
   let out = '[]';
   if (prompt.includes('수행평가를 채점하는')) out = JSON.stringify({ score: 80, summary: '바르게 설명함', evidence: ['근거'], strengths: '꼼꼼함', improve: '검산', unreadable: false });

@@ -16,7 +16,7 @@ const long = j => `학급 일에 책임감을 가지고 참여하며 ${j}번째�
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const rec = { model: body.model, head: prompt.split('\n')[0], prompt, done: false };
   calls.push(rec);
   let out;

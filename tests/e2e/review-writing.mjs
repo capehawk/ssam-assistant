@@ -17,7 +17,7 @@ const long = j => `학급 일에 책임감을 가지고 참여하며 ${j}번째�
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const images = typeof c === 'string' ? 0 : c.filter(x => x.type === 'image').length;
   calls.push({ model: body.model, head: prompt.split('\n')[0], prompt });
   let out;

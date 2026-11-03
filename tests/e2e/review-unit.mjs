@@ -18,13 +18,13 @@ const send = (route, out) => route.fulfill({ status: 200, headers: { 'content-ty
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const images = typeof c === 'string' ? 0 : c.filter(x => x.type === 'image').length;
   const no = Number((/\[학생\] (\d+)번/.exec(prompt) || [])[1]);
   calls.push({ model: body.model, head: prompt.split('\n')[0], no, images, prompt });
   if (prompt.startsWith('[채점 검토]')) {
     if (reviewFail) return route.fulfill({ status: 401, body: JSON.stringify({ error: { type: 'authentication_error', message: 'bad key' } }) }).catch(() => {});
-    const nos = [...prompt.split('[확인할 문항의 정답표]')[1].split('[할 일]')[0].matchAll(/^(\d+) \| /gm)].map(m => Number(m[1]));
+    const nos = (/다시 볼 문항: ([\d, ]+)/.exec(prompt) || ['', ''])[1].split(',').map(Number).filter(Boolean);
     // 1번: 2번 문항은 같게(③ 10점), 9번 서술형은 12점(다름). 3번: 5번 문항을 ②로 읽음(다름)
     return send(route, JSON.stringify({ items: nos.map(n => (no === 1 && n === 9 ? { no: n, read: ANS[8], points: 12, why: '까닭이 잘 드러남' }
       : no === 3 && n === 5 ? { no: n, read: '②', points: 0, why: round === 2 ? 'R2 하나만 고름' : '하나만 고름' }
@@ -70,7 +70,8 @@ await run('review-unit', [
     assert(rv.length === 2 && rv.every(c => c.model === 'claude-opus-5-5' && c.images === 1), JSON.stringify(rv.map(c => [c.no, c.model, c.images])));
     assert(rv.map(c => c.no).sort().join(',') === '1,3', '검토한 학생: ' + rv.map(c => c.no).join(','));
     const r1 = rv.find(c => c.no === 1).prompt;
-    assert(/^2 \| 고르기/m.test(r1) && /^9 \| 서술형/m.test(r1) && !/^1 \| 고르기/m.test(r1) && !/^10 \| 서술형/m.test(r1), r1.split('[할 일]')[0]);
+    // 정답표는 전체(학생마다 같은 공통 부분·캐시), 다시 볼 문항은 끝에 그 문항만
+    assert(/^2 \| 고르기/m.test(r1) && /^9 \| 서술형/m.test(r1) && /다시 볼 문항: 2, 9$/.test(r1.trimEnd()), r1.slice(-120));
   }],
   ['같으면 확인할 칸에서 빠지고, 다르면 두 의견(노란 칸) · 「검토 의견 2개」', async () => {
     const s = (await T(A)).students;

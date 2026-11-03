@@ -3,20 +3,23 @@
 import { toast } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
 import { aiRowHTML } from '../../../core/ai-roles.js';
-import { reviewJSON, gradeReviewPrompt, normGradeReview, gradeTargets, sameGrade, opinionHTML, reviewBar, REVIEW_FAIL } from '../../../core/ai-review.js';
+import { reviewJSON, gradeReviewParts, normGradeReview, gradeTargets, sameGrade, opinionHTML, reviewBar, REVIEW_FAIL } from '../../../core/ai-review.js';
+import { runPool } from '../../../core/ai-pool.js';
+import { newMeter, useText } from '../../../core/ai-wire.js';
 import * as store from '../../../core/store.js';
 import { ITEM_TYPES, autoJudge, gradeCell, mergeCells, needsCheck, studentTotal } from './unit-grade.js';
 import { getTest, getSet, saveSet, numbersFor, parseNos, renumber, maskOf, listTests } from './unit-model.js';
 import { registerInbox } from '../../../core/inbox.js';
 import { go } from '../../../core/shell.js';
-import { gradePrompt, normGrade, validGrade } from './unit-ai.js';
+import { gradeParts, normGrade, validGrade } from './unit-ai.js';
 import { arrangePages } from './unit-pages.js';
 import { readNos, openNoCheck, openNoWait, rosterAllowed, byNoOrder } from '../../../core/student-no.js';
 import { esc, SS, AI_KEY, registerStep, inStep, cur, curId, commit, saveOrWarn, refresh, render, goStep, getBox, openTest, U } from './unit.js';
 
 const TYPE = Object.fromEntries(ITEM_TYPES);
 /* 세션 상태: 올린 스캔은 한 평가에만 붙음(raw: 올린 장, pages: 모아찍기를 자르고 뒷면을 돌린 쪽). 채점은 한 번에 한 평가만(run: 그 평가의 차례·멈춤) */
-const G = { testId: null, raw: [], pages: [], idx: [], msg: '', running: new Map(), run: null };
+// usedNow: 이 화면을 켠 뒤 채점한 평가(사용량 줄 앞에 「지난 채점」을 붙이지 않음)
+const G = { testId: null, raw: [], pages: [], idx: [], msg: '', running: new Map(), run: null, usedNow: new Set() };
 const pagesOf = (id, i) => (G.testId === id && G.idx[i]) || [];
 const hasPages = id => G.testId === id && G.pages.length > 0;
 const busy = id => !!G.run && G.run.id === id && (G.run.queue.length > 0 || G.running.size > 0);
@@ -197,7 +200,8 @@ async function imagesFor(id, i) {
   }
   return out;
 }
-async function gradeOne(id, i) {
+/* 학생 한 명 채점. AI 한도면 실패로 두지 않고 'rate'(풀이 다시 줄에 넣고 쉬었다가 이어 감) */
+async function gradeOne(id, i, meter) {
   const t0 = getTest(id), no = t0 && t0.students[i] && t0.students[i].no;
   if (no == null) return;
   const ctrl = new AbortController();
@@ -206,7 +210,9 @@ async function gradeOne(id, i) {
     const images = await imagesFor(id, i);
     // 스캔이 없으면 AI를 부르지 않음 (이미지 없이 채점하면 0점이 그대로 저장됨)
     if (!images.length) throw { code: 'no_scan' };
-    const v = await ai.generateJSON(gradePrompt(t0, no), { images, signal: ctrl.signal, valid: validGrade, task: 'grade' });
+    // 공통(지시·정답표·평가지 글)을 앞에 두어 학생마다 캐시 → 학생 그림 → 학생 줄
+    const parts = gradeParts(t0, no);
+    const v = await ai.generateJSON(parts.own, { shared: { text: parts.shared }, images, signal: ctrl.signal, valid: validGrade, task: 'grade', meter });
     const res = normGrade(v, t0.key.items);
     const t = getTest(id), st = t && t.students[i];
     if (!st || st.no !== no) return;
@@ -215,14 +221,15 @@ async function gradeOne(id, i) {
     // 저장 공간이 꽉 차면 남은 학생은 부르지 않음 (AI를 불러도 결과를 버리게 되므로)
     if (!saveOrWarn(t) && G.run && G.run.id === id) { G.run.stop = true; G.run.queue = []; return; }
     refresh(id);
-    await reviewOne(id, i, no, images, ctrl.signal);
+    await reviewOne(id, i, no, images, ctrl.signal, meter);
   } catch (e) {
     if (ctrl.signal.aborted) return;
+    if (e && e.code === 'rate_limited' && G.run && G.run.id === id && !G.run.stop) return 'rate';
     const t = getTest(id), st = t && t.students[i];
     const why = e && e.code === 'no_scan' ? '스캔이 없어요. 답안 스캔을 다시 올려 주세요' : e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요' : ai.errorMessage(e && e.code, e);
     if (st && st.no === no) { st.status = 'error'; st.err = why; saveOrWarn(t); }
     // 키가 틀리거나 한도에 걸리면 남은 학생도 똑같이 실패하므로 멈추고 까닭을 한 번 알림
-    if (e && ['auth', 'quota', 'rate_limited'].includes(e.code) && G.run && G.run.id === id && !G.run.stop) {
+    if (e && ['auth', 'quota'].includes(e.code) && G.run && G.run.id === id && !G.run.stop) {
       G.run.stop = true; G.run.queue = [];
       toast(`채점을 멈췄어요. ${why} 남은 학생은 [채점 시작]으로 이어서 해요.`, 9000);
     }
@@ -231,14 +238,15 @@ async function gradeOne(id, i) {
 /* 검토 AI: 확신 없는 칸·서술형 부분 점수만 같은 그림으로 다시 봄. 메인 결과는 그대로 두고 칸에 rv를 붙임.
    검토 AI가 키·한도·연결로 실패하면 「검토하지 못했어요」, 이 차례의 남은 학생은 검토하지 않음 */
 const REVIEW_STOP = ['auth', 'quota', 'rate_limited', 'blocked', 'no_engine', 'bad_model', 'upstream_error', 'session_expired'];
-async function reviewOne(id, i, no, images, signal) {
+async function reviewOne(id, i, no, images, signal, meter) {
   const run = G.run && G.run.id === id ? G.run : null;
   if (run && run.noReview) return;
   const t = getTest(id), st = t && t.students[i];
   if (!st || st.no !== no) return;
   const nos = gradeTargets(t, st);
   if (!nos.length) return;
-  const v = await reviewJSON('grade', gradeReviewPrompt(t, no, nos), { images, signal, valid: validGrade });
+  const parts = gradeReviewParts(t, no, nos);
+  const v = await reviewJSON('grade', parts.own, { shared: { text: parts.shared }, images, signal, valid: validGrade, meter });
   if (v == null || signal.aborted) return;
   const t2 = getTest(id), s2 = t2 && t2.students[i];
   if (!s2 || s2.no !== no) return;
@@ -260,12 +268,16 @@ async function reviewOne(id, i, no, images, signal) {
 }
 const openRv = c => !!(c && c.rv && !c.rv.agree && !c.rv.done);
 const rvCount = t => t.students.filter(s => !s.skip && s.status === 'done').reduce((n, s) => n + t.key.items.filter(it => openRv(s.items[it.no])).length, 0);
+/* 처음 3명(Claude 계정은 2명), 잘되면 4명까지. AI 한도면 줄이고 20초 쉬었다가 이어 감(스펙 2026-11-03 4장).
+   이 채점에 쓴 AI 양을 모아 평가에 남김(aiUse, 다시 채점하면 바뀜) */
 async function runQueue(id, list) {
-  const run = { id, queue: list.slice(), stop: false };
+  const run = { id, queue: list.slice(), stop: false, wait: false }, meter = newMeter(), acc = ai.isAccount();
   G.run = run;
-  const worker = async () => { while (run.queue.length && !run.stop) await gradeOne(id, run.queue.shift()); };
   refresh(id);
-  await Promise.all([worker(), worker()]);
+  const r = await runPool(run, i => gradeOne(id, i, meter), { start: acc ? 2 : 3, max: acc ? 2 : 4, onWait: on => { run.wait = on; refresh(id); } });
+  if (r.gaveUp && G.run === run) toast(`채점을 멈췄어요. ${ai.errorMessage('rate_limited')} 남은 학생은 [채점 시작]으로 이어서 해요.`, 9000);
+  const tot = meter.total(), t = getTest(id);
+  if (t && (tot.sent || tot.out)) { t.aiUse = { at: Date.now(), ...tot }; G.usedNow.add(id); saveOrWarn(t); }
   refresh(id);
 }
 /* 이 평가의 이름 칸을 정하지 않았으면 먼저 물어봄 (기본은 가리고 보내기) */
@@ -331,7 +343,8 @@ function step3HTML(t) {
     return `<tr data-strow="${s.no}"><th scope="row"><span class="un-sno">${s.no}번</span>${st}<button class="btn text tiny" type="button" data-un="retry" data-no="${s.no}">${s.status === 'done' ? '다시' : s.status === 'error' ? '다시 시도' : '채점'}</button></th>${cells}<td class="num">${tot ? `${tot.score}/${tot.total}` : ''}</td></tr>`;
   }).join('');
   return `${aiRowHTML('grade')}<div class="yp-card">
-      <div class="row">${run ? `<span class="spin"></span><b>채점하는 중 · ${done}/${total}명</b><button class="btn" type="button" data-un="stop">멈추기</button>` : `<button class="btn primary" type="button" data-un="grade">채점 시작</button><span class="muted">${done}/${total}명 채점함</span>`}</div>
+      <div class="row">${run ? `<span class="spin"></span><b>채점하는 중 · ${done}/${total}명</b>${G.run && G.run.id === id && G.run.wait ? '<b class="warn">AI 한도에 걸려 잠깐 쉬어요</b>' : ''}<button class="btn" type="button" data-un="stop">멈추기</button>` : `<button class="btn primary" type="button" data-un="grade">채점 시작</button><span class="muted">${done}/${total}명 채점함</span>`}</div>
+      ${t.aiUse && useText(t.aiUse) ? `<p class="muted cls-note" id="unAiUse">${G.usedNow.has(id) ? '' : '지난 채점 '}${esc(useText(t.aiUse))}</p>` : ''}
       ${up}${scanNote}
       ${reviewBar(rvCount(t), 'data-un="nextRv"')}
       <div class="row"><b id="unPending">확인할 칸 ${pending(t)}개</b><button class="btn text" type="button" data-un="nextChk">다음 확인할 칸</button><span class="grow"></span><button class="btn primary" type="button" data-un="finish">채점 마치기</button></div>

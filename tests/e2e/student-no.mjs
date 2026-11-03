@@ -12,7 +12,7 @@ const sent = [];
 let reads = [3, 1, 2], noDelay = 0;
 await page.route('https://api.anthropic.com/**', async route => {
   const c = JSON.parse(route.request().postData()).messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   sent.push({ prompt, images: typeof c === 'string' ? [] : c.filter(x => x.type === 'image').map(x => x.source.data) });
   let out = '{}';
   if (prompt.startsWith('[번호 읽기]') && noDelay) await new Promise(r => setTimeout(r, noDelay));

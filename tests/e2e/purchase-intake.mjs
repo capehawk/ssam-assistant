@@ -13,7 +13,7 @@ let imageN = 0;
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const images = typeof c === 'string' ? 0 : c.filter(x => x.type === 'image').length;
   calls.push({ head: prompt.split('\n')[0], images, prompt });
   let out = '{}';

@@ -14,7 +14,7 @@ let k = 0, fail = false, teacherPage = true, wrongAt = 1;
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const head = prompt.split('\n')[0];
   calls.push({ head, prompt, model: body.model, images: typeof c === 'string' ? 0 : c.filter(x => x.type === 'image').length });
   if (fail && head === '[활동지 채점]') { await route.fulfill({ status: 401, body: JSON.stringify({ error: { type: 'authentication_error', message: 'bad key' } }) }).catch(() => {}); return; }

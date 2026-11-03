@@ -16,7 +16,7 @@ let rvFail = false;
 await page.route('https://api.anthropic.com/**', async route => {
   const body = JSON.parse(route.request().postData());
   const c = body.messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   const head = prompt.split('\n')[0];
   calls.push({ model: body.model, head, prompt });
   if (head === '[품의 검토]' && rvFail) { await route.fulfill({ status: 401, body: JSON.stringify({ error: { type: 'authentication_error', message: 'bad key' } }) }).catch(() => {}); return; }
