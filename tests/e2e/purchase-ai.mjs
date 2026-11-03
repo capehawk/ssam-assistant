@@ -106,10 +106,10 @@ await run('purchase-ai', [
     await until(async () => reviews().length === 1);
     assert(!reviews()[0].prompt.includes('김강사') && reviews()[0].prompt.includes('강사 1명'), reviews()[0].prompt.slice(0, 400));
   }],
-  ['설정 › AI 업무별 한눈에 7줄(품의 줄에 Haiku·검토 Opus, 쪽지·결과 보고 줄)', async () => {
+  ['설정 › AI 업무별 한눈에 8줄(품의 줄에 Haiku·검토 Opus, 쪽지·결과 보고 줄)', async () => {
     await page.click('nav.app-side [data-menu-go="settings"]'); await page.click('#menuTabs [data-tab="ai"]');
     await page.waitForSelector('#setRoleList li');
-    assert(await page.locator('#setRoleList li').count() === 7, '줄 수');
+    assert(await page.locator('#setRoleList li').count() === 8, '줄 수');
     assert((await page.textContent('#setRoleList li:nth-child(6)')).includes('쪽지'), '쪽지 줄');
     assert((await page.textContent('#setRoleList li:nth-child(7)')).includes('결과 보고'), '결과 보고 줄');
     const t5 = await page.textContent('#setRoleList li:nth-child(5)');

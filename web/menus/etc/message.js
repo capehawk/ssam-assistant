@@ -124,7 +124,7 @@ const recentHTML = () => {
     : '<p class="muted" id="msgRecent" style="margin:0">쓴 쪽지가 최근 20개까지 남아요.</p>';
 };
 export function render() {
-  if (!box) return;
+  if (!box || box.hidden) return;
   const x = cur();
   box.innerHTML = `<div class="m-page msg-page">
     <div class="m-head"><div><h2>쪽지 작성</h2><p class="muted">공문·연수 계획·행사 계획을 넣으면 선생님들께 보낼 안내 쪽지를 써요. 이음 쪽지 창에 붙여 넣으세요.</p></div>
@@ -308,6 +308,8 @@ registerInbox('notice', {
 
 onEnter('etc', (tab, section) => {
   if (!box || !section.contains(box)) { box = document.createElement('div'); box.className = 'msg-box'; section.prepend(box); }
-  render();
+  // 기타의 다른 탭(가정통신문)이면 숨김
+  box.hidden = tab !== 'message';
+  if (!box.hidden) render();
 });
 export const kindLabel = k => KINDS[k] || KINDS.etc;

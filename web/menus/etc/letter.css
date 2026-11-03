@@ -1,0 +1,16 @@
+/* 기타 › 가정통신문 (letter.js) — 쪽지(.msg-*)·품의(.pc-*)·결과 보고(.rp-*) 모양을 같이 씀 */
+.lf-forms { align-items: flex-end; flex-wrap: wrap; }
+.lf-forms .grow { min-width: 220px; }
+.lf-map { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line, #e4e6eb); border-radius: 12px; background: var(--surface-2, #f7f8fa); }
+.lf-lines { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.lf-lines button[data-lf-line] { all: unset; box-sizing: border-box; width: 100%; display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.lf-lines button[data-lf-line]:hover, .lf-lines button[data-lf-line]:focus-visible { background: var(--accent-soft, #eef0ff); }
+.lf-lines .sel > button { outline: 1.5px solid var(--accent, #4f46e5); }
+.lf-badge { flex: none; min-width: 3.5em; text-align: center; font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--line, #e4e6eb); color: var(--ink-2, #4b5160); }
+.lf-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.lf-r-title .lf-badge { background: #dbeafe; color: #1e40af; }
+.lf-r-body .lf-badge { background: #dcfce7; color: #166534; }
+.lf-r-date .lf-badge, .lf-r-sign .lf-badge { background: #fef3c7; color: #92400e; }
+.lf-r-reply .lf-badge { background: #fce7f3; color: #9d174d; }
+.lf-pick { flex-wrap: wrap; gap: 4px; padding: 4px 0 6px 4.5em; }
+.lf-reply { display: flex; flex-direction: column; gap: 8px; padding-left: 12px; border-left: 3px solid var(--line, #e4e6eb); }

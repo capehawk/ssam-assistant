@@ -73,3 +73,8 @@ await pg.setContent(html);
 writeFileSync(new URL('단원평가-답안-예시.pdf', out), await pg.pdf({ format: 'A4', printBackground: true }));
 await browser.close();
 console.log('samples/단원평가-답안-예시.pdf');
+
+// 가정통신문 학교 양식 예시(.hwpx, 지어낸 「새싹초등학교」): 기타 › 가정통신문 [양식 넣기]
+const { letterFormHwpx } = await import('./sample-letter-form.mjs');
+writeFileSync(new URL('가정통신문-양식-예시.hwpx', out), await letterFormHwpx());
+console.log('samples/가정통신문-양식-예시.hwpx');
