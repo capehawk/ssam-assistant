@@ -3712,6 +3712,7 @@ async function grGrade(st) {
     else if (FATAL.includes(code) || code === 'rate_limited') { GR.err = errMsg(code, e); GR.queue.forEach(id => { const s = grStudent(id); if (s) s.status = 'idle'; }); GR.queue = []; }
   } finally {
     GR.running.delete(st.id);
+    GR.warm = false;
     grUse();
     grPump();
   }
@@ -3719,7 +3720,8 @@ async function grGrade(st) {
 function grPump() {
   if (GR.waitUntil && Date.now() < GR.waitUntil) { renderGRSoon(); return; }
   if (GR.phase === 'grading') {
-    while (GR.running.size < conc() && GR.queue.length) { const s = grStudent(GR.queue.shift()); if (s && !s.skip) grGrade(s); }
+    // 첫 학생은 혼자(GR.warm): 끝난 뒤 공통 부분(기준 그림·글)이 캐시에 있어 나머지가 싸게
+    while (GR.running.size < (GR.warm ? 1 : conc()) && GR.queue.length) { const s = grStudent(GR.queue.shift()); if (s && !s.skip) grGrade(s); }
     if (!GR.running.size && !GR.queue.length) {
       const act = grActive();
       if (GR.single) { GR.single = false; GR.phase = act.every(s => s.status === 'done' && s.text && !s.stale) ? 'done' : 'partial'; GRStore.save(); }
@@ -3742,7 +3744,7 @@ async function grStart() {
   if (neisIsGr() && (NEIS.state === 'armed' || NEIS.state === 'arming')) neisClose();
   GR.err = ''; GR.calibrated = false; GR._critCache = null;
   // 이 채점에 쓴 AI 양을 새로 모음(다시 채점하면 바뀜)
-  GR.meter = window.SSAM_WIRE.newMeter(); GR.usedNow = true;
+  GR.meter = window.SSAM_WIRE.newMeter(); GR.usedNow = true; GR.warm = true;
   const todo = grActive().filter(s => s.status !== 'done');
   if (!todo.length) { grAfterGrading(); return; }
   todo.forEach(s => { s.status = 'queued'; });
@@ -4394,6 +4396,8 @@ document.addEventListener('click', async e => {
     if (!s.pages.length) { toast('스캔 이미지가 없어서 다시 채점할 수 없어요. 평가지를 다시 올려 주세요.', 4000); return; }
     if (!engineReady()) { openSettings(); return; }
     GR.single = true; GR.phase = 'grading'; GR.queue.push(s.id); s.status = 'queued'; GR._critCache = null;
+    // 다시 채점한 양만 사용량 줄에(지난 채점에 더하지 않음)
+    GR.meter = window.SSAM_WIRE.newMeter(); GR.usedNow = true;
     grPump();
     return;
   }

@@ -48,8 +48,16 @@ test('openaiContent: 공통이 없으면 지금 모양(글 → 그림), 있으�
 });
 
 test('flatten: 공통 글 + 빈 줄 + 학생 글, 그림은 공통 → 학생 (업스테이지·Claude 계정)', () => {
-  assert.deepEqual(flatten({ text: 'T', images: [B], shared: { text: 'S', images: [A] } }), { text: 'S\n\nT', images: [A, B] });
+  assert.deepEqual(flatten({ text: 'T', images: [B] }), { text: 'T', images: [B] });
+  assert.deepEqual(flatten({ text: 'T', shared: { text: 'S' } }), { text: 'S\n\nT', images: [] });
   assert.deepEqual(flatten({ text: 'T' }), { text: 'T', images: [] });
+});
+
+test('최종 검토 I3: 공통 그림과 학생 그림이 모두 있으면 첨부 차례를 글로 알려 줌(그림이 따로 붙는 Claude 계정)', () => {
+  const f = flatten({ text: 'T', images: [B, B], shared: { text: 'S', images: [A] } });
+  assert.deepEqual(f.images, [A, B, B]);
+  assert.ok(f.text.startsWith('S\n\nT'), f.text);
+  assert.ok(f.text.includes('첨부한 그림 3장 중 앞의 1장은') && f.text.includes('뒤의 2장은'), f.text);
 });
 
 test('readUsage claude: message_start의 입력·캐시, message_delta의 출력', () => {

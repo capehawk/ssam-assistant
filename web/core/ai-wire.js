@@ -28,10 +28,14 @@ export function openaiContent({ text, images = [], shared } = {}) {
   return [...imgsOf(shared).map(img), ...(String(shared.text || '').trim() ? [{ type: 'text', text: shared.text }] : []), ...own.map(img), { type: 'text', text }];
 }
 
-/* 업스테이지·Claude 계정: 하나로 이어 붙임(공통 → 학생 차례) */
+/* Claude 계정: 하나로 이어 붙임(공통 → 학생 차례). 그림은 글과 따로 붙으므로 공통 그림·학생 그림이 다 있으면 차례를 글로 알려 줌 */
 export function flatten({ text, images = [], shared } = {}) {
   const st = hasShared(shared) && String(shared.text || '').trim() ? shared.text : '';
-  return { text: st ? `${st}\n\n${text}` : text, images: [...(hasShared(shared) ? imgsOf(shared) : []), ...(images || [])] };
+  const sh = hasShared(shared) ? imgsOf(shared) : [], own = images || [];
+  const order = sh.length && own.length
+    ? `\n\n[첨부한 그림 차례] 첨부한 그림 ${sh.length + own.length}장 중 앞의 ${sh.length}장은 위 글에서 「이 글 앞의 그림」이라고 한 것이고, 뒤의 ${own.length}장은 「이 글 뒤에 오는 그림」·「바로 위 그림」이라고 한 학생 것이에요.`
+    : '';
+  return { text: (st ? `${st}\n\n${text}` : text) + order, images: [...sh, ...own] };
 }
 
 /* ---------- 사용량 ---------- */

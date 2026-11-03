@@ -10,14 +10,14 @@ await page.addInitScript(() => {
   if (!localStorage.getItem('ssam:engine')) localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: 'sk-test' }, remember: true }));
 });
 const reqs = [];
-let now = 0, max = 0, rate3 = 1, first = true;
+let now = 0, max = 0, rate3 = 1, first = true, always429 = false;
 await mockClaude(page, async ({ prompt, content }) => {
   if (!prompt.startsWith('[단원평가 채점]')) return '{}';
   reqs.push(content);
   now++; max = Math.max(max, now);
   await new Promise(r => setTimeout(r, 120));
   now--;
-  if (rate3 && prompt.includes('[학생] 3번')) { rate3--; return { status: 429 }; }
+  if (always429 || (rate3 && prompt.includes('[학생] 3번'))) { if (!always429) rate3--; return { status: 429 }; }
   const usage = first ? { input_tokens: 300, cache_creation_input_tokens: 2000, output_tokens: 400 } : { input_tokens: 300, cache_read_input_tokens: 2000, output_tokens: 400 };
   first = false;
   return { text: JSON.stringify({ items: SAMPLE_ITEMS.map(it => ({ no: it.no, read: '', points: 0, sure: true, why: '' })) }), usage };
@@ -80,6 +80,22 @@ await run('ai-cache-unit', [
     await page.click(`${V} [data-un="retry"][data-no="2"]`);
     await page.waitForFunction(id => { const t = JSON.parse(localStorage.getItem('ssam:unit:t:' + id)); return t.aiUse && t.aiUse.sent === 2300; }, A, { timeout: 8000 });
     assert((await page.textContent(`${V} #unAiUse`)).includes('보낸 양 2,300 토큰'), await page.textContent(`${V} #unAiUse`));
+  }],
+  ['최종 검토 I1: 1명씩인데도 한도가 계속이면 멈추고 [채점 시작]이 다시 보임(「채점하는 중」에 멈추지 않음)', async () => {
+    always429 = true;
+    await page.click(`${V} .steps [data-step="2"]`);
+    await page.setInputFiles(`${V} #unAnsFile`, files);
+    await page.waitForFunction(() => document.querySelectorAll('.unit-box [data-st]').length === 5);
+    await page.click(`${V} [data-un="toGrade"]`);
+    await page.waitForFunction(s => !document.querySelector(s).textContent.includes('스캔 이미지는 저장하지 않아요'), V);
+    await page.evaluate(id => { const t = JSON.parse(localStorage.getItem('ssam:unit:t:' + id)); t.students.forEach(s => { s.status = ''; }); localStorage.setItem('ssam:unit:t:' + id, JSON.stringify(t)); }, A);
+    await page.click(`${V} .steps [data-step="2"]`); await page.click(`${V} [data-un="toGrade"]`);
+    await page.click(`${V} [data-un="grade"]`);
+    for (let k = 0; k < 6 && !(await page.textContent('#toast')).includes('멈췄어요'); k++) { await page.waitForTimeout(300); await page.clock.runFor(25000); }
+    await page.waitForTimeout(300);
+    assert((await page.textContent('#toast')).includes('멈췄어요'), await page.textContent('#toast'));
+    assert(await page.isVisible(`${V} [data-un="grade"]`) && !(await page.textContent(V)).includes('채점하는 중'), (await page.textContent(V)).slice(0, 200));
+    always429 = false;
   }],
   // 일부러 보낸 429는 브라우저가 콘솔에 적으므로 그 줄만 뺌
   ['페이지 오류 없음', async () => { const e = errors.filter(x => !/status of 429/.test(x)); assert(e.length === 0, e.join(' | ')); }]

@@ -111,7 +111,8 @@ await run('deferred-13', [
     await page.click(`${P} [data-ac="grade"]`);
     await page.waitForFunction(s => !document.querySelector(`${s} [data-ac="stop"]`), P, { timeout: 15000 });
     const done = (await acts()).find(a => a.id === id).students.filter(s => s.status === 'done').length;
-    assert(done === 4 && maxIn <= 2, JSON.stringify({ done, maxIn, gradeCalls }));
+    // 새 채점은 첫 학생 혼자 → 남은 3명 함께(스펙 2026-11-03 4장). 멈춘 앞 채점이 더 부르면 3을 넘음
+    assert(done === 4 && maxIn <= 3, JSON.stringify({ done, maxIn, gradeCalls }));
     // M9: 채점한 학생이 있을 때 쪽 수를 바꾸면 확인 → 취소하면 쪽 수도 그대로
     await page.click(`${P} [data-step="3"]`);
     await page.fill(`${P} #acPer`, '2'); await page.press(`${P} #acPer`, 'Tab');

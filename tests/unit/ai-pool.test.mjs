@@ -68,3 +68,20 @@ test('task가 던지면(멈춘 채점) 그 일꾼은 다음 학생으로 — 풀
   await runPool(run, async it => { if (it === 1) throw new Error('x'); done.push(it); }, { sleep });
   assert.deepEqual(done.sort(), [0, 2]);
 });
+
+test('최종 검토 I1: 한도로 멈추면 줄을 비움(화면이 「채점하는 중」에 멈추지 않게)', async () => {
+  const c = counter({ always: true }), run = { queue: [0, 1, 2, 3, 4], stop: false };
+  const r = await runPool(run, c.task, { sleep });
+  assert.equal(r.gaveUp, true);
+  assert.deepEqual(run.queue, []);
+});
+
+test('최종 검토 M4: warm이면 첫 학생 혼자 끝난 뒤(캐시를 써 둔 뒤) 나머지가 함께', async () => {
+  let done = 0;
+  const starts = [], c = counter(), run = { queue: [...Array(8).keys()], stop: false };
+  await runPool(run, async it => { starts.push(done); const v = await c.task(it); done++; return v; }, { sleep, warm: true });
+  assert.equal(c.calls.length, 8);
+  assert.equal(starts[0], 0);
+  assert.ok(starts.slice(1, 4).every(d => d === 1), JSON.stringify(starts));
+  assert.ok(c.max >= 3 && c.max <= 4, '동시 ' + c.max);
+});

@@ -274,7 +274,7 @@ async function runQueue(id, list) {
   const run = { id, queue: list.slice(), stop: false, wait: false }, meter = newMeter(), acc = ai.isAccount();
   G.run = run;
   refresh(id);
-  const r = await runPool(run, i => gradeOne(id, i, meter), { start: acc ? 2 : 3, max: acc ? 2 : 4, onWait: on => { run.wait = on; refresh(id); } });
+  const r = await runPool(run, i => gradeOne(id, i, meter), { start: acc ? 2 : 3, max: acc ? 2 : 4, warm: true, onWait: on => { run.wait = on; refresh(id); } });
   if (r.gaveUp && G.run === run) toast(`채점을 멈췄어요. ${ai.errorMessage('rate_limited')} 남은 학생은 [채점 시작]으로 이어서 해요.`, 9000);
   const tot = meter.total(), t = getTest(id);
   if (t && (tot.sent || tot.out)) { t.aiUse = { at: Date.now(), ...tot }; G.usedNow.add(id); saveOrWarn(t); }

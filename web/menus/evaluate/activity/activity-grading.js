@@ -236,7 +236,7 @@ async function gradeAll(id) {
   const run = G.run = { id, queue, stop: false, wait: false }, meter = newMeter(), acc = ai.isAccount();
   refresh(id);
   // 처음 3명(Claude 계정은 2명), 잘되면 4명까지, 한도면 줄이고 20초 쉬었다가 이어 감(스펙 2026-11-03 4장)
-  const r = await runPool(run, i => (G.run === run ? gradeOne(id, i, meter) : null), { start: acc ? 2 : 3, max: acc ? 2 : 4, onWait: on => { run.wait = on; refresh(id); } });
+  const r = await runPool(run, i => (G.run === run ? gradeOne(id, i, meter) : null), { start: acc ? 2 : 3, max: acc ? 2 : 4, warm: true, onWait: on => { run.wait = on; refresh(id); } });
   if (r.gaveUp && G.run === run) toast(`채점을 멈췄어요. ${ai.errorMessage('rate_limited')} 남은 학생은 [채점 시작]으로 이어서 해요.`, 9000);
   const tot = meter.total(), a2 = getActivity(id);
   if (a2 && (tot.sent || tot.out)) { a2.aiUse = { at: Date.now(), ...tot }; G.usedNow.add(id); commitAct(a2); }
