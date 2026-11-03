@@ -1,5 +1,6 @@
 /* 한글 파일(.hwpx) 만들기: 무압축 zip + 한글 문서 XML(OWPML).
-   doc = { title, blocks: [{ type: 'h', text } | { type: 'p', text } | { type: 'table', rows: string[][], head?: boolean } | { type: 'break' }] }
+   doc = { title, blocks: [{ type: 'h', text } | { type: 'p', text } | { type: 'table', rows: string[][], head?: boolean } | { type: 'break' }
+     | { type: 'photos', items: [{ bytes: Uint8Array(JPEG), w, h (픽셀), caption }] }] } — 사진은 2열 표, 칸마다 사진과 설명(스펙 2026-11-03 5.4)
    글자 모양 0 보통 10pt · 1 굵게 10pt · 2 제목 굵게 16pt · 3 소제목 굵게 12pt
    문단 모양 0 양쪽 · 1 가운데 · 2 왼쪽(위 여백) / 테두리 1 없음 · 2 없음(글자용) · 3 실선 · 4 실선+회색(머리줄) */
 import { zipStore } from './zip.js';
@@ -102,9 +103,23 @@ function secPr() {
     + '</hp:secPr>';
 }
 
+/* 사진 블록의 사진들 → [{ id: 'imageN', ...사진 }] (문서 차례대로, 바이트가 있는 것만) */
+export function photoList(doc) {
+  const out = [];
+  for (const b of (doc && doc.blocks) || []) {
+    if (b && b.type === 'photos') for (const it of b.items || []) if (it && it.bytes && it.bytes.length) out.push({ ...it, id: `image${out.length + 1}` });
+  }
+  return out;
+}
+/* 상자(maxW×maxH) 안에 가로세로 비율 그대로 */
+export function fitBox(w, h, maxW, maxH) {
+  const W = Math.max(1, +w || 4), H = Math.max(1, +h || 3), k = Math.min(maxW / W, maxH / H);
+  return [Math.round(W * k), Math.round(H * k)];
+}
+
 /* 본문 XML을 만드는 도구 (문단·표 id를 차례로 매김) */
-function sectionXml(doc) {
-  let pid = 0, tid = 0;
+function sectionXml(doc, photos = photoList(doc)) {
+  let pid = 0, tid = 0, ph = 0;
   const para = (pr, runs, pb) => `<hp:p id="${pid++}" paraPrIDRef="${pr}" styleIDRef="0" pageBreak="${pb ? 1 : 0}" columnBreak="0" merged="0">${runs}</hp:p>`;
   const run = (cpr, text) => `<hp:run charPrIDRef="${cpr}"><hp:t>${esc(text)}</hp:t></hp:run>`;
   // pb: 첫 줄을 새 쪽에서 시작
@@ -129,6 +144,43 @@ function sectionXml(doc) {
     return para(0, `<hp:run charPrIDRef="0">${tbl}<hp:t/></hp:run>`, pb);
   }
 
+  // 사진 하나: 글자처럼 취급하는 그림(hp:pic). 원래 크기(imgDim)는 픽셀 × 75(96dpi)
+  function pic(p, W, H) {
+    const id = 2000 + tid++, ow = Math.max(1, Math.round((+p.w || 4) * 75)), oh = Math.max(1, Math.round((+p.h || 3) * 75));
+    const m = 'e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"';
+    return `<hp:pic id="${id}" zOrder="${id}" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="${id}" reverse="0">`
+      + `<hp:offset x="0" y="0"/><hp:orgSz width="${W}" height="${H}"/><hp:curSz width="${W}" height="${H}"/><hp:flip horizontal="0" vertical="0"/>`
+      + `<hp:rotationInfo angle="0" centerX="${Math.round(W / 2)}" centerY="${Math.round(H / 2)}" rotateimage="1"/>`
+      + `<hp:renderingInfo><hc:transMatrix ${m}/><hc:scaMatrix ${m}/><hc:rotMatrix ${m}/></hp:renderingInfo>`
+      + `<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="${W}" y="0"/><hc:pt2 x="${W}" y="${H}"/><hc:pt3 x="0" y="${H}"/></hp:imgRect>`
+      + `<hp:imgClip left="0" right="${ow}" top="0" bottom="${oh}"/><hp:inMargin left="0" right="0" top="0" bottom="0"/><hp:imgDim dimwidth="${ow}" dimheight="${oh}"/>`
+      + `<hc:img binaryItemIDRef="${p.id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:effects/>`
+      + `<hp:sz width="${W}" widthRelTo="ABSOLUTE" height="${H}" heightRelTo="ABSOLUTE" protect="0"/>`
+      + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+      + '<hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:pic>';
+  }
+  // 사진 블록: 2열 표, 칸마다 사진(가운데) + 설명. 칸 너비 안에서 높이는 6cm쯤까지
+  function photosTable(items, pb) {
+    const list = items.map(() => photos[ph++]).filter(Boolean);
+    if (!list.length) return '';
+    const w = Math.floor(TEXT_W / 2), maxW = w - 1020 - 400, maxH = 17000;
+    const rows = [];
+    for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2));
+    const sized = rows.map(r => r.map(p => ({ p, sz: fitBox(p.w, p.h, maxW, maxH) })));
+    const rowH = sized.map(r => Math.max(...r.map(x => x.sz[1])) + 2600);
+    const cell = (x, ri, ci) => `<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="3">`
+      + '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+      + (x ? para(1, `<hp:run charPrIDRef="0">${pic(x.p, x.sz[0], x.sz[1])}<hp:t/></hp:run>`) + lines(1, 0, x.p.caption || '') : para(1, run(0, '')))
+      + '</hp:subList>'
+      + `<hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${w}" height="${rowH[ri]}"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
+    const tbl = `<hp:tbl id="${1000 + tid++}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="2" cellSpacing="0" borderFillIDRef="3" noAdjust="0">`
+      + `<hp:sz width="${w * 2}" widthRelTo="ABSOLUTE" height="${rowH.reduce((a, b) => a + b, 0)}" heightRelTo="ABSOLUTE" protect="0"/>`
+      + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+      + '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+      + sized.map((r, ri) => '<hp:tr>' + [0, 1].map(ci => cell(r[ci], ri, ci)).join('') + '</hp:tr>').join('') + '</hp:tbl>';
+    return para(0, `<hp:run charPrIDRef="0">${tbl}<hp:t/></hp:run>`, pb);
+  }
+
   // 첫 문단: 구역 설정 + 제목
   let body = para(1, `<hp:run charPrIDRef="2">${secPr()}<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/></hp:ctrl></hp:run>${run(2, doc.title || '')}`);
   // { type: 'break' }: 다음 블록을 새 쪽에서 시작
@@ -139,6 +191,7 @@ function sectionXml(doc) {
     const pb = brk; brk = false;
     if (b.type === 'h') body += lines(2, 3, b.text, pb);
     else if (b.type === 'table') { const rows = (b.rows || []).filter(Array.isArray); if (rows.length) body += table(rows, !!b.head, pb); else brk = pb; }
+    else if (b.type === 'photos') { const x = photosTable((b.items || []).filter(it => it && it.bytes && it.bytes.length), pb); if (x) body += x; else brk = pb; }
     else body += lines(0, 0, b.text, pb);
   }
   return `${HEAD}<hs:sec ${XMLNS}>${body}</hs:sec>`;
@@ -153,22 +206,25 @@ function previewText(doc) {
   for (const b of doc.blocks || []) {
     if (!b) continue;
     if (b.type === 'table') (b.rows || []).forEach(r => out.push((r || []).join('\t')));
+    else if (b.type === 'photos') (b.items || []).forEach(it => out.push(String((it && it.caption) || '')));
     else out.push(String(b.text == null ? '' : b.text));
   }
   return out.join('\r\n');
 }
 
 export function makeHwpx(doc) {
-  const d = doc || {};
+  const d = doc || {}, photos = photoList(d);
+  const items = photos.map(p => `<opf:item id="${p.id}" href="BinData/${p.id}.jpg" media-type="image/jpg" isEmbeded="1"/>`).join('');
   return zipStore([
     { name: 'mimetype', data: 'application/hwp+zip' },
     { name: 'version.xml', data: `${HEAD}<hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" tagetApplication="WORDPROCESSOR" major="5" minor="1" micro="1" buildNumber="0" os="1" xmlVersion="1.4" application="Hancom Office Hangul" appVersion="12, 0, 0, 0"/>` },
     { name: 'META-INF/container.xml', data: `${HEAD}<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:hpf="${NS.hpf}"><ocf:rootfiles><ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/><ocf:rootfile full-path="Preview/PrvText.txt" media-type="text/plain"/><ocf:rootfile full-path="META-INF/container.rdf" media-type="application/rdf+xml"/></ocf:rootfiles></ocf:container>` },
     { name: 'META-INF/container.rdf', data: CONTAINER_RDF },
     { name: 'META-INF/manifest.xml', data: `${HEAD}<odf:manifest xmlns:odf="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>` },
-    { name: 'Contents/content.hpf', data: `${HEAD}<opf:package ${XMLNS} version="" unique-identifier="" id=""><opf:metadata><opf:title>${esc(d.title || '')}</opf:title><opf:language>ko</opf:language><opf:meta name="creator" content="text">쌤비서</opf:meta></opf:metadata><opf:manifest><opf:item id="header" href="Contents/header.xml" media-type="application/xml"/><opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/><opf:item id="settings" href="settings.xml" media-type="application/xml"/></opf:manifest><opf:spine><opf:itemref idref="header" linear="yes"/><opf:itemref idref="section0" linear="yes"/></opf:spine></opf:package>` },
+    { name: 'Contents/content.hpf', data: `${HEAD}<opf:package ${XMLNS} version="" unique-identifier="" id=""><opf:metadata><opf:title>${esc(d.title || '')}</opf:title><opf:language>ko</opf:language><opf:meta name="creator" content="text">쌤비서</opf:meta></opf:metadata><opf:manifest><opf:item id="header" href="Contents/header.xml" media-type="application/xml"/><opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/><opf:item id="settings" href="settings.xml" media-type="application/xml"/>${items}</opf:manifest><opf:spine><opf:itemref idref="header" linear="yes"/><opf:itemref idref="section0" linear="yes"/></opf:spine></opf:package>` },
     { name: 'Contents/header.xml', data: headerXml() },
-    { name: 'Contents/section0.xml', data: sectionXml(d) },
+    { name: 'Contents/section0.xml', data: sectionXml(d, photos) },
+    ...photos.map(p => ({ name: `BinData/${p.id}.jpg`, data: p.bytes })),
     { name: 'settings.xml', data: `${HEAD}<ha:HWPApplicationSetting xmlns:ha="${NS.ha}" xmlns:config="${NS.config}"><ha:CaretPosition listIDRef="0" paraIDRef="0" pos="0"/></ha:HWPApplicationSetting>` },
     { name: 'Preview/PrvText.txt', data: previewText(d) }
   ]);
