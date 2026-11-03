@@ -69,5 +69,5 @@ test('다듬기: AI 점수가 「4점」처럼 글이어도 앞의 수를 읽음
 test('채점 프롬프트는 학생 번호만 맨 끝에서 달라짐 (앞부분이 같아 AI 회사의 앞글 캐시를 탈 수 있게)', () => {
   const a = gradePrompt(TEST, 3).split('\n'), b = gradePrompt(TEST, 4).split('\n');
   assert.deepEqual(a.slice(0, -1), b.slice(0, -1));
-  assert.equal(a.at(-1), '[학생] 3번');
+  assert.equal(a.at(-1), '[학생] 3번 — 바로 위 그림이 이 학생의 평가지예요.');
 });
