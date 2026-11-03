@@ -112,6 +112,42 @@ await run('message', [
     const f = (await page.evaluate(() => window.__calls.find(c => c[0] === 'note_save_attachments')))[1].files;
     assert(f.length === 1 && f[0].name === 'AI 활용 연수 계획.hwpx' && f[0].bytes[0] === 80 && f[0].bytes[1] === 75, JSON.stringify(f.map(x => [x.name, x.bytes.slice(0, 2)])));
   }],
+  ['이음 붙임: 「⠿」에 올리면 미리 저장, 누르면 체크한 파일을 끌기(note_drag_files), 줄의 「⠿」는 그 파일만', async () => {
+    await page.click(`${P} [data-msg="new"]`);
+    await page.setInputFiles(`${P} #msgFile`, [
+      { name: '연수 공문.txt', mimeType: 'text/plain', buffer: Buffer.from(GONGMUN) },
+      { name: 'AI 활용 연수 계획.hwpx', mimeType: 'application/octet-stream', buffer: readFileSync(join(ROOT, 'samples', '활동지-예시.hwpx')) }]);
+    await page.waitForFunction(s => ((document.querySelector(`${s} #msgBody`) || {}).value || '').startsWith('[연수 안내] AI 활용 수업 연수\n'), P);
+    await page.evaluate(() => { window.__calls = []; });
+    await page.hover(`${P} [data-msg-drag="all"]`);
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'note_save_attachments'));
+    await page.mouse.down(); await page.waitForFunction(() => window.__calls.some(c => c[0] === 'note_drag_files')); await page.mouse.up();
+    let calls = await page.evaluate(() => window.__calls);
+    assert(calls.filter(c => c[0] === 'note_save_attachments').length === 1, '다시 저장함 ' + JSON.stringify(calls.map(c => c[0])));
+    assert(JSON.stringify(calls.find(c => c[0] === 'note_drag_files')[1].paths) === JSON.stringify(['C:/붙임/연수 공문.txt', 'C:/붙임/AI 활용 연수 계획.hwpx']), JSON.stringify(calls));
+    await page.evaluate(() => { window.__calls = []; });
+    await page.hover(`${P} [data-msg-drag="1"]`); await page.mouse.down();
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'note_drag_files')); await page.mouse.up();
+    calls = await page.evaluate(() => window.__calls);
+    assert(JSON.stringify(calls.find(c => c[0] === 'note_drag_files')[1].paths) === JSON.stringify(['C:/붙임/AI 활용 연수 계획.hwpx']) && !calls.some(c => c[0] === 'note_save_attachments'), JSON.stringify(calls));
+  }],
+  ['이음 붙임: 끌어 낸 파일을 이 화면에 도로 놓아도 붙임이 늘지 않음, [폴더 경로 복사] → 폴더 경로와 「파일 이름」 안내', async () => {
+    const n0 = await page.locator(`${P} [data-att]`).count();
+    await page.evaluate(s => {
+      const dt = new DataTransfer(); dt.items.add(new File(['x'], 'AI 활용 연수 계획.hwpx'));
+      document.querySelector(`${s} [data-msg-drop]`).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, P);
+    await page.waitForTimeout(300);
+    assert(await page.locator(`${P} [data-att]`).count() === n0, '붙임이 늘어남');
+    await page.click(`${P} [data-msg="copyPath"]`);
+    await page.waitForTimeout(200);
+    assert((await page.evaluate(() => navigator.clipboard.readText())) === 'C:/붙임', await page.evaluate(() => navigator.clipboard.readText()));
+    assert((await page.textContent('#toast')).includes('파일 이름'), await page.textContent('#toast'));
+    await page.uncheck(`${P} [data-att="0"]`);
+    await page.click(`${P} [data-msg="copyPath"]`);
+    await page.waitForFunction(() => navigator.clipboard.readText().then(t => t.endsWith('.hwpx')));
+    assert(!(await page.$(`${P} [data-msg-drag="0"]`)), '뺀 붙임에 끌기');
+  }],
   ['I5 본문을 손으로 고친 쪽지는 최근 쪽지 [열기]로 그 본문 그대로', async () => {
     const b0 = await page.inputValue(`${P} #msgBody`);
     await page.fill(`${P} #msgBody`, b0 + '\n덧붙인 한 줄');

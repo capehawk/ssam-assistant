@@ -115,8 +115,37 @@ pub fn note_copy_files(paths: Vec<String>) -> Result<(), String> {
     if paths.iter().any(|p| !inside_notes(&base, Path::new(p))) {
         return Err("쪽지 붙임 폴더 밖의 파일은 복사하지 않아요".into());
     }
-    let mut cb = arboard::Clipboard::new().map_err(|e| format!("클립보드를 열지 못했어요: {e}"))?;
-    cb.set().file_list(&paths).map_err(|e| format!("파일을 클립보드에 넣지 못했어요: {e}"))
+    #[cfg(windows)]
+    {
+        crate::shell_win::copy_files(paths)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cb = arboard::Clipboard::new().map_err(|e| format!("클립보드를 열지 못했어요: {e}"))?;
+        cb.set().file_list(&paths).map_err(|e| format!("파일을 클립보드에 넣지 못했어요: {e}"))
+    }
+}
+
+/// 붙임 파일을 끌기 시작 (탐색기에서 끄는 것과 같게) — 마우스 단추를 누른 채로 불러야 함.
+/// 끌기는 앱 메인 스레드에서 하고 이 명령은 바로 돌아옴
+#[tauri::command]
+pub async fn note_drag_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    let base = downloads_dir();
+    if paths.is_empty() || paths.iter().any(|p| !inside_notes(&base, Path::new(p)) || !Path::new(p).is_file()) {
+        return Err("쪽지 붙임 폴더의 파일만 끌 수 있어요".into());
+    }
+    #[cfg(windows)]
+    {
+        app.run_on_main_thread(move || {
+            let _ = crate::shell_win::drag_files(&paths);
+        })
+        .map_err(|e| format!("끌기를 시작하지 못했어요: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("파일 끌기는 Windows 앱에서만 돼요".into())
+    }
 }
 
 /// 붙임 폴더를 탐색기로 엶

@@ -6,6 +6,8 @@ mod ai_proxy;
 mod bubble;
 mod files;
 mod neis;
+#[cfg(windows)]
+mod shell_win;
 mod updater;
 
 use serde::Serialize;
@@ -324,6 +326,7 @@ fn main() {
             files::save_download,
             files::note_save_attachments,
             files::note_copy_files,
+            files::note_drag_files,
             files::note_open_dir,
             bubble::bubble_config,
             bubble::inbox_take,

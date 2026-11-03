@@ -36,34 +36,71 @@ function persist() {
   if (hasContent(x)) pushMessage({ id: x.id, title: x.title, kind: x.m.kind, m: x.m, len: x.len, attachNames: x.attach.map(a => a.name), body: x.body, edited: x.edited, again: !!x.again });
 }
 
-/* ---------- 붙임 파일 (Windows 앱): 다운로드 폴더에 모아 클립보드 파일 복사·폴더 열기 (스펙 4.5) ---------- */
+/* ---------- 붙임 파일 (Windows 앱): 다운로드 폴더에 모아 클립보드 파일 복사·끌어 놓기·경로 복사·폴더 열기
+   (스펙 2026-11-02 4.5, 2026-11-03 4장 — 이음 쪽지 창이 무엇을 받는지 몰라 탐색기와 같은 길을 셋 둠) ---------- */
 const T = () => (globalThis.window && window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__.core : null);
-const filesHTML = () => `<div class="row" id="msgFiles">${T()
-  ? '<button class="btn" type="button" data-msg="copyFiles">붙임 파일 복사</button><button class="btn text" type="button" data-msg="openDir">폴더 열기</button>'
-  : '<span class="muted">Windows 앱에서는 붙임 파일 복사(쪽지 창에 Ctrl+V)·폴더 열기가 돼요. 웹판에서는 파일을 쪽지 창에 직접 넣어 주세요.</span>'}</div>`;
+const filesHTML = () => `<div id="msgFiles">${T()
+  ? `<div class="row"><button class="btn" type="button" data-msg="copyFiles">붙임 파일 복사</button><span class="msg-drag" data-msg-drag="all" role="button" tabindex="0" title="눌러 끌어서 이음 쪽지 창에 놓으세요">⠿ 붙임 끌어 놓기</span>
+      <button class="btn text" type="button" data-msg="copyPath">폴더 경로 복사</button><button class="btn text" type="button" data-msg="openDir">폴더 열기</button></div>
+    <p class="muted" style="margin:0">이음 쪽지 창에 Ctrl+V가 안 되면 「⠿」를 눌러 쪽지 창으로 끌어 놓거나, 이음의 [파일 첨부] 창 「파일 이름」 칸에 [폴더 경로 복사]한 것을 붙여 넣고 Enter 하세요.</p>`
+  : '<span class="muted">Windows 앱에서는 붙임 파일 복사(쪽지 창에 Ctrl+V)·끌어 놓기·폴더 열기가 돼요. 웹판에서는 파일을 쪽지 창에 직접 넣어 주세요.</span>'}</div>`;
 const today = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; };
 const extOf = n => (/(\.[^.]+)$/.exec(String(n || '')) || ['', ''])[1];
-/* 체크한 붙임 중 파일이 있는 것을 「날짜 제목」 폴더에 저장 → { dir, paths } | null */
-async function saveAttachments() {
-  const x = cur(), core = T();
-  const picked = x.attach.map((a, i) => ({ a, f: M.files[i] })).filter(p => p.a.on && p.f);
-  if (!picked.length) { toast(x.attach.some(a => a.on) ? '붙임 파일이 이 화면에 없어요. 파일을 다시 넣어 주세요(최근 쪽지는 이름만 남아요).' : '체크한 붙임이 없어요.', 6000); return null; }
-  const files = [];
-  for (const { a, f } of picked) files.push({ name: `${a.name}${extOf(f.name)}`, bytes: Array.from(new Uint8Array(await f.arrayBuffer())) });
-  const folder = `${today()} ${String(x.m.title || '쪽지').trim()}`.slice(0, 80);
-  try { return await core.invoke('note_save_attachments', { folder, files }); }
-  catch (e) { toast(String(e || '붙임 파일을 저장하지 못했어요'), 6000); return null; }
+/* 체크한 붙임 중 파일이 있는 것을 「날짜 제목」 폴더에 저장 → { dir, paths, idx(붙임 번호마다 경로) } | null.
+   같은 붙임이면 다시 저장하지 않음(끌기는 마우스를 누른 채 시작해야 해서 빨라야 함). quiet: 알림 없이 */
+let savedKey = '', saved = null, saving = null;
+const pickedFiles = () => { const x = cur(); return x.attach.map((a, i) => ({ a, i, f: M.files[i] })).filter(p => p.a.on && p.f); };
+const folderName = () => `${today()} ${String(cur().m.title || '쪽지').trim()}`.slice(0, 80);
+const keyOf = picked => JSON.stringify([folderName(), picked.map(p => [p.i, p.a.name, p.f.name, p.f.size, p.f.lastModified])]);
+async function saveAttachments({ quiet = false } = {}) {
+  const x = cur(), core = T(), picked = pickedFiles();
+  if (!picked.length) { if (!quiet) toast(x.attach.some(a => a.on) ? '붙임 파일이 이 화면에 없어요. 파일을 다시 넣어 주세요(최근 쪽지는 이름만 남아요).' : '체크한 붙임이 없어요.', 6000); return null; }
+  const key = keyOf(picked);
+  if (saved && savedKey === key) return saved;
+  if (saving && saving.key === key) return saving.p;
+  const p = (async () => {
+    const files = [];
+    for (const { a, f } of picked) files.push({ name: `${a.name}${extOf(f.name)}`, bytes: Array.from(new Uint8Array(await f.arrayBuffer())) });
+    try {
+      const r = await core.invoke('note_save_attachments', { folder: folderName(), files });
+      const idx = {}; picked.forEach((pk, k) => { idx[pk.i] = r.paths[k]; });
+      saved = { ...r, idx }; savedKey = key;
+      return saved;
+    } catch (e) { if (!quiet) toast(String(e || '붙임 파일을 저장하지 못했어요'), 6000); return null; }
+    finally { if (saving && saving.key === key) saving = null; }
+  })();
+  saving = { key, p };
+  return p;
+}
+/* 끌기: 「⠿」를 누르면(마우스를 누른 채) 저장해 둔 파일을 탐색기처럼 끎. 저장이 늦어 그새 마우스를 뗐으면 다시 끌어 달라고 함 */
+let held = false;
+async function dragOut(which) {
+  held = true;
+  const sv = await saveAttachments();
+  if (!sv) return;
+  const paths = which === 'all' ? sv.paths : [sv.idx[+which]].filter(Boolean);
+  if (!paths.length) return;
+  if (!held) { toast('붙임을 준비했어요. 「⠿」를 다시 눌러 끌어 주세요.', 4000); return; }
+  M.dragOut = Date.now();
+  try { await T().invoke('note_drag_files', { paths }); } catch (e) { toast(String(e || '끌기를 시작하지 못했어요'), 6000); }
+}
+async function copyPath() {
+  const sv = await saveAttachments();
+  if (!sv) return;
+  const one = sv.paths.length === 1, path = one ? sv.paths[0] : sv.dir;
+  const ok = await copyText(path);
+  toast(ok ? (one ? '파일 경로를 복사했어요. 이음 [파일 첨부] 창 「파일 이름」 칸에 Ctrl+V → Enter 하세요.' : '폴더 경로를 복사했어요. 이음 [파일 첨부] 창 「파일 이름」 칸에 Ctrl+V → Enter 하면 폴더가 열려요. 파일을 골라 [열기]를 누르세요.') : '복사하지 못했어요', 8000);
 }
 async function copyFiles() {
-  const saved = await saveAttachments();
-  if (!saved) return;
-  try { await T().invoke('note_copy_files', { paths: saved.paths }); toast(`붙임 파일 ${saved.paths.length}개를 복사했어요. 이음 쪽지 창의 첨부 칸에서 Ctrl+V 해 보세요. 안 되면 [폴더 열기]로 끌어 놓으세요.`, 8000); }
-  catch (e) { toast(String(e || '파일을 클립보드에 넣지 못했어요. [폴더 열기]로 끌어 놓아 주세요.'), 7000); }
+  const sv = await saveAttachments();
+  if (!sv) return;
+  try { await T().invoke('note_copy_files', { paths: sv.paths }); toast(`붙임 파일 ${sv.paths.length}개를 복사했어요(탐색기에서 복사한 것과 같아요). 이음 쪽지 창에서 Ctrl+V 해 보세요. 안 되면 「⠿」를 눌러 끌어 놓으세요.`, 8000); }
+  catch (e) { toast(String(e || '파일을 클립보드에 넣지 못했어요. 「⠿」를 눌러 끌어 놓아 주세요.'), 7000); }
 }
 async function openDir() {
-  const saved = await saveAttachments();
-  if (!saved) return;
-  try { await T().invoke('note_open_dir', { dir: saved.dir }); } catch (e) { toast(String(e || '폴더를 열지 못했어요'), 6000); }
+  const sv = await saveAttachments();
+  if (!sv) return;
+  try { await T().invoke('note_open_dir', { dir: sv.dir }); } catch (e) { toast(String(e || '폴더를 열지 못했어요'), 6000); }
 }
 
 /* ---------- 그리기 ---------- */
@@ -79,7 +116,7 @@ function fieldsHTML(m) {
     ${field('bring', '준비물', m.bring)}${field('notes', '유의 사항', m.notes)}</div>`;
 }
 const attachHTML = x => (x.attach.length ? `<ul class="msg-attach" id="msgAttach">${x.attach.map((a, i) => `<li><label class="switch"><input type="checkbox" data-att="${i}"${a.on ? ' checked' : ''}></label>
-    <input class="field" data-att-name="${i}" value="${esc(a.name)}" aria-label="${i + 1}번째 붙임 이름" autocomplete="off">${M.files[i] ? '' : '<span class="muted">파일 없음(이름만)</span>'}</li>`).join('')}</ul>` : '<p class="muted" id="msgAttach" style="margin:0">넣은 파일이 붙임 목록이 돼요.</p>');
+    <input class="field" data-att-name="${i}" value="${esc(a.name)}" aria-label="${i + 1}번째 붙임 이름" autocomplete="off">${M.files[i] ? (T() && a.on ? `<span class="msg-drag" data-msg-drag="${i}" role="button" tabindex="0" title="눌러 끌어서 이음 쪽지 창에 놓으세요" aria-label="${esc(a.name)} 끌기">⠿</span>` : '') : '<span class="muted">파일 없음(이름만)</span>'}</li>`).join('')}</ul>` : '<p class="muted" id="msgAttach" style="margin:0">넣은 파일이 붙임 목록이 돼요.</p>');
 const recentHTML = () => {
   const l = listMessages();
   return l.length ? `<ul class="pc-lib-list" id="msgRecent">${l.map(r => `<li class="pc-lib-row"><div class="grow"><b>${esc(r.title || '제목 없는 쪽지')}</b><span class="muted">${new Date(r.at).toLocaleDateString('ko-KR')} · 붙임 ${r.attachNames.length}개</span></div>
@@ -206,6 +243,7 @@ document.addEventListener('click', e => {
   else if (a === 'new') { d = blankDraft(); M.files = []; M.paste = ''; clearDraft(); render(); }
   else if (a === 'resync') { compose(true); persist(); render(); }
   else if (a === 'copyFiles' && T()) copyFiles();
+  else if (a === 'copyPath' && T()) copyPath();
   else if (a === 'openDir' && T()) openDir();
   else if (a === 'copyAll') copyText(x.body).then(ok => toast(ok ? '복사했어요. 이음 쪽지 창에 붙여 넣으세요' : '복사하지 못했어요'));
 });
@@ -213,7 +251,14 @@ document.addEventListener('change', e => {
   if (!mine(e)) return;
   const el = e.target, x = cur();
   if (el.id === 'msgFile') { const fs = [...el.files]; el.value = ''; if (fs.length) { addFiles(fs); render(); readAll(); } return; }
-  if (el.dataset.att != null) { const at = x.attach[+el.dataset.att]; if (at) { at.on = el.checked; compose(); persist(); refreshOut(); } }
+  if (el.dataset.att != null) {
+    const i = +el.dataset.att, at = x.attach[i];
+    if (!at) return;
+    at.on = el.checked; compose(); persist(); refreshOut();
+    // 체크를 바꾸면 끌기 「⠿」도 바뀌게 목록을 다시 그리고 그 체크 칸에 초점을 돌려 둠
+    const list = box.querySelector('#msgAttach');
+    if (list && list.contains(document.activeElement)) { list.outerHTML = attachHTML(x); const c = box.querySelector(`[data-att="${i}"]`); if (c) c.focus(); }
+  }
 });
 document.addEventListener('input', e => {
   if (!mine(e)) return;
@@ -231,6 +276,17 @@ document.addEventListener('input', e => {
   if (el.id === 'msgPaste') { M.paste = el.value; return; }
   if (el.id === 'msgBody') { x.body = el.value; x.edited = true; persist(); refreshOut(); }
 });
+/* 「⠿」: 마우스를 누르는 순간 끌기 시작(앱이 탐색기처럼 끎). 「⠿」에 마우스를 올리면 미리 저장해 둠(누를 때 바로 끌게) */
+document.addEventListener('mousedown', e => {
+  const h = mine(e) && T() && e.button === 0 && e.target.closest('[data-msg-drag]');
+  if (!h) return;
+  e.preventDefault();
+  dragOut(h.dataset.msgDrag);
+});
+document.addEventListener('mouseup', () => { held = false; });
+document.addEventListener('mouseover', e => {
+  if (mine(e) && T() && e.target.closest('[data-msg-drag]')) saveAttachments({ quiet: true });
+});
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-msg-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('[data-msg-drop]'); if (z) z.classList.remove('over'); });
 document.addEventListener('drop', e => {
@@ -238,6 +294,8 @@ document.addEventListener('drop', e => {
   if (!z || !box.contains(z)) return;
   e.preventDefault(); z.classList.remove('over');
   const fs = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+  // 방금 이 화면에서 끌어 낸 붙임을 도로 놓았으면 넣지 않음
+  if (M.dragOut && Date.now() - M.dragOut < 60000 && fs.length && saved && fs.every(f => saved.paths.some(p => p.split(/[\\/]/).pop() === f.name))) return;
   if (fs.length) { addFiles(fs); render(); readAll(); }
   else { const t = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (t) { M.paste = t; const p = box.querySelector('#msgPaste'); if (p) p.value = t; } }
 });
