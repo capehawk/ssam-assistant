@@ -109,10 +109,11 @@ export function applyKey(items, teacherText) {
 }
 
 /* ---------- 채점 ---------- */
-export function gradePrompt(act, nImages) {
-  return ['[활동지 채점]',
+/* 학생마다 같은 공통(shared, 앞에 두어 캐시)과 학생 글(own: 그림 장수). 차례: 공통 글 → 학생 그림 → 학생 글 */
+export function gradeParts(act, nImages) {
+  const shared = ['[활동지 채점]',
     '당신은 초등학교 수업 활동지를 채점하는 경력 많은 담임교사입니다.',
-    `첨부한 그림 ${nImages}장은 한 학생의 활동지${nImages > 1 ? '(차례대로)' : ''}입니다. 이름 칸은 가려져 있을 수 있습니다. 학생 이름을 짐작하거나 쓰지 않습니다.`,
+    '이 글 뒤에 오는 그림은 한 학생의 활동지입니다. 이름 칸은 가려져 있을 수 있습니다. 학생 이름을 짐작하거나 쓰지 않습니다.',
     `[활동지] ${metaLine(act.meta || {}) || '(정보 없음)'}`,
     '', '[문항과 기준]', ...act.items.map(itemLine),
     '', '[채점 규칙]',
@@ -125,7 +126,9 @@ export function gradePrompt(act, nImages) {
     '- level: good(잘함) · ok(보통) · try(노력) 중 하나, levelWhy: 그렇게 본 까닭 한 문장.',
     '', '[출력] JSON 하나만 출력합니다.',
     '{"items":[{"no":1,"read":"…","mark":"o|t|x|n","why":"…","sure":true}],"good":"…","next":"…","level":"good|ok|try","levelWhy":"…"}'].join('\n');
+  return { shared, own: `바로 위 그림 ${nImages}장은 한 학생의 활동지${nImages > 1 ? '(차례대로)' : ''}입니다.` };
 }
+export function gradePrompt(act, nImages) { const p = gradeParts(act, nImages); return `${p.shared}\n\n${p.own}`; }
 export const validGrade = v => Array.isArray(v) || !!(v && typeof v === 'object' && Array.isArray(v.items));
 export function normGrade(v, items) {
   const got = {};
@@ -154,15 +157,16 @@ export function judgeCell(item, cell) {
 }
 
 /* ---------- 검토 (노란 칸만) ---------- */
-export function reviewPrompt(act, cells) {
-  const nos = new Set(cells.map(c => c.no));
-  return ['[활동지 검토]',
-    '당신은 다른 교사가 채점한 활동지 중 확인이 필요한 칸만 다시 보는 교사입니다. 첨부한 그림은 그 학생의 활동지입니다(이름은 가려져 있을 수 있음).',
-    '', '[문항과 기준]', ...act.items.filter(it => nos.has(it.no)).map(itemLine),
-    '', '[먼저 채점한 결과]', ...cells.map(c => `[${c.no}] 읽은 답: ${c.read || '-'} | 표시: ${MARK[c.mark] || '없음'} | 까닭: ${c.why || '-'}`),
-    '', '[규칙] 위 문항만 다시 봅니다. mark는 o·t·x·n 중 하나입니다.',
+/* 공통: 검토 지시·문항과 기준 전체(학생마다 같아 캐시). 학생 글: 먼저 채점한 결과(다시 볼 칸) */
+export function reviewParts(act, cells) {
+  const shared = ['[활동지 검토]',
+    '당신은 다른 교사가 채점한 활동지 중 확인이 필요한 칸만 다시 보는 교사입니다. 이 글 뒤에 오는 그림은 그 학생의 활동지입니다(이름은 가려져 있을 수 있음).',
+    '', '[문항과 기준]', ...act.items.map(itemLine),
+    '', '[규칙] 맨 끝 「먼저 채점한 결과」에 있는 문항만 다시 봅니다. mark는 o·t·x·n 중 하나입니다.',
     '', '[출력] JSON 하나만 출력합니다.', '{"items":[{"no":1,"mark":"o","why":"까닭"}]}'].join('\n');
+  return { shared, own: ['[먼저 채점한 결과]', ...cells.map(c => `[${c.no}] 읽은 답: ${c.read || '-'} | 표시: ${MARK[c.mark] || '없음'} | 까닭: ${c.why || '-'}`)].join('\n') };
 }
+export function reviewPrompt(act, cells) { const p = reviewParts(act, cells); return `${p.shared}\n\n${p.own}`; }
 export function normReview(v, nos) {
   const set = new Set(nos), seen = new Set(), out = [];
   for (const x of listOf(v, 'items')) {

@@ -122,7 +122,9 @@ await run('activity-grading', [
     await until(async () => (await act()).students.every(s => !s.stale) && calls.filter(c => c.head === '[활동지 검토]').length >= 1);
     await page.waitForTimeout(400);
     const rv = calls.filter(c => c.head === '[활동지 검토]');
-    assert(rv.length === 1 && rv[0].model === 'claude-opus-5-5' && rv[0].prompt.includes('[1]') && !rv[0].prompt.includes('[4]'), rv.map(c => c.prompt.slice(0, 80)).join(' | '));
+    // 문항과 기준은 전체(공통·캐시), 먼저 채점한 결과(다시 볼 칸)는 노란 칸 [1]만
+    const done = (rv[0] && rv[0].prompt.split('[먼저 채점한 결과]')[1]) || '';
+    assert(rv.length === 1 && rv[0].model === 'claude-opus-5-5' && done.includes('[1]') && !done.includes('[4]'), rv.map(c => c.prompt.slice(-120)).join(' | '));
   }],
   ['키 오류(401)면 채점을 멈추고 알림', async () => {
     fail = true;

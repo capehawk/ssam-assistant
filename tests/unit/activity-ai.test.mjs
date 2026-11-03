@@ -70,9 +70,10 @@ test('앱 판정: 고르기 맞음 ○·틀림 ×·빈 답 안 함, 쓰기는 AI
   assert.equal(judgeCell({ ...ITEMS[1], answer: '' }, { read: '증발', mark: '', why: '', sure: false }).chk, true, '정답 없고 AI 표시 없음 → 노란 칸');
 });
 
-test('검토: 머리, 노란 칸만, 답은 그 번호만', () => {
+test('검토: 머리, 문항과 기준은 전체(공통·캐시), 먼저 채점한 결과는 노란 칸만, 답은 그 번호만', () => {
   const p = reviewPrompt({ meta, items: ITEMS }, [{ no: 3, read: '설명', mark: 't', why: '구름 없음' }]);
-  assert.ok(p.startsWith('[활동지 검토]') && p.includes('[3]') && !p.includes('[4] 그림'), p);
+  const done = p.split('[먼저 채점한 결과]')[1];
+  assert.ok(p.startsWith('[활동지 검토]') && p.includes('[4] 그림') && done.includes('[3] 읽은 답: 설명') && !done.includes('[4]'), p);
   assert.deepEqual(normReview({ items: [{ no: 3, mark: 'o', why: '구름도 있음' }, { no: 4, mark: 'o', why: '' }, { no: 3, mark: 'z' }] }, [3]), [{ no: 3, mark: 'o', why: '구름도 있음' }]);
 });
 

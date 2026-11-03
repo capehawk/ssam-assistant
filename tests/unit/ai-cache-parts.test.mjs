@@ -28,3 +28,27 @@ test('단원평가 검토: 정답표 전체가 공통(학생마다 같음), 다�
   const p = gradeReviewPrompt(T, 1, [2]);
   assert.ok(p.startsWith(a.shared) && p.endsWith(a.own));
 });
+
+/* ---------- 활동지 ---------- */
+import { gradeParts as actParts, gradePrompt as actPrompt, reviewParts as actReviewParts, reviewPrompt as actReviewPrompt } from '../../web/menus/evaluate/activity/activity-ai.js';
+const ACT = { meta: { subject: '과학', unit: '4', lesson: '3', title: '물은 어디로 갈까?' }, items: [
+  { no: 1, type: 'choice', ask: '알맞은 것을 고르세요.', answer: '③', ok: '', part: '' },
+  { no: 2, type: 'write', ask: '물의 여행을 설명해 봅시다.', answer: '', ok: '증발과 구름을 넣어 설명함', part: '하나만 씀' },
+  { no: 3, type: 'draw', ask: '그려 봅시다.', answer: '', ok: '바다·구름·비', part: '일부만' }] };
+
+test('활동지: 1쪽·2쪽 학생도 공통이 같고, 그림 장수는 학생 글에만', () => {
+  const a = actParts(ACT, 1), b = actParts(ACT, 2);
+  assert.equal(a.shared, b.shared);
+  assert.ok(a.shared.startsWith('[활동지 채점]') && a.shared.includes('증발과 구름을 넣어 설명함') && !/\d장/.test(a.shared), a.shared.slice(0, 200));
+  assert.ok(a.own.includes('1장') && b.own.includes('2장') && b.own.includes('차례대로'), b.own);
+  const p = actPrompt(ACT, 2);
+  assert.ok(p.startsWith(a.shared) && p.endsWith(b.own));
+});
+
+test('활동지 검토: 문항과 기준 전체가 공통, 먼저 채점한 결과(다시 볼 칸)는 학생 글', () => {
+  const a = actReviewParts(ACT, [{ no: 2, read: '설명', mark: 't', why: '구름 없음' }]), b = actReviewParts(ACT, [{ no: 3, read: '그림', mark: 'o', why: '' }]);
+  assert.equal(a.shared, b.shared);
+  assert.ok(a.shared.startsWith('[활동지 검토]') && a.shared.includes('[1]') && a.shared.includes('[3]'), a.shared);
+  assert.ok(a.own.includes('[2] 읽은 답: 설명') && !a.own.includes('[3]'), a.own);
+  assert.ok(actReviewPrompt(ACT, [{ no: 2, read: '설명', mark: 't', why: '' }]).startsWith(a.shared));
+});

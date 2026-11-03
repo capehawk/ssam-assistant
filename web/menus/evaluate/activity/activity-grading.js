@@ -5,18 +5,21 @@ import * as store from '../../../core/store.js';
 import { toast } from '../../../core/ui.js';
 import { aiRowHTML, pick } from '../../../core/ai-roles.js';
 import { reviewJSON, opinionHTML, REVIEW_FAIL } from '../../../core/ai-review.js';
+import { runPool } from '../../../core/ai-pool.js';
+import { newMeter, useText } from '../../../core/ai-wire.js';
 import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle, bundleMsg } from '../../../core/bundle.js';
 import { readNos, openNoCheck, openNoWait, rosterAllowed, byNoOrder } from '../../../core/student-no.js';
 import { numbersFor, parseNos, renumber } from '../unit/unit-model.js';
 import { arrangePages } from '../unit/unit-pages.js';
 import { go } from '../../../core/shell.js';
 import { getActivity, getSet, saveSet, listActivities } from './activity-model.js';
-import { gradePrompt, validGrade, normGrade, judgeCell, reviewPrompt, normReview, MARK, LEVEL } from './activity-ai.js';
+import { gradeParts, validGrade, normGrade, judgeCell, reviewParts, normReview, MARK, LEVEL } from './activity-ai.js';
 import { A, registerStep, curAct, commitAct, refresh, render, goStep, esc, SS, getBox, visible, openActivity } from './activity.js';
 
 /* 세션 상태: 올린 학생 쪽은 한 활동지에만 붙음. idx[i] = i번째 학생의 쪽 번호들. 채점은 한 번에 한 활동지만 */
 /* raw: 올린 학생 쪽(정리 전), pages: 모아찍기·뒷면을 정리한 쪽 */
-const G = { id: null, raw: [], pages: [], idx: [], run: null, running: new Map(), nosOk: false };
+// usedNow: 이 화면을 켠 뒤 채점한 활동지(사용량 줄 앞에 「지난 채점」을 붙이지 않음)
+const G = { id: null, raw: [], pages: [], idx: [], run: null, running: new Map(), nosOk: false, usedNow: new Set() };
 const MARKS = Object.keys(MARK);
 const rosterExcept = () => (store.get('class', null) || {}).except || [];
 const fresh = no => ({ no, skip: false, status: 'idle', marks: {}, good: '', next: '', level: '', levelWhy: '' });
@@ -168,8 +171,8 @@ async function imagesFor(a, i) {
   for (let j = 0; j < pg.length; j++) out.push(await SS().files.pageImage(G.pages[pg[j]], m.on && m.mask.length && (m.all || j === 0) ? m.mask : null));
   return out;
 }
-const STOP = ['auth', 'quota', 'rate_limited'];
-async function gradeOne(id, i) {
+const STOP = ['auth', 'quota'];
+async function gradeOne(id, i, meter) {
   const a0 = getActivity(id), no = a0 && a0.students[i] && a0.students[i].no;
   if (no == null) return;
   const ctrl = new AbortController();
@@ -177,7 +180,9 @@ async function gradeOne(id, i) {
   try {
     const images = await imagesFor(a0, i);
     if (!images.length) throw { code: 'no_scan' };
-    const v = await ai.generateJSON(gradePrompt(a0, images.length), { images, signal: ctrl.signal, valid: validGrade, task: 'grade' });
+    // 공통(지시·문항과 기준)을 앞에 두어 학생마다 캐시 → 학생 그림 → 학생 글
+    const parts = gradeParts(a0, images.length);
+    const v = await ai.generateJSON(parts.own, { shared: { text: parts.shared }, images, signal: ctrl.signal, valid: validGrade, task: 'grade', meter });
     const r = normGrade(v, a0.items);
     const a = getActivity(id), s = a && a.students[i];
     if (!s || s.no !== no) return;
@@ -187,9 +192,11 @@ async function gradeOne(id, i) {
     if (!s.levelManual) { s.level = r.level; s.levelWhy = r.levelWhy; }
     s.status = 'done'; s.stale = false; s.err = ''; delete s.rvErr;
     commitAct(a); refresh(id);
-    await reviewOne(id, i, no, images, ctrl.signal);
+    await reviewOne(id, i, no, images, ctrl.signal, meter);
   } catch (e) {
     if (ctrl.signal.aborted) return;
+    // AI 한도: 실패로 두지 않고 풀이 다시 줄에 넣고 쉬었다가 이어 감
+    if (e && e.code === 'rate_limited' && G.run && G.run.id === id && !G.run.stop) return 'rate';
     const a = getActivity(id), s = a && a.students[i];
     const why = e && e.code === 'no_scan' ? '스캔이 없어요. 3단계에서 다시 올려 주세요' : e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요' : ai.errorMessage(e && e.code, e);
     if (s && s.no === no) { s.status = 'error'; s.err = why; commitAct(a); }
@@ -200,13 +207,14 @@ async function gradeOne(id, i) {
   } finally { if (G.running.get(i) === ctrl) G.running.delete(i); refresh(id); }
 }
 /* 검토 AI(업무별 AI 「채점」 검토): 노란 칸만 같은 그림으로 다시 봄. 다르면 칸에 rv(두 의견) */
-async function reviewOne(id, i, no, images, signal) {
+async function reviewOne(id, i, no, images, signal, meter) {
   if (!pick('grade', 'review')) return;
   const a = getActivity(id), s = a && a.students[i];
   if (!s) return;
   const cells = a.items.filter(it => s.marks[it.no] && s.marks[it.no].chk && !s.marks[it.no].manual).map(it => ({ no: it.no, ...s.marks[it.no] }));
   if (!cells.length) return;
-  const v = await reviewJSON('grade', reviewPrompt(a, cells), { images, signal, valid: x => Array.isArray(x) || !!(x && Array.isArray(x.items)) });
+  const parts = reviewParts(a, cells);
+  const v = await reviewJSON('grade', parts.own, { shared: { text: parts.shared }, images, signal, valid: x => Array.isArray(x) || !!(x && Array.isArray(x.items)), meter });
   if (!v) return;
   const a2 = getActivity(id), s2 = a2 && a2.students[i];
   if (!s2 || s2.no !== no) return;
@@ -225,10 +233,13 @@ async function gradeAll(id) {
   const queue = a.students.map((s, i) => ({ s, i })).filter(x => !x.s.skip && (x.s.status !== 'done' || x.s.stale)).map(x => x.i);
   if (!queue.length) { toast('채점할 학생이 없어요. 고칠 칸을 눌러 바꿀 수 있어요.', 5000); return; }
   // 이 채점만의 표: 멈춘 앞 채점의 일꾼이 늦게 돌아와도 새 채점의 학생을 가져가거나 새 채점을 끝내지 않게
-  const run = G.run = { id, queue, stop: false };
+  const run = G.run = { id, queue, stop: false, wait: false }, meter = newMeter(), acc = ai.isAccount();
   refresh(id);
-  const worker = async () => { while (G.run === run && !run.stop && run.queue.length) await gradeOne(id, run.queue.shift()); };
-  await Promise.all([worker(), worker()]);
+  // 처음 3명(Claude 계정은 2명), 잘되면 4명까지, 한도면 줄이고 20초 쉬었다가 이어 감(스펙 2026-11-03 4장)
+  const r = await runPool(run, i => (G.run === run ? gradeOne(id, i, meter) : null), { start: acc ? 2 : 3, max: acc ? 2 : 4, onWait: on => { run.wait = on; refresh(id); } });
+  if (r.gaveUp && G.run === run) toast(`채점을 멈췄어요. ${ai.errorMessage('rate_limited')} 남은 학생은 [채점 시작]으로 이어서 해요.`, 9000);
+  const tot = meter.total(), a2 = getActivity(id);
+  if (a2 && (tot.sent || tot.out)) { a2.aiUse = { at: Date.now(), ...tot }; G.usedNow.add(id); commitAct(a2); }
   if (G.run === run) G.run = null;
   refresh(id);
 }
@@ -255,7 +266,8 @@ function step4HTML(a) {
       <td><input class="field" data-good="${s.no}" value="${esc(s.good)}" aria-label="${s.no}번 잘한 점"></td><td><input class="field" data-next="${s.no}" value="${esc(s.next)}" aria-label="${s.no}번 더 해 볼 점"></td></tr>`;
   }).join('');
   return `<div class="yp-card"><h3>채점·확인</h3>${aiRowHTML('grade')}
-      <div class="row"><button class="btn primary" type="button" data-ac="grade"${running || !ready ? ' disabled' : ''}>${done ? `남은 학생·다시 채점 (${todo}명)` : '채점 시작'}</button>${running ? '<button class="btn" type="button" data-ac="stop">멈추기</button><span class="muted"><span class="spin"></span> 채점하는 중…</span>' : ''}</div>
+      <div class="row"><button class="btn primary" type="button" data-ac="grade"${running || !ready ? ' disabled' : ''}>${done ? `남은 학생·다시 채점 (${todo}명)` : '채점 시작'}</button>${running ? `<button class="btn" type="button" data-ac="stop">멈추기</button><span class="muted"><span class="spin"></span> 채점하는 중…</span>${G.run && G.run.id === a.id && G.run.wait ? '<b class="warn">AI 한도에 걸려 잠깐 쉬어요</b>' : ''}` : ''}</div>
+      ${a.aiUse && useText(a.aiUse) ? `<p class="muted" id="acAiUse">${G.usedNow.has(a.id) ? '' : '지난 채점 '}${esc(useText(a.aiUse))}</p>` : ''}
       ${!ready ? '<p class="muted">스캔이 이 화면에 없어요. 3단계에서 학생 활동지를 올리면 채점할 수 있어요. 채점한 결과는 그대로 고칠 수 있어요.</p>' : ''}
       ${chk ? `<p class="muted">노란 칸 ${chk}개는 AI가 확신하지 못했거나 앱 판정과 달라요. 눌러서 확인해 주세요.</p>` : ''}
       <div class="ac-grid-wrap"><table class="ac-grid" id="acGrid"><thead><tr><th>번호</th>${a.items.map(it => `<th title="${esc(it.ask)}">${it.no}</th>`).join('')}<th>수준</th><th>잘한 점</th><th>더 해 볼 점</th></tr></thead><tbody>${rows}</tbody></table></div>
