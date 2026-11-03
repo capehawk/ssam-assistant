@@ -4,6 +4,7 @@
 import { onEnter, go } from '../../core/shell.js';
 import * as ai from '../../core/ai.js';
 import { toast, copyText } from '../../core/ui.js';
+import { onFlush } from '../../core/store.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { aiRowHTML } from '../../core/ai-roles.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
@@ -16,21 +17,37 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const SS = () => window.SSAM || {};
 const IMAGE = /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i;
 const MAX_PHOTOS = 12;
-/* 화면에만: photos [{ name, bytes(JPEG), w, h, url, ai: { mime, b64 } }], scans(글로 못 읽은 문서 쪽 그림 — AI에만), busy, msg */
+/* 화면에만: photos [{ name, bytes(JPEG), w, h, url, ai: { mime, b64 } }], scans [{ src(그 문서), imgs }](글로 못 읽은 문서 쪽 그림 — AI에만,
+   문서를 빼면 같이 빠짐, 문서마다 3쪽), busy, msg */
 export const R = { photos: [], scans: [], busy: false, msg: '', adding: 0 };
 let box = null, cur = null, curTab = '';
 
 const blank = () => ({ id: newReportId(), sources: [], memo: '', r: null, letter: { title: '', body: '' }, letterEdited: false, captions: [] });
 const c = () => (cur || (cur = getCurrent() || blank()));
 const year = () => new Date().getFullYear();
-function save() {
-  const x = c();
-  saveCurrent(x);
-  if (x.r) pushReport({ ...x, title: reportTitle(x.r) });
+/* 최근 결과 보고에 넣기는 칸·메모를 고칠 때마다 하지 않고 잠깐 뒤에 한 번(다른 보고로 옮기거나 앱을 닫을 때는 바로) */
+let pushT = null, pushX = null;
+function flushPush() {
+  clearTimeout(pushT); pushT = null;
+  const x = pushX; pushX = null;
+  if (x && x.r) pushReport({ ...x, title: reportTitle(x.r) });
+}
+onFlush(flushPush);
+/* x: 저장할 결과 보고(기본은 지금 것). 지금 화면의 것만 「지금 결과 보고」로 저장 */
+function save(x = c(), { now = false } = {}) {
+  if (x === c()) saveCurrent(x);
+  if (pushX && pushX !== x) flushPush();
+  pushX = x;
+  if (now) flushPush();
+  else { clearTimeout(pushT); pushT = setTimeout(flushPush, 400); }
+}
+/* 다른 결과 보고로 옮기기 전: 미뤄 둔 저장을 마치고 화면의 사진·쪽 그림을 비움 */
+function leave() {
+  flushPush();
+  R.photos.forEach(p => URL.revokeObjectURL(p.url)); R.photos = []; R.scans = [];
 }
 /* 칸이 바뀌면 공문을 다시 맞춤(공문을 손으로 고쳤으면 그대로 두고 [칸으로 다시 맞추기]) */
-function recompose(force = false) {
-  const x = c();
+function recompose(force = false, x = c()) {
   if (!x.r || (x.letterEdited && !force)) return;
   x.letter = composeReportLetter(x.r); x.letterEdited = false;
 }
@@ -65,7 +82,11 @@ export async function addFiles(files) {
     try { text = await readText(f); } catch (e) {
       // 글자가 없는 PDF(스캔본)는 쪽 그림을 AI에 보냄(최대 3쪽)
       if (e && e.code === 'PDF_NO_TEXT' && SS().files && SS().files.toImages) {
-        try { const imgs = await SS().files.toImages(f); R.scans.push(...imgs.slice(0, Math.max(0, 3 - R.scans.length))); x.sources.push({ kind: guessSourceKind(f.name, '', year()), name: f.name, text: '' }); continue; } catch (e2) {}
+        try {
+          const imgs = await SS().files.toImages(f), src = { kind: guessSourceKind(f.name, '', year()), name: f.name, text: '' };
+          x.sources.push(src); R.scans.push({ src, imgs: imgs.slice(0, 3) });
+          continue;
+        } catch (e2) {}
       }
       fails.push(`${f.name}(${fileMessage(e && e.code)})`); continue;
     }
@@ -84,20 +105,27 @@ export async function write() {
   if (R.busy) return;
   const x = c();
   const hasText = x.sources.some(s => s.text.trim()) || x.memo.trim();
-  if (!hasText && !R.photos.length && !R.scans.length) { toast('계획서·공문 파일이나 한 일 메모, 사진을 넣어 주세요.', 5000); return; }
+  // 쪽 그림은 지금 목록에 있는 문서 것만(뺀 문서 것은 보내지 않음), 모두 6쪽까지
+  const scans = R.scans.filter(e => x.sources.includes(e.src)).flatMap(e => e.imgs).slice(0, 6);
+  if (!hasText && !R.photos.length && !scans.length) { toast('계획서·공문 파일이나 한 일 메모, 사진을 넣어 주세요.', 5000); return; }
   if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
   R.busy = true; R.msg = 'AI가 결과 보고를 쓰는 중…'; render();
   try {
     const memo = cleanSheet(x.memo).text;
-    const images = [...R.photos.map(p => p.ai), ...R.scans];
-    const v = await ai.generateJSON(reportPrompt({ sources: x.sources, memo, nPhotos: R.photos.length, nDocImages: R.scans.length, year: year() }),
+    // 보낸 사진 차례를 기억: 기다리는 동안 사진을 빼거나 옮겨도 설명이 제 사진에 감
+    const shots = R.photos.slice();
+    const images = [...shots.map(p => p.ai), ...scans];
+    const v = await ai.generateJSON(reportPrompt({ sources: x.sources, memo, nPhotos: shots.length, nDocImages: scans.length, year: year() }),
       { images, task: 'report', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
     x.r = normReport(v, { year: year() });
-    // 사진 설명: 선생님이 쓴 것은 그대로, 빈 것만 AI 설명
-    x.captions = R.photos.map((p, i) => String(x.captions[i] || '').trim() || x.r.photos[i] || '');
-    recompose(true);
-    save();
-    toast('결과 보고 공문과 보고서를 썼어요. 내용을 확인해 주세요. 숫자·성과는 꼭 확인해 주세요.', 5000);
+    const here = c() === x;
+    // 사진 설명: 선생님이 쓴 것은 그대로, 빈 것만 그 사진의 AI 설명 (그새 다른 결과 보고로 옮겼으면 보낸 차례대로)
+    const now = here ? R.photos : shots;
+    x.captions = now.map((p, i) => { const k = shots.indexOf(p); return (here ? String(x.captions[i] || '').trim() : '') || (k >= 0 ? x.r.photos[k] || '' : ''); });
+    recompose(true, x);
+    save(x, { now: true });
+    toast(here ? '결과 보고 공문과 보고서를 썼어요. 내용을 확인해 주세요. 숫자·성과는 꼭 확인해 주세요.'
+      : `「${reportTitle(x.r)}」를 다 써서 최근 결과 보고에 넣었어요.`, 5000);
   } catch (e) {
     toast(e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. 다시 눌러 주세요.' : ai.errorMessage(e && e.code, e), 6000);
   }
@@ -108,7 +136,7 @@ export async function write() {
 /* ---------- 그리기 ---------- */
 const srcHTML = x => (x.sources.length ? `<ul class="rp-src" id="rpSrc">${x.sources.map((s, i) => `<li><span class="rp-name" title="${esc(s.name)}">${esc(s.name)}</span>
     <select class="field" data-rp-kind="${i}" aria-label="${esc(s.name)} 종류">${SOURCE_KINDS.map(([k, l]) => `<option value="${k}"${s.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
-    <span class="muted">${s.text ? `${s.text.length.toLocaleString('ko-KR')}자` : '쪽 그림'}</span><button class="icon-btn tiny" type="button" data-rp-del="${i}" aria-label="${esc(s.name)} 빼기" title="빼기">✕</button></li>`).join('')}</ul>`
+    <span class="muted">${s.text ? `${s.text.length.toLocaleString('ko-KR')}자` : R.scans.some(e => e.src === s) ? '쪽 그림' : '쪽 그림 · 다시 넣어 주세요'}</span><button class="icon-btn tiny" type="button" data-rp-del="${i}" aria-label="${esc(s.name)} 빼기" title="빼기">✕</button></li>`).join('')}</ul>`
   : '<p class="muted" id="rpSrc" style="margin:0">계획서·관련 공문·작년 보고서를 넣으면 종류를 짐작해 칩으로 보여요.</p>');
 const photosHTML = x => (R.photos.length ? `<ul class="rp-photos" id="rpPhotos">${R.photos.map((p, i) => `<li>
     <img src="${p.url}" alt="사진 ${i + 1}"><input class="field" data-rp-cap="${i}" value="${esc(x.captions[i] || '')}" placeholder="사진 설명(AI가 채워요)" aria-label="사진 ${i + 1} 설명" autocomplete="off">
@@ -182,7 +210,7 @@ function refreshLetter() {
 /* 행사계획 등에서: 결과 보고로 가서 새 결과 보고로 글을 넣음 */
 export function putReportSources({ sources = [], memo = '' } = {}) {
   go('plan', 'report');
-  R.photos.forEach(p => URL.revokeObjectURL(p.url)); R.photos = []; R.scans = [];
+  leave();
   cur = { ...blank(), memo: String(memo || ''), sources: sources.filter(s => s && String(s.text || '').trim()).map(s => ({ kind: s.kind || 'plan', name: String(s.name || '글'), text: cleanSheet(s.text).text })) };
   save(); render();
 }
@@ -193,7 +221,7 @@ document.addEventListener('click', e => {
   if (!mine(e)) return;
   const x = c();
   const del = e.target.closest('[data-rp-del]');
-  if (del) { x.sources.splice(+del.dataset.rpDel, 1); save(); render(); return; }
+  if (del) { const [s] = x.sources.splice(+del.dataset.rpDel, 1); R.scans = R.scans.filter(e => e.src !== s); save(); render(); return; }
   const pd = e.target.closest('[data-rp-pdel]');
   if (pd) { const i = +pd.dataset.rpPdel; URL.revokeObjectURL(R.photos[i].url); R.photos.splice(i, 1); x.captions.splice(i, 1); save(); render(); return; }
   const mv = e.target.closest('[data-rp-move]');
@@ -209,7 +237,7 @@ document.addEventListener('click', e => {
   if (op) {
     const r = listReports().find(y => y.id === op.dataset.rpOpen);
     if (!r) return;
-    R.photos.forEach(p => URL.revokeObjectURL(p.url)); R.photos = []; R.scans = [];
+    leave();
     cur = { id: r.id, sources: r.sources, memo: r.memo, r: r.r, letter: r.letter, letterEdited: r.letterEdited, captions: r.captions };
     saveCurrent(cur); render(); return;
   }
@@ -218,7 +246,7 @@ document.addEventListener('click', e => {
   const a = b.dataset.rp;
   if (a === 'pick') box.querySelector('#rpFile').click();
   else if (a === 'write') write();
-  else if (a === 'new') { R.photos.forEach(p => URL.revokeObjectURL(p.url)); R.photos = []; R.scans = []; cur = blank(); clearCurrent(); render(); }
+  else if (a === 'new') { leave(); cur = blank(); clearCurrent(); render(); }
   else if (a === 'resync') { recompose(true); save(); refreshLetter(); }
   else if (a === 'addSec' && x.r) { x.r.sections.push({ h: '새 소제목', lines: [] }); save(); render(); }
   else if (a === 'copyTitle' || a === 'copyBody' || a === 'copyAll') {
@@ -240,7 +268,7 @@ const R_KEYS = { name: 'name', place: 'place', target: 'target', count: 'count',
 document.addEventListener('input', e => {
   if (!mine(e)) return;
   const el = e.target, x = c();
-  if (el.id === 'rpMemo') { x.memo = el.value; saveCurrent(x); return; }
+  if (el.id === 'rpMemo') { x.memo = el.value; save(); return; }
   if (el.dataset.rpCap != null) { x.captions[+el.dataset.rpCap] = el.value; save(); return; }
   if (el.id === 'rpTitle' || el.id === 'rpBody') { x.letter = { ...x.letter, [el.id === 'rpTitle' ? 'title' : 'body']: el.value }; x.letterEdited = true; save(); refreshLetter(); return; }
   if (!x.r) return;
