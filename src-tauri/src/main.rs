@@ -322,6 +322,8 @@ fn main() {
             install_update,
             neis::neis_arm,
             neis::neis_disarm,
+            neis::queue_arm,
+            neis::queue_goto,
             ai_proxy::ai_proxy,
             files::save_download,
             files::note_save_attachments,

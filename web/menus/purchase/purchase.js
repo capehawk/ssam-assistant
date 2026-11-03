@@ -6,7 +6,7 @@ import * as ai from '../../core/ai.js';
 import { copyText, toast } from '../../core/ui.js';
 import { getPurchaseLimit, getMeetCap, getPurchaseFlow } from '../../core/settings.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
-import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, composeReason, reasonTail, purchaseDoc, toNumber, findPersonal,
+import { TYPES, emptyForm, emptyItem, itemAmount, cleanItems, sumItems, checkPurchase, itemsTSV, purchaseQueueItems, composeReason, reasonTail, purchaseDoc, toNumber, findPersonal,
   defaultUnit, quoteNote, withholding, INCOME, meetingItem, budgetHints, ATTACH, basisLine, draftMemo } from './rules.js';
 import { aiRowHTML, pick } from '../../core/ai-roles.js';
 import { reviewJSON, purchaseReviewPrompt, normPurchaseReview, opinionHTML, REVIEW_FAIL } from '../../core/ai-review.js';
@@ -15,6 +15,7 @@ import { oneshotPrompt, normOneshot, confirmChips, askNeeds, GUESS_KEYS } from '
 import { pushRecent, newId, listRecent, deleteRecent, listTemplates, saveTemplate, renameTemplate, deleteTemplate, templateForm } from './library.js';
 import { fileMessage, isFileCode } from '../../core/files.js';
 import { registerInbox } from '../../core/inbox.js';
+import { canQueue, openQueue } from '../../core/queue-paste.js';
 
 const CUR_KEY = 'purchase:current';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -230,6 +231,11 @@ function goChip(key) {
   } else if (key) el = box.querySelector(`[data-k="${key}"]`);
   if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
 }
+/* 에듀파인에 차례로 붙여넣기 (Windows 앱, 스펙 2026-11-03 3장): 산출 내역은 칸마다(기본) 또는 표 한 번에 */
+const queueCalc = () => (get('queueCalc', 'cells') === 'table' ? 'table' : 'cells');
+const queueHTML = () => (canQueue() ? `<div class="pc-queue row"><button class="btn primary" type="button" data-pc="queue">에듀파인에 차례로 붙여넣기</button>
+    <span class="seg" role="radiogroup" aria-label="산출 내역 넣는 방식">${[['cells', '산출 내역 칸마다'], ['table', '표 한 번에']].map(([k, l]) => `<button type="button" role="radio" data-qcalc="${k}" aria-pressed="${queueCalc() === k}" aria-checked="${queueCalc() === k}">${l}</button>`).join('')}</span></div>
+  <p class="muted" style="margin:0">에듀파인(브라우저)에서 칸을 누르고 Ctrl+V 할 때마다 제목 → 품의 사유 → 산출 내역이 차례로 들어가요. 저장은 선생님이 눌러 주세요.</p>` : '');
 function renderDraft() {
   const card = box && box.querySelector('#pcDraftCard');
   if (!card) return;
@@ -249,7 +255,7 @@ function renderDraft() {
         <div id="pcResyncBox">${resyncHTML()}</div></div>
       <div class="pc-out"><div class="pc-out-h"><span class="lab">산출 내역</span>${copyBtn('calc', '표 복사')}</div>
         <div class="pc-calc-wrap" id="pcCalcWrap">${calcHTML()}</div></div>
-      <div class="row">${exportButton('data-pc="export"')}</div>`
+      <div class="row">${exportButton('data-pc="export"')}</div>${queueHTML()}`
     : `<p class="muted pc-empty">${busy ? '<span class="spin"></span> AI가 제목과 품의 사유를 쓰고 있어요…' : '사려는 것·견적서를 넣고 [초안 만들기]를 누르면 제목·품의 사유·산출 내역을 써요. 금액과 합계는 앱이 계산해요.'}</p>`}
     <div id="pcChecksBox">${checksHTML()}</div>`;
 }
@@ -519,9 +525,12 @@ document.addEventListener('click', e => {
     copyText(text).then(ok => toast(ok ? (k === 'calc' ? '표를 복사했어요. 에듀파인·엑셀에 붙여넣으세요' : '복사했어요') : '복사하지 못했어요'));
     return;
   }
+  const qc = e.target.closest('[data-qcalc]');
+  if (qc) { set('queueCalc', qc.dataset.qcalc); renderDraft(); return; }
   const b = e.target.closest('[data-pc]');
   if (!b) return;
   const a = b.dataset.pc;
+  if (a === 'queue' && st.draft) { openQueue({ title: st.draft.title, items: purchaseQueueItems(st.draft, st.form, queueCalc()) }); return; }
   if (a === 'addItem') { st.form.items.push(emptyItem()); save(); renderItems(st.form.items.length - 1); }
   else if (a === 'delItem') {
     st.form.items.splice(+b.dataset.i, 1);

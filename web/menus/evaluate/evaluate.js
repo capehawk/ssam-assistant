@@ -4526,6 +4526,8 @@ function neisListen() {
 async function neisArm(from) {
   if (NEIS.state === 'running') return;
   neisListen();
+  // 에듀파인 차례로 붙여넣기 창은 닫음(앱은 Ctrl+V를 하나만 맡음 — 준비는 neis_arm이 바꿈)
+  document.dispatchEvent(new CustomEvent('ssam:paste-owner', { detail: 'neis' }));
   clearTimeout(NEIS.rearmT);
   const seq = ++NEIS.seq;
   NEIS.from = Math.max(0, Math.min(NEIS.ids.length - 1, from | 0));
@@ -4548,6 +4550,12 @@ async function neisArm(from) {
   else { NEIS.state = 'armed'; NEIS.job = { gen: r && r.gen, ids, from: start, src }; NEIS.until = Date.now() + ((r && +r.secs) || 300) * 1000; }
   renderNeis();
 }
+// 에듀파인 차례로 붙여넣기를 준비하면 이 창은 닫음(붙여넣는 중이 아니면 — 그때는 앱이 차례로 붙여넣기를 막음)
+document.addEventListener('ssam:paste-owner', e => {
+  if (e.detail === 'neis' || !NEIS.open || NEIS.state === 'running') return;
+  clearTimeout(NEIS.rearmT); NEIS.seq++; NEIS.job = null; NEIS.open = false; NEIS.state = 'idle';
+  renderNeis();
+});
 function neisClose() {
   clearTimeout(NEIS.rearmT);
   if (IN_APP && NEIS.state !== 'idle') neisInvoke('neis_disarm').catch(() => {});

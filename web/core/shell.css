@@ -66,3 +66,13 @@ section[data-menu="evaluate"][hidden]{display:none}
   .side-menus,.side-foot{padding:0 2px}
   .side-btn{flex-direction:column;justify-content:center;gap:2px;min-width:44px;padding:4px 6px;font-size:12px}
 }
+/* 에듀파인에 차례로 붙여넣기 패널 (core/queue-paste.js) — 나이스 패널(.neis)과 같은 자리·모양 */
+.qp-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.qp-list button { all: unset; box-sizing: border-box; width: 100%; display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.qp-list button:disabled { cursor: default; }
+.qp-list button:not(:disabled):hover, .qp-list button:focus-visible { background: var(--accent-soft, #eef0ff); }
+.qp-list b { flex: none; }
+.qp-list .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.qp-list .qp-next button { background: var(--accent-soft, #eef0ff); outline: 1.5px solid var(--accent, #4f46e5); }
+.qp-list .qp-done b { color: var(--ok, #15803d); }
+.qp-list .qp-empty { opacity: .55; }

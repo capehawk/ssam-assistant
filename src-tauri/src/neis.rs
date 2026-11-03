@@ -34,6 +34,10 @@ const MAX_TEXT: usize = 4000;
 pub const MAX_TABS: u32 = 9;
 /// 글자 입력 때 한 번에 보내는 글자 수
 const CHUNK: usize = 24;
+/// 차례로 붙여넣기(에듀파인): 쓰지 않으면 풀리는 시간(붙일 때마다 다시)
+pub const QUEUE_SECS: u64 = 900;
+const MAX_ITEMS: usize = 50;
+const MAX_ITEM: usize = 20000;
 /// 나이스를 여는 브라우저 (이 프로그램 창에서 누른 Ctrl+V만 자동으로 넣기 시작)
 const BROWSERS: &[&str] = &[
     "chrome.exe",
@@ -246,7 +250,65 @@ pub fn run(
     (done, End::Finished)
 }
 
+/* ---------- 차례로 붙여넣기 (에듀파인 품의·공문 기안, 스펙 2026-11-03 3장) ----------
+   Ctrl+V를 누를 때마다 다음 조각을 클립보드에 넣고 그 칸에 붙여 넣음(글 그대로, 여러 줄도) */
+
+/// 한 조각 붙이기: 클립보드에 넣고 Ctrl+V. 사용자가 아직 Ctrl을 누르고 있으면 V만 (눌린 Ctrl과 합쳐짐)
+pub fn queue_plan(text: &str, ctrl_held: bool) -> Vec<Step> {
+    vec![
+        Step::Clip(text.to_string()),
+        Step::Wait(60),
+        Step::Press(if ctrl_held { vec![Key::V] } else { vec![Key::Ctrl, Key::V] }),
+        Step::Wait(150),
+    ]
+}
+
+/// 할 일을 그대로 함 (붙이는 순간은 사용자가 Ctrl을 누르고 있으므로 키 확인을 하지 않음)
+pub fn play(steps: &[Step], io: &mut dyn Io) -> Result<(), String> {
+    for step in steps {
+        match step {
+            Step::Clip(t) => io.set_clip(t)?,
+            Step::Press(k) => io.press(k)?,
+            Step::Type(t) => io.type_text(t)?,
+            Step::Wait(ms) => io.wait(*ms),
+            Step::Done(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// from부터 처음으로 비지 않은 조각
+pub fn next_filled(items: &[String], from: usize) -> Option<usize> {
+    (from..items.len()).find(|&i| !items[i].trim().is_empty())
+}
+
+/// 조각 받기: 줄바꿈은 그대로(Windows 꼴 CRLF로), 너무 길면 자름
+fn check_items(items: Vec<String>) -> Result<Vec<String>, String> {
+    if items.is_empty() || items.iter().all(|t| t.trim().is_empty()) {
+        return Err("붙여넣을 내용이 없어요".to_string());
+    }
+    if items.len() > MAX_ITEMS {
+        return Err(format!("한 번에 {MAX_ITEMS}개까지 차례로 붙여넣을 수 있어요"));
+    }
+    Ok(items
+        .into_iter()
+        .map(|t| {
+            let t: String = t.chars().take(MAX_ITEM).collect();
+            t.replace("\r\n", "\n").replace('\n', "\r\n")
+        })
+        .collect())
+}
+
 /* ---------- 앱과 잇기 ---------- */
+
+struct Queue {
+    items: Vec<String>,
+    /// 다음에 붙일 조각 번호 (비었으면 그 뒤 첫 조각)
+    next: usize,
+    any_window: bool,
+    gen: u64,
+    used: std::time::Instant,
+}
 
 struct Job {
     texts: Vec<String>,
@@ -257,6 +319,8 @@ struct Job {
 #[derive(Default)]
 struct Inner {
     armed: Option<Job>,
+    /// 차례로 붙여넣기 준비 (나이스 준비와 함께 있지 않음 — Ctrl+V는 하나만 맡음)
+    queue: Option<Queue>,
     running: bool,
     gen: u64,
 }
@@ -275,6 +339,7 @@ pub struct Neis {
 #[serde(rename_all = "camelCase")]
 struct Progress {
     /// "start" 시작 · "progress" 진행 · "end" 끝 · "expired" 준비 시간이 지남 · "elsewhere" 브라우저가 아닌 창에서 누름
+    /// · "queue" 차례로 붙여넣기에서 한 조각을 붙임(done = 붙인 조각 번호 + 1)
     state: &'static str,
     /// 어느 준비에 대한 알림인지 (neis_arm이 돌려준 번호)
     gen: u64,
@@ -373,10 +438,11 @@ pub struct Armed {
     secs: u64,
 }
 
-/// 준비를 풂 (inner 잠금을 쥔 채로 부름)
+/// 준비를 풂 (inner 잠금을 쥔 채로 부름) — 나이스·차례로 붙여넣기 둘 다
 fn disarm_locked(app: &AppHandle, inner: &mut Inner) {
     inner.gen += 1;
     inner.armed = None;
+    inner.queue = None;
     if !inner.running {
         let _ = set_key(app, paste_key(), false);
     }
@@ -416,6 +482,7 @@ pub async fn neis_arm(
     }
     inner.gen += 1;
     let gen = inner.gen;
+    inner.queue = None;
     inner.armed = Some(Job {
         texts,
         opts: Options {
@@ -465,6 +532,82 @@ pub async fn neis_disarm(app: AppHandle) {
     disarm_locked(&app, &mut inner);
 }
 
+/// 차례로 붙여넣기 준비: Ctrl+V를 이 앱이 맡고, 누를 때마다 다음 조각을 붙임 (나이스 준비는 풂)
+#[tauri::command]
+pub async fn queue_arm(
+    app: AppHandle,
+    items: Vec<String>,
+    start: usize,
+    any_window: bool,
+) -> Result<Armed, String> {
+    if !cfg!(windows) {
+        return Err("차례로 붙여넣기는 Windows 앱에서만 돼요".to_string());
+    }
+    let st = app.state::<Neis>();
+    let mut inner = lock(&st.inner);
+    if inner.running {
+        return Err("지금 붙여넣고 있어요. 끝난 뒤에 다시 눌러 주세요".to_string());
+    }
+    let items = match check_items(items) {
+        Ok(t) => t,
+        Err(e) => {
+            disarm_locked(&app, &mut inner);
+            return Err(e);
+        }
+    };
+    inner.gen += 1;
+    let gen = inner.gen;
+    inner.armed = None;
+    inner.queue = Some(Queue {
+        next: start.min(items.len()),
+        items,
+        any_window,
+        gen,
+        used: std::time::Instant::now(),
+    });
+    if let Err(e) = set_key(&app, paste_key(), true) {
+        inner.queue = None;
+        return Err(format!(
+            "Ctrl+V를 맡지 못했어요. 다른 프로그램이 Ctrl+V 단축키를 쓰고 있을 수 있어요. ({e})"
+        ));
+    }
+    drop(inner);
+
+    // 쓰지 않은 채 QUEUE_SECS가 지나면 풀기 (붙일 때마다 다시 셈)
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(30));
+        let st = handle.state::<Neis>();
+        let mut inner = lock(&st.inner);
+        let Some(q) = inner.queue.as_ref().filter(|q| q.gen == gen) else { return };
+        if !inner.running && q.used.elapsed() >= Duration::from_secs(QUEUE_SECS) {
+            disarm_locked(&handle, &mut inner);
+            drop(inner);
+            emit(&handle, "expired", gen, 0, 0);
+            return;
+        }
+    });
+    Ok(Armed {
+        gen,
+        secs: QUEUE_SECS,
+    })
+}
+
+/// 차례로 붙여넣기의 다음 조각 바꾸기 (앞으로·건너뛰기·목록에서 고르기). 준비가 없으면 아무것도 안 함
+#[tauri::command]
+pub async fn queue_goto(app: AppHandle, gen: u64, index: usize) -> Result<(), String> {
+    let st = app.state::<Neis>();
+    let mut inner = lock(&st.inner);
+    match inner.queue.as_mut().filter(|q| q.gen == gen) {
+        Some(q) => {
+            q.next = index.min(q.items.len());
+            q.used = std::time::Instant::now();
+            Ok(())
+        }
+        None => Err("차례로 붙여넣기 준비가 풀렸어요. 다시 준비해 주세요".to_string()),
+    }
+}
+
 /// 전역 단축키가 눌렸을 때 (앱 메인 스레드에서 불림 → 잠금을 쓰지 않고, 오래 걸리는 일은 따로)
 pub fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     if event.state != ShortcutState::Pressed {
@@ -497,6 +640,10 @@ fn on_paste(app: &AppHandle) {
     let st = app.state::<Neis>();
     let target = st.pressed_in.load(Ordering::SeqCst);
     let (own, exe) = window_info(target);
+    if lock(&st.inner).queue.is_some() {
+        queue_paste(app, own, exe);
+        return;
+    }
     let job = {
         let mut inner = lock(&st.inner);
         if inner.running {
@@ -533,7 +680,7 @@ fn on_paste(app: &AppHandle) {
     {
         let mut inner = lock(&st.inner);
         inner.running = false;
-        if inner.armed.is_none() {
+        if inner.armed.is_none() && inner.queue.is_none() {
             let _ = set_key(app, paste_key(), false);
         }
     }
@@ -545,6 +692,83 @@ fn on_paste(app: &AppHandle) {
         End::Error(e) => ("error", e),
     };
     emit_full(app, "end", job.gen, done, total, reason, message);
+}
+
+/// 차례로 붙여넣기: 브라우저(또는 고른 창)에서 누른 Ctrl+V → 다음 조각을 붙이고 그다음으로
+fn queue_paste(app: &AppHandle, own: bool, exe: String) {
+    let st = app.state::<Neis>();
+    let picked = {
+        let mut inner = lock(&st.inner);
+        if inner.running {
+            return;
+        }
+        let Some(q) = inner.queue.as_mut() else { return };
+        if own || !(q.any_window || is_browser(&exe)) {
+            let gen = (!own).then_some(q.gen);
+            drop(inner);
+            pass_through(app);
+            if let Some(gen) = gen {
+                emit_full(app, "elsewhere", gen, 0, 0, "", exe);
+            }
+            return;
+        }
+        match next_filled(&q.items, q.next) {
+            Some(i) => {
+                inner.running = true;
+                let q = inner.queue.as_ref().expect("queue");
+                Some((i, q.items[i].clone(), q.gen, q.items.len()))
+            }
+            None => None,
+        }
+    };
+    let Some((i, text, gen, total)) = picked else {
+        // 남은 조각이 없음 → 평소처럼 붙여넣기
+        pass_through(app);
+        return;
+    };
+    // 앱이 보내는 Ctrl+V가 그 칸에 가도록 맡아 둔 Ctrl+V를 잠깐 내려놓음
+    let _ = set_key(app, paste_key(), false);
+    let r = paste_item(&text);
+    let mut inner = lock(&st.inner);
+    inner.running = false;
+    let same = inner.queue.as_ref().map(|q| q.gen) == Some(gen);
+    if let Err(e) = r {
+        // 붙이지 못했으면 준비를 풂(화면에서 [다시 준비])
+        if same {
+            inner.queue = None;
+        }
+        drop(inner);
+        emit_full(app, "end", gen, i, total, "error", e);
+        return;
+    }
+    if !same {
+        // 그새 풀었으면 다시 맡지 않음
+        drop(inner);
+        return;
+    }
+    let q = inner.queue.as_mut().expect("queue");
+    q.next = i + 1;
+    q.used = std::time::Instant::now();
+    if next_filled(&q.items, q.next).is_none() {
+        inner.queue = None;
+        drop(inner);
+        emit_full(app, "end", gen, total, total, "finished", String::new());
+    } else {
+        let _ = set_key(app, paste_key(), true);
+        drop(inner);
+        emit(app, "queue", gen, i + 1, total);
+    }
+}
+
+#[cfg(windows)]
+fn paste_item(text: &str) -> Result<(), String> {
+    let mut io = win::WinIo::default();
+    play(&queue_plan(text, win::ctrl_held()), &mut io)
+}
+
+#[cfg(not(windows))]
+fn paste_item(_text: &str) -> Result<(), String> {
+    Err("차례로 붙여넣기는 Windows 앱에서만 돼요".to_string())
 }
 
 /// 준비가 안 된 때, 이 앱 창이나 브라우저가 아닌 창에서 누른 Ctrl+V는 평소처럼 붙여넣기
@@ -563,7 +787,7 @@ fn pass_through(app: &AppHandle) {
     // 그새 준비가 풀리지 않았으면 다시 Ctrl+V를 맡음 (잠금 안에서 확인해 풀기와 엇갈리지 않게)
     let st = app.state::<Neis>();
     let inner = lock(&st.inner);
-    if inner.armed.is_some() && !inner.running {
+    if (inner.armed.is_some() || inner.queue.is_some()) && !inner.running {
         let _ = set_key(app, paste_key(), true);
     }
 }
@@ -880,6 +1104,48 @@ mod tests {
             check_texts(s(&["가\n나\t다", ""])).unwrap(),
             s(&["가 나 다", ""])
         );
+    }
+
+    #[test]
+    fn queue_plan_puts_item_in_clipboard_then_pastes_once() {
+        let mut io = Fake::default();
+        play(&queue_plan("제목", false), &mut io).unwrap();
+        assert_eq!(io.log, vec!["paste:제목"]);
+        // 사용자가 Ctrl을 아직 누르고 있으면 V만 보냄 (Ctrl+V가 두 번 되지 않게)
+        let mut io = Fake::default();
+        play(&queue_plan("사유", true), &mut io).unwrap();
+        assert_eq!(io.clip, "사유");
+        assert_eq!(io.log, vec!["V"]);
+    }
+
+    #[test]
+    fn queue_skips_empty_items() {
+        let items = s(&["가", "", "  ", "라"]);
+        assert_eq!(next_filled(&items, 0), Some(0));
+        assert_eq!(next_filled(&items, 1), Some(3));
+        assert_eq!(next_filled(&items, 4), None);
+        assert_eq!(next_filled(&items, 9), None);
+    }
+
+    #[test]
+    fn queue_items_are_checked_and_keep_lines() {
+        assert!(check_items(vec![]).is_err());
+        assert!(check_items(s(&["", " "])).is_err());
+        assert!(check_items(vec!["가".into(); MAX_ITEMS + 1]).is_err());
+        // 여러 줄은 그대로(Windows 줄바꿈으로), 너무 길면 자름
+        assert_eq!(check_items(s(&["가\n나", ""])).unwrap(), s(&["가\r\n나", ""]));
+        assert_eq!(check_items(s(&["가\r\n나"])).unwrap(), s(&["가\r\n나"]));
+        assert_eq!(check_items(vec!["가".repeat(MAX_ITEM + 5)]).unwrap()[0].chars().count(), MAX_ITEM);
+    }
+
+    #[test]
+    fn queue_play_stops_on_clipboard_error() {
+        let mut io = Fake {
+            fail_clip: true,
+            ..Default::default()
+        };
+        assert!(play(&queue_plan("가", false), &mut io).is_err());
+        assert!(io.log.is_empty());
     }
 
     #[test]

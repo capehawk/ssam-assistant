@@ -192,6 +192,20 @@ export function itemsTSV(items, type = 'goods') {
   return [`품명\t규격\t단위\t수량\t단가\t금액${v ? '\t구입처' : ''}`, ...rows, `합계\t\t\t\t\t${sumItems(items)}${v ? '\t' : ''}`].join('\n');
 }
 
+/* 에듀파인에 차례로 붙여넣기 조각 (스펙 2026-11-03 3.2): 제목 → 품의 사유 → 산출 내역.
+   mode 'table': 산출 내역을 표 한 번에(표 복사와 같은 글) · 'cells': 품목마다 품명·규격·단위·수량·단가 한 칸씩(숫자는 쉼표 없이) */
+export function purchaseQueueItems(draft, form, mode = 'cells') {
+  const d = draft || {}, f = form || {}, type = f.type || 'goods';
+  const out = [{ label: '제목', text: String(d.title || '') }, { label: '품의 사유', text: String(d.reason || '') }];
+  if (mode === 'table') return [...out, { label: '산출 내역(표)', text: itemsTSV(f.items, type) }];
+  cleanItems(f.items).forEach((it, i) => {
+    const n = `${i + 1}. `;
+    out.push({ label: n + '품명', text: String(it.name || '').trim() }, { label: n + '규격', text: String(it.spec || '').trim() },
+      { label: n + '단위', text: unitOf(it, type) }, { label: n + '수량', text: String(toNumber(it.qty) || '') }, { label: n + '단가', text: String(toNumber(it.price) || '') });
+  });
+  return out;
+}
+
 /* 초안 AI(와 검토 AI)에 보내는 메모 줄. 강사 수당은 강사 칸 글(이름일 수 있음)을 보내지 않고 사람 수·시간만 */
 export function draftMemo(form) {
   const f = form || {}, type = TYPES.find(t => t.id === f.type) || TYPES[0], its = cleanItems(f.items);
