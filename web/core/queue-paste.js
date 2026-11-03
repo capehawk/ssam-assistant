@@ -46,7 +46,11 @@ async function arm(from) {
   render();
   try {
     const r = await core().invoke('queue_arm', { items: Q.items.map(x => x.text), start: from, anyWindow: opts().anyWindow });
-    if (seq !== Q.seq || Q.state !== 'arming') return;
+    if (seq !== Q.seq || Q.state !== 'arming') {
+      // 준비하는 중에 닫았으면 방금 끝난 준비도 풂(닫기의 풀기가 준비보다 먼저 처리됐을 수 있음)
+      if (Q.state === 'idle') Promise.resolve(core().invoke('neis_disarm')).catch(() => {});
+      return;
+    }
     Q.gen = (r && r.gen) || 0; Q.state = 'armed'; Q.until = Date.now() + ((r && +r.secs) || 900) * 1000;
   } catch (e) {
     if (seq !== Q.seq) return;
@@ -109,6 +113,8 @@ function tick() {
 }
 
 if (typeof document !== 'undefined') {
+  // 앱 화면을 새로 열면(F5 등) 앞 화면이 맡겨 둔 준비를 풂 — 패널 없이 Ctrl+V를 맡은 채 남지 않게
+  if (core()) Promise.resolve(core().invoke('neis_disarm')).catch(() => {});
   document.addEventListener('click', e => {
     const t = e.target; if (!t.closest || !t.closest('#qpPanel')) return;
     const g = t.closest('[data-qp-go]');
