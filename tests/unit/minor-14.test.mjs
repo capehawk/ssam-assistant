@@ -96,3 +96,10 @@ test('쪽지 저장: 고친 칸 목록(touched)도 남음', async () => {
   saveDraft({ id: 'd1', m: { title: 'x' }, len: 'base', attach: [], touched: ['place', 'zzz', 'title'] });
   assert.deepEqual(getDraft().touched, ['place', 'title']);
 });
+
+test('미뤄 둔 M10: 글로 온 기간 일시는 끝 날짜를 시간에 섞지 않고, 해를 넘기는 기간은 끝을 다음 해로', () => {
+  assert.deepEqual(normMessage({ when: ['11.12~11.13 09:00'] }, { year: 2026 }).when, [{ date: '2026-11-12', end: '2026-11-13', time: '09:00', note: '' }]);
+  assert.deepEqual(normMessage({ when: ['2026. 11. 12.(목) ~ 11. 13.(금) 09:00~16:00'] }).when, [{ date: '2026-11-12', end: '2026-11-13', time: '09:00~16:00', note: '' }]);
+  assert.equal(normMessage({ when: [{ date: '12-30~01-02' }] }, { year: 2026 }).when[0].end, '2027-01-02');
+  assert.equal(normMessage({ when: [{ date: '2026-12-30', end: '2026-12-28' }] }).when[0].end, '', '연도를 적은 앞선 끝은 버림');
+});

@@ -126,6 +126,8 @@ await run('review-unit', [
   }],
   ['검토 AI가 401 → 메인 결과 그대로, 「검토하지 못했어요」, 같은 차례의 다음 학생은 검토 요청 안 함', async () => {
     reviewFail = true; slow3 = 600; round = 1;
+    // 3번 학생의 5번 칸을 앞에서 손으로 확인했으므로 되돌려, 다시 채점하면 검토할 칸이 있게
+    await page.evaluate(id => { const t = JSON.parse(localStorage.getItem('ssam:unit:t:' + id)); const c = t.students[2].items[5]; c.manual = false; c.ok = false; delete c.rv; localStorage.setItem('ssam:unit:t:' + id, JSON.stringify(t)); }, A);
     const n = reviews().length, m = mains().length;
     await page.click(`${V} [data-un="grade"]`);
     await page.waitForSelector('#sheetRoot #unRegradeOk');
@@ -137,6 +139,8 @@ await run('review-unit', [
     const s = (await T(A)).students;
     assert(s.every(x => x.status === 'done') && s[0].items[1].read === '(2)', '메인 결과');
     assert(s[0].rvErr === '검토하지 못했어요', JSON.stringify(s[0].rvErr));
+    // 미뤄 둔 M6: 검토할 칸이 있었는데 검토를 건너뛴 학생(3번)도 「검토하지 못했어요」(말없이 넘어가지 않음), 검토할 칸이 없는 2번은 표시 없음
+    assert(s[2].rvErr === '검토하지 못했어요' && !s[1].rvErr, JSON.stringify(s.map(x => x.rvErr || '')));
     assert((await page.textContent(`${V} [data-strow="1"]`)).includes('검토하지 못했어요'), '표시');
     assert(s[0].items[2].flag === 'low' && !s[0].items[2].ok, '노란 칸 그대로');
   }],

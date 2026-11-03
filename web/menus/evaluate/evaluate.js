@@ -1014,8 +1014,13 @@ async function upstageFlat(prompt, images, shared, signal) {
 /* Claude 5.x 등은 답하기 전에 먼저 생각(thinking)하고, 생각도 max_tokens 안에서 씀.
    평어 쓰기는 깊은 생각이 필요 없어서 effort를 낮춰 빠르게 하고, 글자 한도는 넉넉히 둠 */
 const CLAUDE_EFFORT_RE = /^claude-(?:opus-(?:4-[5-9]|[5-9])|sonnet-(?:4-[6-9]|[5-9])|haiku-[5-9]|fable-|mythos-)/;
+/* 요청 모양·사용량 모듈(core/ai-wire.js). 보통은 core/ai.js가 window.SSAM_WIRE로 넣어 두고, 없으면 여기서 불러옴 */
+async function wire() {
+  if (!window.SSAM_WIRE) window.SSAM_WIRE = await import(new URL('core/ai-wire.js', document.baseURI).href);
+  return window.SSAM_WIRE;
+}
 async function callApi(provider, prompt, { onText, signal: outer, images, careful, model: useModel, shared, meter }) {
-  const imgs = images || [], W = window.SSAM_WIRE, use = W.emptyUse();
+  const imgs = images || [], W = await wire(), use = W.emptyUse();
   // 2분 동안 아무것도 오지 않거나(연결이 멈춤) 모두 15분이 넘으면 끊음
   const wd = new AbortController();
   let idleT = null;
@@ -1123,7 +1128,7 @@ async function generate(prompt, { onText, signal, fresh, images, careful, use, t
   }
   if (E.engine === 'account') {
     // Claude 계정은 하나로 이어 붙여 보냄(공통 → 학생)
-    if (shared) { const f = window.SSAM_WIRE.flatten({ text: prompt, images: images || [], shared }); prompt = f.text; images = f.images.length ? f.images : null; }
+    if (shared) { const f = (await wire()).flatten({ text: prompt, images: images || [], shared }); prompt = f.text; images = f.images.length ? f.images : null; }
     const opts = { signal, onText, modelTier: careful || S.settings.tier === 'careful' ? 'default' : 'quick' };
     if (fresh || (images && images.length)) opts.cache = false;
     if (images && images.length) {
@@ -3554,7 +3559,8 @@ function grGradeParts(st, nCrit) {
 /* 평가지 채점 한 번(채점·검토)에 쓴 AI 양: GR.meter에 모아 GR.aiUse로 기록에 남김 */
 function grUse() {
   const t = GR.meter && GR.meter.total();
-  if (t && (t.sent || t.out)) { GR.aiUse = { at: Date.now(), ...t }; GRStore.save(); }
+  // 이번 채점 양이 생긴 뒤에야 「지난 채점」을 떼고 보임
+  if (t && (t.sent || t.out)) { GR.aiUse = { at: Date.now(), ...t }; GR.usedNow = true; GRStore.save(); }
 }
 function grCalibPrompt(list) {
   return [
@@ -3744,7 +3750,7 @@ async function grStart() {
   if (neisIsGr() && (NEIS.state === 'armed' || NEIS.state === 'arming')) neisClose();
   GR.err = ''; GR.calibrated = false; GR._critCache = null;
   // 이 채점에 쓴 AI 양을 새로 모음(다시 채점하면 바뀜)
-  GR.meter = window.SSAM_WIRE.newMeter(); GR.usedNow = true; GR.warm = true;
+  GR.meter = window.SSAM_WIRE ? window.SSAM_WIRE.newMeter() : null; GR.usedNow = false; GR.warm = true;
   const todo = grActive().filter(s => s.status !== 'done');
   if (!todo.length) { grAfterGrading(); return; }
   todo.forEach(s => { s.status = 'queued'; });
@@ -4397,7 +4403,7 @@ document.addEventListener('click', async e => {
     if (!engineReady()) { openSettings(); return; }
     GR.single = true; GR.phase = 'grading'; GR.queue.push(s.id); s.status = 'queued'; GR._critCache = null;
     // 다시 채점한 양만 사용량 줄에(지난 채점에 더하지 않음)
-    GR.meter = window.SSAM_WIRE.newMeter(); GR.usedNow = true;
+    GR.meter = window.SSAM_WIRE ? window.SSAM_WIRE.newMeter() : null; GR.usedNow = false;
     grPump();
     return;
   }

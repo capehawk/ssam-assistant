@@ -29,7 +29,14 @@ export function fmtDay(iso, { noYear = false } = {}) {
 /* 「2026-11-12~2026-11-13」·「11-12 ~ 11-13」 → ['시작', '끝'] (물결만 기간으로 봄, 날짜 안의 - 는 그대로) */
 const splitRange = v => String(v == null ? '' : v).split(/\s*[~∼〜]\s*/);
 /* 「2026. 11. 12.(목) 15:00~16:30」에서 앞의 날짜를 뺀 나머지(요일 괄호도 뺌) */
-const afterDate = s => String(s).replace(/^(\d{4}\s*[-./년]\s*)?\d{1,2}\s*[-./월]\s*\d{1,2}\s*[.일]?\s*(\([월화수목금토일]\))?/, '').trim();
+const DAY = '(?:\\d{4}\\s*[-./년]\\s*)?\\d{1,2}\\s*[-./월]\\s*\\d{1,2}\\s*[.일]?\\s*(?:\\([월화수목금토일]\\))?';
+const afterDate = s => String(s).replace(new RegExp('^' + DAY), '').trim();
+/* 글로 온 일시: 「11.12~11.13 09:00」 → 시작·끝·시간(끝 날짜가 시간에 섞이지 않게), 날짜 하나면 날짜·시간, 날짜가 없으면 글 그대로 */
+function fromText(x, year) {
+  const m = new RegExp('^(' + DAY + ')\\s*[~∼〜]\\s*(' + DAY + ')\\s*(.*)$').exec(String(x).trim());
+  if (m && normDate(m[1], year)) return { date: m[1], end: m[2], time: m[3].trim() };
+  return normDate(x, year) ? { date: x, time: afterDate(x) } : { note: x };
+}
 
 export function messagePrompt(text, { nImages = 0 } = {}) {
   return ['[쪽지 안내]',
@@ -51,11 +58,13 @@ export function normMessage(v, { year } = {}) {
   const ap = o.apply && typeof o.apply === 'object' ? o.apply : {};
   // 일시가 글 하나·글 목록으로 와도 받음: 날짜는 읽고 나머지는 시간
   const raw = Array.isArray(o.when) ? o.when : typeof o.when === 'string' ? [o.when] : [];
-  const when = raw.map(x => (typeof x === 'string' ? (normDate(x, year) ? { date: x, time: afterDate(x) } : { note: x }) : x))
+  const when = raw.map(x => (typeof x === 'string' ? fromText(x, year) : x))
     .filter(x => x && typeof x === 'object').slice(0, 5).map(x => {
       const [d0, d1] = splitRange(x.date);
-      const date = normDate(d0, year);
-      const end = date ? normDate(x.end || d1, Number(date.slice(0, 4))) : '';
+      const date = normDate(d0, year), endRaw = String(x.end || d1 || '');
+      let end = date ? normDate(endRaw, Number(date.slice(0, 4))) : '';
+      // 「12-30~01-02」처럼 연도 없이 해를 넘기는 기간은 끝을 다음 해로
+      if (end && end <= date && !/^\s*\d{4}/.test(endRaw)) end = normDate(endRaw, Number(date.slice(0, 4)) + 1);
       return { date, end: end > date ? end : '', time: clean(x.time, 40), note: clean(x.note, 60) || (date ? '' : clean(x.date, 40)) };
     }).filter(x => x.date || x.time || x.note);
   const due = normDate(ap.due, year);

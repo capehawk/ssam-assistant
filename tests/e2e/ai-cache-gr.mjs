@@ -13,7 +13,7 @@ await mockClaude(page, async ({ prompt, content }) => {
   if (prompt.includes('수행평가를 채점하는')) {
     grades.push(content);
     const sp = { start: Date.now(), end: 0 }; spans.push(sp);
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 400));
     sp.end = Date.now();
     return { text: JSON.stringify({ score: 70 + grades.length, summary: '바르게 풀었음', evidence: ['풀이가 맞음'], strengths: '꼼꼼함', improve: '검산', unreadable: false }), usage: { input_tokens: 150, cache_read_input_tokens: 3000, output_tokens: 200 } };
   }
@@ -49,6 +49,9 @@ await run('ai-cache-gr', [
     await page.waitForSelector('[data-grregrade]');
     const n0 = grades.length;
     await page.click('[data-grregrade]');
+    // 미뤄 둔 M9: 다시 채점한 학생이 끝나기 전에는 앞 채점의 사용량을 「지난 채점」으로 보임
+    await page.waitForFunction(() => (document.querySelector('#grAiUse') || {}).textContent?.startsWith('지난 채점 AI 사용량'), null, { timeout: 350 }).catch(() => {});
+    assert((await page.textContent('#grAiUse')).startsWith('지난 채점 AI 사용량'), await page.textContent('#grAiUse'));
     for (let k = 0; k < 40 && grades.length === n0; k++) await page.waitForTimeout(100);
     await page.waitForTimeout(1200);
     const u = await page.evaluate(() => { const id = JSON.parse(localStorage.getItem('ssam:grs'))[0]; return JSON.parse(localStorage.getItem('ssam:gr:' + id)).aiUse; });

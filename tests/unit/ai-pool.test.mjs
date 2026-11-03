@@ -85,3 +85,25 @@ test('최종 검토 M4: warm이면 첫 학생 혼자 끝난 뒤(캐시를 써 �
   assert.ok(starts.slice(1, 4).every(d => d === 1), JSON.stringify(starts));
   assert.ok(c.max >= 3 && c.max <= 4, '동시 ' + c.max);
 });
+
+test('미뤄 둔 M5: 한도 전에 보낸 요청의 성공은 다시 늘리는 데 세지 않음(절반으로 줄인 수가 바로 되돌아가지 않게)', async () => {
+  const s = { now: 0, seq: [], rated: false, after: [] };
+  const task = async it => {
+    s.now++; if (s.rated) s.after.push(s.now);
+    const hold = it === 0 ? 1 : it < 4 ? 6 : 3;
+    for (let k = 0; k < hold; k++) await tick();
+    s.now--;
+    if (it === 0 && !s.rated) { s.rated = true; return 'rate'; }
+    return 'ok';
+  };
+  const run = { queue: [...Array(9).keys()], stop: false };
+  await runPool(run, task, { start: 4, max: 4, sleep });
+  assert.ok(s.after.slice(0, 4).every(n => n <= 2), JSON.stringify(s.after));
+});
+
+test('미뤄 둔 M7: AI가 알려 준 기다릴 시간({ rate: ms })이 20초보다 길면 그만큼 쉼', async () => {
+  let slices = 0, once = true;
+  const run = { queue: [0, 1], stop: false };
+  await runPool(run, async () => { await tick(); if (once) { once = false; return { rate: 50000 }; } return 'ok'; }, { start: 1, sleep: async () => { slices++; await tick(); } });
+  assert.ok(slices >= 200, '쉰 조각 ' + slices);
+});

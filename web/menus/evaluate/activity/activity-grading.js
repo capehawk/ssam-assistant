@@ -196,7 +196,7 @@ async function gradeOne(id, i, meter) {
   } catch (e) {
     if (ctrl.signal.aborted) return;
     // AI 한도: 실패로 두지 않고 풀이 다시 줄에 넣고 쉬었다가 이어 감
-    if (e && e.code === 'rate_limited' && G.run && G.run.id === id && !G.run.stop) return 'rate';
+    if (e && e.code === 'rate_limited' && G.run && G.run.id === id && !G.run.stop) return e.retryAfter > 0 ? { rate: e.retryAfter * 1000 } : 'rate'; // AI가 알려 준 기다릴 시간(초)
     const a = getActivity(id), s = a && a.students[i];
     const why = e && e.code === 'no_scan' ? '스캔이 없어요. 3단계에서 다시 올려 주세요' : e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요' : ai.errorMessage(e && e.code, e);
     if (s && s.no === no) { s.status = 'error'; s.err = why; commitAct(a); }

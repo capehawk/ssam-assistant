@@ -224,7 +224,7 @@ async function gradeOne(id, i, meter) {
     await reviewOne(id, i, no, images, ctrl.signal, meter);
   } catch (e) {
     if (ctrl.signal.aborted) return;
-    if (e && e.code === 'rate_limited' && G.run && G.run.id === id && !G.run.stop) return 'rate';
+    if (e && e.code === 'rate_limited' && G.run && G.run.id === id && !G.run.stop) return e.retryAfter > 0 ? { rate: e.retryAfter * 1000 } : 'rate'; // AI가 알려 준 기다릴 시간(초)
     const t = getTest(id), st = t && t.students[i];
     const why = e && e.code === 'no_scan' ? '스캔이 없어요. 답안 스캔을 다시 올려 주세요' : e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요' : ai.errorMessage(e && e.code, e);
     if (st && st.no === no) { st.status = 'error'; st.err = why; saveOrWarn(t); }
@@ -240,11 +240,12 @@ async function gradeOne(id, i, meter) {
 const REVIEW_STOP = ['auth', 'quota', 'rate_limited', 'blocked', 'no_engine', 'bad_model', 'upstream_error', 'session_expired'];
 async function reviewOne(id, i, no, images, signal, meter) {
   const run = G.run && G.run.id === id ? G.run : null;
-  if (run && run.noReview) return;
   const t = getTest(id), st = t && t.students[i];
   if (!st || st.no !== no) return;
   const nos = gradeTargets(t, st);
   if (!nos.length) return;
+  // 이 차례에 검토 AI가 막혔으면 부르지 않되, 검토할 칸이 있던 학생은 말없이 넘기지 않고 표시
+  if (run && run.noReview) { st.rvErr = REVIEW_FAIL; saveOrWarn(t); return; }
   const parts = gradeReviewParts(t, no, nos);
   const v = await reviewJSON('grade', parts.own, { shared: { text: parts.shared }, images, signal, valid: validGrade, meter });
   if (v == null || signal.aborted) return;

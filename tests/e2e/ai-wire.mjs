@@ -86,6 +86,13 @@ await run('ai-wire', [
     const m = upChat.at(-1).messages[0].content;
     assert(m.indexOf('[공통] 정답표와 기준') >= 0 && m.indexOf('[공통] 정답표와 기준') < m.indexOf('[학생] 2번') && m.indexOf('읽은 글1') < m.indexOf('[공통]'), m.slice(0, 300));
   }],
+  ['미뤄 둔 M8: 요청 모양 모듈(SSAM_WIRE)이 아직 없어도 평가 메뉴 AI 부르기가 스스로 불러와 됨', async () => {
+    await setEngine('claude');
+    const r = await page.evaluate(async () => { delete window.SSAM_WIRE; const ai = await import('./core/ai.js'); return (await ai.generate('[학생] 1번', { shared: { text: '[공통]' } })).text; });
+    assert(r === '{"ok":1}', r);
+    const c = bodies.at(-1).messages[0].content;
+    assert(c[0].text === '[공통]' && c[0].cache_control, JSON.stringify(c).slice(0, 200));
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();
