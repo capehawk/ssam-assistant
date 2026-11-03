@@ -21,13 +21,15 @@ export function guessSourceKind(name, text, year) {
   return 'plan';
 }
 
-export function reportPrompt({ sources = [], memo = '', nPhotos = 0, year } = {}) {
+/* nPhotos: 앞에 붙인 행사 사진 수, nDocImages: 그 뒤 글로 읽지 못한 문서(스캔본) 쪽 그림 수 */
+export function reportPrompt({ sources = [], memo = '', nPhotos = 0, nDocImages = 0, year } = {}) {
   const docs = sources.filter(s => s && String(s.text || '').trim())
     .map(s => `[${kindLabel(s.kind)}: ${String(s.name || '글').slice(0, 60)}]\n${String(s.text).slice(0, 6000)}`).join('\n\n');
   const hasLast = sources.some(s => s && s.kind === 'last' && String(s.text || '').trim());
   return ['[결과 보고]',
     `학교 행사·사업이 끝난 뒤 쓰는 결과 보고의 내용을 뽑고 씁니다. 학년도: ${year || new Date().getFullYear()}.`,
-    nPhotos ? `첨부한 사진 ${nPhotos}장은 행사 장면입니다(차례대로 사진 1, 2, …). 사진마다 무엇을 하는 장면인지 짧게 설명합니다(사람 이름·얼굴 묘사는 쓰지 않음).` : '',
+    nPhotos ? `첨부한 그림 중 앞의 사진 ${nPhotos}장은 행사 장면입니다(차례대로 사진 1, 2, …). 사진마다 무엇을 하는 장면인지 짧게 설명합니다(사람 이름·얼굴 묘사는 쓰지 않음).` : '',
+    nDocImages ? `${nPhotos ? '그 뒤' : '첨부한'} 그림 ${nDocImages}장은 글로 읽지 못한 문서(스캔본)의 쪽입니다. 사진이 아니므로 photos에 넣지 않습니다.` : '',
     '- name: 행사·사업 이름(연도 포함, 예: 2026 과학의 날 행사). 「계획」·「결과 보고」 같은 말은 뺍니다.',
     '- related: 관련 문서(계획서·공문)마다 {"no":"문서번호(예: ○○초-1234)","date":"YYYY-MM-DD","title":"문서 제목"}. 모르면 빈 글. 없으면 [].',
     '- period: {"start":"YYYY-MM-DD","end":"며칠에 걸쳤으면 끝 날","time":"시간(있으면)"}, place: 장소, target: 대상, count: 참여 인원(예: 320명)',

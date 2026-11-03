@@ -31,7 +31,9 @@ test('프롬프트: 종류별 글(긴 글은 잘림)·한 일 메모·사진 수
   assert.ok(p.includes('사진 2장') && p.includes('작년 보고서의 소제목 차례와 문체'));
   assert.ok(!p.includes('가'.repeat(6001)), '긴 글을 자르지 않음');
   assert.ok(p.includes('"sections"') && p.includes('"photos"') && p.includes('지어내지'));
-  assert.ok(!reportPrompt({ sources: [], memo: 'x', nPhotos: 0, year: 2026 }).includes('사진'), '사진 없는데 사진');
+  assert.ok(!reportPrompt({ sources: [], memo: 'x', nPhotos: 0, year: 2026 }).includes('사진 '), '사진 없는데 사진');
+  const scan = reportPrompt({ sources: [], memo: 'x', nPhotos: 2, nDocImages: 1, year: 2026 });
+  assert.ok(scan.includes('앞의 사진 2장은 행사 장면') && scan.includes('그 뒤 그림 1장은 글로 읽지 못한 문서'), scan.slice(0, 300));
 });
 
 test('답 정리: 날짜·전화번호·소제목·사진 설명 수', () => {

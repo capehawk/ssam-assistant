@@ -1,0 +1,17 @@
+/* 계획 › 결과 보고 (report.js) — 쪽지 작성(.msg-*)·품의(.pc-*) 모양을 같이 씀 */
+.rp-src { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rp-src li { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.rp-src .rp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-src select.field { width: auto; flex: none; }
+.rp-photos { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.rp-photos li { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line, #e4e6eb); border-radius: 10px; }
+.rp-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: var(--surface-2, #f3f4f6); }
+.rp-photos .row { justify-content: space-between; }
+.rp-fields, .rp-secs { display: flex; flex-direction: column; gap: 8px; }
+.rp-two > * { flex: 1; min-width: 0; }
+.rp-two .field { width: 100%; box-sizing: border-box; }
+.rp-sec { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px dashed var(--line, #e4e6eb); }
+.rp-sec .rp-sec-h { font-weight: 700; }
+.rp-sec textarea { resize: vertical; line-height: 1.6; }
+.rp-sec .btn.tiny { align-self: flex-end; }
+@media (max-width: 600px) { .rp-two { flex-direction: column; } }

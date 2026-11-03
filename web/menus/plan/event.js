@@ -17,6 +17,7 @@ import { summarize, formText } from '../../core/survey.js';
 import { qrPng } from '../../core/qr.js';
 import { readTable } from '../../core/sheet.js';
 import { listPlans, planText } from './year-model.js';
+import { putReportSources } from './report.js';
 import { KINDS, DOCS, REF_KINDS, normRefs, guessKind, refsBlock, normRefNotes, newEvent, listEventPlans, getEvent, saveEvent, deleteEvent, currentEventId, setCurrentEvent, normOptions, normRoles, roleLoad, letterMissing, docDoc, confirmBlockers, normItems } from './event-model.js';
 
 const STEPS = ['행사 정보', '구성안', '문서', '설문·결과'];
@@ -332,7 +333,7 @@ function resultCardHTML() {
   const sv = survey(), bz = busy[ev.id], r = sv.result;
   return `<div class="yp-card" id="evResultCard"><h3>설문 결과</h3>
       <p class="muted">구글 폼 응답을 CSV로 내려받아 올리면 문항별 결과·서술형 요약·결과 보고서 초안·내년 개선 메모를 만들어요.</p>
-      <div class="row"><button class="btn" type="button" data-e="csv">응답 CSV 올리기</button></div>
+      <div class="row"><button class="btn" type="button" data-e="csv">응답 CSV 올리기</button><button class="btn" type="button" data-e="toReport">결과 보고 공문·보고서 쓰기</button></div>
       ${bz === 'result' ? '<p class="muted"><span class="spin"></span> 결과 보고서를 쓰고 있어요…</p>' : ''}
       ${r ? resultHTML(r) : ''}
       ${r && bz !== 'result' ? `<label class="yp-f"><span class="lab">결과 보고서</span><textarea class="field ev-doc" id="evReport" rows="12">${esc(sv.report)}</textarea></label>
@@ -733,6 +734,13 @@ document.addEventListener('click', e => {
   }
   else if (a === 'csv') box.querySelector('#evCsv').click();
   else if (a === 'reportCopy') copyText(survey().report).then(ok => toast(ok ? '복사했어요' : '복사하지 못했어요'));
+  else if (a === 'toReport') {
+    // 계획 › 결과 보고로: 이 행사의 계획서 글·설문 결과 보고서를 넣고, 행사 정보는 한 일 메모 첫 줄들로 (사진·한 일은 선생님이 더 넣음)
+    const d = ev.docs || {}, sv = survey();
+    const info = [['행사명', ev.name], ['날짜', ev.date], ['장소', ev.place], ['대상', ev.grades]].filter(([, v]) => String(v || '').trim()).map(([k, v]) => `${k}: ${v}`).join('\n');
+    putReportSources({ sources: [{ kind: 'plan', name: `${ev.name || '행사'} 계획서`, text: d.plan || '' }, { kind: 'etc', name: '설문 결과 보고서', text: sv.report || '' }], memo: info ? info + '\n' : '' });
+    toast('결과 보고로 왔어요. 한 일과 사진을 더 넣고 [결과 보고 쓰기]를 눌러 주세요.', 5000);
+  }
   else if (a === 'reportHwpx') downloadReport();
   else if (a === 'importMemo') { showMemos = !showMemos; renderMain(); }
   else if (a === 'delete') askDelete();
