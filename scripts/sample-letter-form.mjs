@@ -25,40 +25,50 @@ function moreParaPr(header) {
   return header.replace('<hh:paraProperties itemCnt="3">', '<hh:paraProperties itemCnt="6">').replace('</hh:paraProperties>', add + '</hh:paraProperties>');
 }
 
-export async function letterFormHwpx({ marker = false, box = false } = {}) {
+/* 더 다양한 양식(검토 시험용): sign 학교장 줄 글, dateSign 날짜·학교장 한 문단(두 조각·탭), noGreet 인사 없음, title 제목 글,
+   anchors 인사 문단에 꼬리말 조절자·떠 있는 그림, twoSections 회신서를 둘째 구역(구역 설정 문단부터), contacts 머리 표에 주소·전화·누리집만, markerReply {표시} 양식에 옛 회신서 */
+export async function letterFormHwpx({ marker = false, box = false, sign = '새 싹 초 등 학 교 장', dateSign = false, noGreet = false, title = '2026학년도 학부모 상담 주간 안내', anchors = false, twoSections = false, contacts = false, markerReply = false } = {}) {
   pid = 100;
   const base = await unzip(makeHwpx({ title: 'x', blocks: [] }));
   const dec = new TextDecoder();
   const sec0 = dec.decode(base.get('Contents/section0.xml'));
   const secPr = /<hp:secPr[\s\S]*?<\/hp:secPr><hp:ctrl>[\s\S]*?<\/hp:ctrl>/.exec(sec0)[0];
-  const head = table([
+  const head = contacts ? table([[P(1, 0, '주소: ○○시 새싹로 1')], [P(1, 0, '전화 000-000-0000')], [P(1, 0, '누리집 saessak.example')]]) : table([
     [P(1, 0, '') .replace('<hp:t></hp:t>', '<hp:t/>').replace('<hp:run charPrIDRef="0">', `<hp:run charPrIDRef="0">${pic}`), P(1, 2, '가 정 통 신 문'), P(0, 0, '교장 : 김새싹') + P(0, 0, '교감 : 이나무') + P(0, 0, '담당 : 박햇살')],
     [P(1, 0, '꿈을 키우는 새싹 교육'), P(1, 0, ''), P(1, 0, '')],
     [P(1, 0, '우)00000 ○○시 새싹로 1 (☎ 000-000-0000) http://saessak.example'), P(1, 0, ''), P(1, 0, '')]]);
   const first = `<hp:p id="${pid++}" paraPrIDRef="1" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">${secPr}</hp:run><hp:run charPrIDRef="0">${head}<hp:t/></hp:run>${LSA}</hp:p>`;
+  const FOOT = '<hp:run charPrIDRef="0"><hp:ctrl><hp:footer id="1" applyPageType="BOTH"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="BOTTOM" linkListIDRef="0" linkListNextIDRef="0" textWidth="48188" textHeight="4252" hasTextRef="0" hasNumRef="0">'
+    + `<hp:p id="${pid++}" paraPrIDRef="1" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>새싹초등학교 꼬리말</hp:t></hp:run></hp:p></hp:subList></hp:footer></hp:ctrl></hp:run>`;
+  const FLOAT = `<hp:run charPrIDRef="0">${pic.replace('treatAsChar="1"', 'treatAsChar="0"').replace('id="', 'id="9').replace('instid="1"', 'instid="2"')}</hp:run>`;
+  const greet = anchors ? P(0, 0, '안녕하십니까?').replace('<hp:linesegarray>', FOOT + FLOAT + '<hp:linesegarray>') : P(0, 0, '안녕하십니까?');
+  const dateP = dateSign
+    ? `<hp:p id="${pid++}" paraPrIDRef="1" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>2026. 3. 3.(화)<hp:tab width="4000" leader="0" type="1"/></hp:t></hp:run><hp:run charPrIDRef="2"><hp:t>${esc(sign)}</hp:t></hp:run>${LSA}</hp:p>`
+    : P(1, 0, '2026 . 3 . 3 .') + P(1, 2, sign);
   const body = marker
     ? [P(1, 2, '{제목}'), P(0, 0, ''), P(0, 0, '{본문}'), P(0, 0, ''), P(1, 0, '{날짜}'), P(1, 2, '새 싹 초 등 학 교 장')]
-    : [P(1, 2, '2026학년도 학부모 상담 주간 안내'), P(0, 0, ''),
-      P(0, 0, '안녕하십니까?'), P(0, 0, '항상 본교 교육 활동에 관심을 가져 주시는 보호자님께 감사드립니다.'),
+    : [P(1, 2, title), P(0, 0, ''),
+      ...(noGreet ? [] : [greet, P(0, 0, '항상 본교 교육 활동에 관심을 가져 주시는 보호자님께 감사드립니다.')]),
       P(0, 0, '학생의 학교생활을 함께 살피기 위하여 학부모 상담 주간을 운영합니다.'),
       P(3, 1, '1. 기간: 2026. 3. 16.(월) ~ 3. 20.(금)'), P(4, 0, '  가. 대면 상담: 15:00~17:00'), P(4, 0, '  나. 전화 상담: 16:00~18:00'),
       P(5, 0, '    1) 상담 시간은 20분입니다.'), P(3, 1, '2. 신청 방법: 아래 신청서를 3. 11.(수)까지 제출'),
-      P(0, 0, '붙임  상담 신청서 1부.'), P(0, 0, ''),
-      P(1, 0, '2026 . 3 . 3 .'), P(1, 2, '새 싹 초 등 학 교 장')];
-  const reply = marker ? [] : [P(0, 0, ''), P(1, 0, '✂ - - - - - - 자 르 는 선 - - - - - -'), P(1, 3, '학부모 상담 신청서'),
+      P(0, 0, '붙임  상담 신청서 1부.'), P(0, 0, ''), dateP];
+  const reply = marker && !markerReply ? [] : [P(0, 0, ''), P(1, 0, '✂ - - - - - - 자 르 는 선 - - - - - -'), P(1, 3, '학부모 상담 신청서'),
     `<hp:p id="${pid++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">${table([[P(1, 1, '학년 반 번호'), P(0, 0, '   학년    반    번')], [P(1, 1, '상담 희망'), P(0, 0, '□ 대면  □ 전화')]], 24000)}<hp:t/></hp:run>${LSA}</hp:p>`,
     P(1, 0, '2026 .  3 .    .   보호자 :          (서명)')];
-  let rest = [...body, ...reply].join('');
+  let rest = [...body, ...(twoSections ? [] : reply)].join('');
   if (box) rest = `<hp:p id="${pid++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">${table([[rest]], 48000)}<hp:t/></hp:run>${LSA}</hp:p>`;
   const NS = sec0.slice(0, sec0.indexOf('>', sec0.indexOf('<hs:sec')) + 1);
   const section = `${NS}${first}${rest}</hs:sec>`;
+  // 둘째 구역: 첫 문단이 구역 설정 + 자르는 선
+  const sec1 = twoSections ? `${NS}<hp:p id="${pid++}" paraPrIDRef="1" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">${secPr}</hp:run><hp:run charPrIDRef="0"><hp:t>✂ - - - - - - 자 르 는 선 - - - - - -</hp:t></hp:run>${LSA}</hp:p>${reply.slice(2).join('')}</hs:sec>` : null;
   const files = [];
   for (const [name, data] of base) {
     if (name === 'Contents/section0.xml') files.push({ name, data: section });
-    else if (name === 'Contents/header.xml') files.push({ name, data: moreParaPr(dec.decode(data)) });
-    else if (name === 'Contents/content.hpf') files.push({ name, data: dec.decode(data).replace('</opf:manifest>', '<opf:item id="image1" href="BinData/image1.png" media-type="image/png" isEmbeded="1"/></opf:manifest>') });
+    else if (name === 'Contents/header.xml') files.push({ name, data: moreParaPr(dec.decode(data)).replace('secCnt="1"', `secCnt="${sec1 ? 2 : 1}"`) });
+    else if (name === 'Contents/content.hpf') files.push({ name, data: dec.decode(data).replace('</opf:manifest>', `<opf:item id="image1" href="BinData/image1.png" media-type="image/png" isEmbeded="1"/>${sec1 ? '<opf:item id="section1" href="Contents/section1.xml" media-type="application/xml"/>' : ''}</opf:manifest>`).replace('<opf:itemref idref="section0" linear="yes"/>', `<opf:itemref idref="section0" linear="yes"/>${sec1 ? '<opf:itemref idref="section1" linear="yes"/>' : ''}`) });
     else files.push({ name, data });
-    if (name === 'Contents/section0.xml') files.push({ name: 'BinData/image1.png', data: PNG });
+    if (name === 'Contents/section0.xml') { if (sec1) files.push({ name: 'Contents/section1.xml', data: sec1 }); files.push({ name: 'BinData/image1.png', data: PNG }); }
   }
   return zipStore(files);
 }

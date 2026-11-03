@@ -17,7 +17,7 @@ function norm(d) {
     sources: (Array.isArray(d.sources) ? d.sources : []).filter(isObj).slice(0, 10).map(s => ({ name: str(s.name, 100), text: str(s.text, 20000) })),
     memo: str(d.memo, 6000), target: str(d.target, 60),
     related: (Array.isArray(d.related) ? d.related : []).filter(isObj).slice(0, 3).map(r => ({ no: str(r.no, 40), date: str(r.date, 10), title: str(r.title, 100) })),
-    out: o.title || (o.body || []).length ? { title: str(o.title, 100), date: str(o.date, 10), body: strs(o.body, 80, 400), replyOn: !!o.replyOn,
+    out: o.title || (o.body || []).length ? { title: str(o.title, 100), date: str(o.date, 10), body: strs(o.body, 200, 2000), replyOn: !!o.replyOn,
       reply: { title: str(rp.title, 60), fields: strs(rp.fields, 8, 120), due: str(rp.due, 120) }, short: str(o.short, 1200) } : null,
     send: { title: str(sd.title, 200), body: str(sd.body, 4000) }, sendEdited: !!d.sendEdited };
 }

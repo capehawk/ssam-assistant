@@ -9,11 +9,11 @@ import { aiRowHTML } from '../../core/ai-roles.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { getSchool } from '../../core/settings.js';
 import { canQueue, openQueue } from '../../core/queue-paste.js';
-import { readForm, findRoles, fillForm } from '../../core/hwpx-form.js';
+import { readForm, findRoles, fillForm, rolesValid, isSign } from '../../core/hwpx-form.js';
 import { forms, newFormId, MAX_FORM } from '../../core/form-store.js';
 import { cleanSheet } from '../evaluate/activity/activity-read.js';
 import { letterQueueItems } from '../plan/report-ai.js';
-import { plainFromText, defaultPlain, plainLetterDoc, letterPrompt, normLetter, composeBody, composeSend } from './letter-ai.js';
+import { plainFromText, defaultPlain, plainLetterDoc, letterPrompt, normLetter, composeBody, composeSend, formSample, cleanSample } from './letter-ai.js';
 import { getCurrent, saveCurrent, clearCurrent, listLetters, pushLetter, newLetterId, getFormId, setFormId } from './letter-model.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,8 +26,7 @@ let box = null, cur = null;
 const blank = () => ({ id: newLetterId(), sources: [], memo: '', related: [], target: '', out: null, send: { title: '', body: '' }, sendEdited: false });
 const c = () => (cur || (cur = getCurrent() || blank()));
 function save(x = c(), { push = false } = {}) { if (x === c()) saveCurrent(x); if (push && x.out) pushLetter(x); }
-function resend(force = false) {
-  const x = c();
+function resend(force = false, x = c()) {
   if (!x.out || (x.sendEdited && !force)) return;
   x.send = composeSend({ title: x.out.title, related: x.related, target: x.target, date: x.out.date }); x.sendEdited = false;
 }
@@ -50,7 +49,7 @@ async function selectForm(id, { quiet = false } = {}) {
   F.form = { rec, parsed };
   render();
 }
-const rolesOk = r => r && r.title >= 0 && r.bodyStart >= 0 && r.date >= 0;
+const rolesOk = r => rolesValid(r);
 /* 양식 넣기: .hwpx는 모양 그대로 채울 양식, .hwp는 글 짜임만 */
 async function addForm(file) {
   F.adding++; render();
@@ -81,10 +80,10 @@ async function addForm(file) {
 /* 양식 맞추기: 줄마다 자리 */
 function roleOf(r, i) {
   if (!r) return '';
-  if (i === r.title) return '제목';
-  if (r.bodyStart >= 0 && i >= r.bodyStart && i <= r.bodyEnd) return '본문';
   if (i === r.date) return '날짜';
   if (i === r.sign) return '학교장';
+  if (i === r.title) return '제목';
+  if (r.bodyStart >= 0 && i >= r.bodyStart && i <= r.bodyEnd) return '본문';
   if (r.reply >= 0 && i >= r.reply) return '회신서';
   if (r.title >= 0 && i < r.title) return '머리';
   return '';
@@ -93,7 +92,7 @@ function mapHTML() {
   const f = F.form;
   if (!F.mapOpen || !f || !f.parsed) return '';
   const r = f.rec.roles, lines = f.parsed.lines.slice(0, 200);
-  return `<div class="lf-map" id="lfMap"><div class="row"><b class="grow">양식 맞추기</b><button class="btn primary" type="button" data-lf="mapSave">저장</button><button class="btn text" type="button" data-lf="mapClose">닫기</button></div>
+  return `<div class="lf-map" id="lfMap"><div class="row"><b class="grow">양식 맞추기${rolesOk(r) ? '' : ' <span class="muted warn">· 제목 → 본문 → 날짜 → 학교장 → 회신서 차례로 정해 주세요</span>'}</b><button class="btn primary" type="button" data-lf="mapSave">저장</button><button class="btn text" type="button" data-lf="mapClose">닫기</button></div>
     <p class="muted" style="margin:0">줄을 누르고 자리를 고르세요. 머리·학교장 줄은 그대로 두고, 제목·본문·날짜만 바꿔 넣어요. 양식에 {제목}·{본문}·{날짜}를 적어 두어도 돼요.</p>
     <ol class="lf-lines">${lines.map((l, i) => { const ro = roleOf(r, i); return `<li class="lf-r-${{ 제목: 'title', 본문: 'body', 날짜: 'date', 학교장: 'sign', 회신서: 'reply', 머리: 'head' }[ro] || 'none'}${F.mapSel === i ? ' sel' : ''}">
       <button type="button" data-lf-line="${i}"><span class="lf-badge">${ro || '·'}</span><span class="lf-text">${esc(l.text.trim() ? l.text : l.obj ? '(그림·개체)' : '(빈 줄)')}</span></button>
@@ -116,11 +115,8 @@ async function addSources(files) {
 function sampleOf() {
   const f = F.form;
   if (!f) return '';
-  if (f.rec.kind === 'plain') return f.rec.plain.sample || '';
-  const r = f.rec.roles, L = f.parsed ? f.parsed.lines : [];
-  if (!r || r.title < 0) return '';
-  const end = r.date >= 0 ? r.date : r.bodyEnd + 1;
-  return L.slice(r.title, end).map(l => l.text).join('\n');
+  if (f.rec.kind === 'plain') return cleanSample(f.rec.plain.sample || '');
+  return f.parsed ? formSample(f.parsed.lines, f.rec.roles) : '';
 }
 export async function write() {
   if (F.busy) return;
@@ -135,9 +131,10 @@ export async function write() {
     x.related = n.related; x.target = n.target;
     x.out = { title: n.title, date: (x.out && x.out.date) || today(), body: composeBody(n), replyOn: n.reply.need,
       reply: { title: n.reply.title || '회신서', fields: n.reply.fields, due: n.reply.due }, short: n.short };
-    resend(true);
+    // 기다리는 동안 다른 가정통신문을 열었으면 그 글은 건드리지 않고, 쓴 글은 최근에 넣음
+    resend(true, x);
     save(x, { push: true });
-    toast('가정통신문을 썼어요. 날짜·장소·금액은 꼭 확인해 주세요.', 5000);
+    toast(c() === x ? '가정통신문을 썼어요. 날짜·장소·금액은 꼭 확인해 주세요.' : `「${x.out.title}」을 다 써서 최근 가정통신문에 넣었어요.`, 5000);
   } catch (e) {
     toast(e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. 다시 눌러 주세요.' : ai.errorMessage(e && e.code, e), 6000);
   }
@@ -156,7 +153,8 @@ async function download() {
     const { bytes, warn } = await fillForm(f.parsed, r, letterOf(x));
     const where = await saveFile(`${name}.hwpx`, bytes, 'application/hwp+zip');
     const m = window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요';
-    toast(m + (warn.includes('reply-in-box') ? ' · 양식의 회신서가 본문과 같은 표 안에 있어 회신서는 바꾸지 않았어요' : ''), 7000);
+    toast(m + (warn.includes('reply-in-box') ? ' · 양식의 회신서가 본문과 같은 표 안에 있어 회신서는 바꾸지 않았어요' : '')
+      + (warn.includes('overlap') ? ' · 겹치는 자리가 있어 일부를 바꾸지 못했어요. [양식 맞추기]를 확인해 주세요' : ''), 8000);
     return;
   }
   const plain = f && f.rec.kind === 'plain' ? f.rec.plain : defaultPlain(getSchool().name);
@@ -247,15 +245,24 @@ document.addEventListener('click', async e => {
   if (ln) { F.mapSel = F.mapSel === +ln.dataset.lfLine ? -1 : +ln.dataset.lfLine; render(); return; }
   const ro = e.target.closest('[data-lf-role]');
   if (ro && F.form && F.mapSel >= 0) {
-    const r = { ...F.form.rec.roles }, i = F.mapSel, k = ro.dataset.lfRole;
+    const L = F.form.parsed.lines, r = { ...F.form.rec.roles }, i = F.mapSel, k = ro.dataset.lfRole;
+    const filled = j => !!(L[j] && (L[j].text.trim() || L[j].obj));
+    const replyAfter = () => { r.reply = -1; for (let j = Math.max(r.date, r.sign) + 1; j < L.length; j++) if (filled(j)) { r.reply = j; break; } };
+    F.mapSel = -1;
     if (k === 'noreply') r.reply = -1;
+    else if (k === 'reply' && i <= Math.max(r.date, r.sign)) { toast('회신서는 날짜·학교장 줄 아래에서 골라 주세요.', 4000); render(); return; }
     else {
       r[k] = i;
-      if (k === 'bodyStart' && (r.bodyEnd < i)) r.bodyEnd = i;
+      if (k === 'bodyStart' && r.bodyEnd < i) r.bodyEnd = i;
       if (k === 'bodyEnd' && (r.bodyStart < 0 || r.bodyStart > i)) r.bodyStart = i;
-      if (k === 'date') { const L = F.form.parsed.lines; r.sign = L.findIndex((l, j) => j >= i && /학교/.test(l.text)); }
+      if (k === 'date') {
+        // 본문 끝은 날짜 위의 글 있는 줄까지, 학교장은 날짜 줄부터 처음 나오는 학교장 줄, 회신서는 그 아래
+        if (r.bodyEnd >= i) { let e = i - 1; while (e > r.bodyStart && !filled(e)) e--; r.bodyEnd = e; }
+        r.sign = L.findIndex((l, j) => j >= i && isSign(l.text));
+        if (r.reply >= 0 && r.reply <= Math.max(r.date, r.sign)) replyAfter();
+      }
     }
-    F.form.rec.roles = r; F.mapSel = -1; render(); return;
+    F.form.rec.roles = r; render(); return;
   }
   const del = e.target.closest('[data-lf-del]');
   if (del) { x.sources.splice(+del.dataset.lfDel, 1); save(); render(); return; }
@@ -295,7 +302,7 @@ document.addEventListener('change', e => {
 document.addEventListener('input', e => {
   if (!mine(e)) return;
   const el = e.target, x = c();
-  if (el.id === 'lfMemo') { x.memo = el.value; save(); return; }
+  if (el.id === 'lfMemo') { x.memo = el.value; save(x, { push: !!x.out }); return; }
   if (!x.out) return;
   if (el.dataset.lo) {
     const k = el.dataset.lo;
@@ -305,7 +312,7 @@ document.addEventListener('input', e => {
   }
   if (el.dataset.lr) { const k = el.dataset.lr; x.out.reply[k] = k === 'fields' ? el.value.split('\n').map(s => s.trim()).filter(Boolean) : el.value; save(x, { push: true }); return; }
   if (el.id === 'lfShort') { x.out.short = el.value; save(x, { push: true }); return; }
-  if (el.id === 'lfSendTitle' || el.id === 'lfSendBody') { x.send = { ...x.send, [el.id === 'lfSendTitle' ? 'title' : 'body']: el.value }; x.sendEdited = true; save(); refreshSend(); }
+  if (el.id === 'lfSendTitle' || el.id === 'lfSendBody') { x.send = { ...x.send, [el.id === 'lfSendTitle' ? 'title' : 'body']: el.value }; x.sendEdited = true; save(x, { push: true }); refreshSend(); }
 });
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-lf-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('[data-lf-drop]'); if (z) z.classList.remove('over'); });

@@ -3,6 +3,7 @@
 import { normDate, fmtDay } from './message-ai.js';
 import { relText } from '../plan/report-ai.js';
 import { findRoles, swapDate, DATE } from '../../core/hwpx-form.js';
+import { cleanSheet } from '../evaluate/activity/activity-read.js';
 
 const PHONE = /0\d{1,2}[-.\s)]?\d{3,4}[-.\s]?\d{4}/g;
 const EMAIL = /[\w.+-]+@[\w-]+\.[\w.]+/g;
@@ -15,6 +16,20 @@ const squash = s => String(s || '').replace(/\s+/g, '');
 export const spaced = s => [...squash(s)].join(' ');
 const CUT = '✂ - - - - - - - - - - - 자 르 는 선 - - - - - - - - - - -';
 
+/* 양식 옛 글(문체 참고)을 AI로 보내기 전: 전화번호·이메일·연락처·문의 줄은 빼고, 직책 옆 이름은 가림 */
+const CONTACT_LINE = /(☎|전화|연락처|문의|팩스|FAX|tel|TEL)|\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]\d{4}|\b\d{3,4}-\d{4}\b/;
+export function cleanSample(text) {
+  const kept = String(text || '').split('\n').filter(l => !CONTACT_LINE.test(l) && !/[\w.+-]+@[\w-]+\.[\w.]+/.test(l));
+  return cleanSheet(kept.join('\n')).text.slice(0, 3000);
+}
+/* .hwpx 양식 줄 → 문체 참고 글: 제목부터 날짜 앞까지(머리·학교장·회신서 줄은 넣지 않음) */
+export function formSample(lines, roles) {
+  const r = roles || {}, L = lines || [];
+  if (r.title < 0) return '';
+  const end = r.date >= 0 ? r.date : r.bodyEnd >= 0 ? r.bodyEnd + 1 : r.title + 1;
+  return cleanSample(L.slice(r.title, end).map(l => l.text).join('\n'));
+}
+
 /* .hwp 양식 글 → 글 짜임 양식 { kind: 'plain', head(머리 줄들), sign(학교장 줄), dateFmt(날짜 꼴), sample(옛 제목·본문, 문체 참고) } */
 export function plainFromText(text) {
   const lines = String(text || '').split('\n').map(t => ({ text: t.replace(/\s+$/, ''), box: 'doc', inBox: false, obj: false }));
@@ -25,7 +40,7 @@ export function plainFromText(text) {
   let sign = at(r.sign), dateFmt = at(r.date) || '{날짜}';
   if (r.sign >= 0 && r.sign === r.date) { const m = DATE.exec(sign); if (m) { dateFmt = sign.slice(0, m.index + m[0].length).trim(); sign = sign.slice(m.index + m[0].length).trim(); } }
   const end = r.date >= 0 ? r.date : r.sign >= 0 ? r.sign : lines.length;
-  const sample = title >= 0 ? lines.slice(title, end).map(l => l.text).join('\n').trim() : '';
+  const sample = title >= 0 ? cleanSample(lines.slice(title, end).map(l => l.text).join('\n').trim()) : '';
   return { kind: 'plain', head, sign, dateFmt, sample };
 }
 /* 기본 양식: 「가 정 통 신 문」·학교 이름, 학교장 줄(띄어 씀), 날짜 「YYYY. M. D.」 */
@@ -67,7 +82,7 @@ export function letterPrompt({ sources = [], memo = '', sample = '', today = '',
     '- short: 학부모 알림 앱(e알리미 등)에 보낼 3~5줄 짧은 안내, related: 관련 공문 [{"no":"문서번호","date":"YYYY-MM-DD","title":"제목"}], target: 받는 사람(예: 3학년 보호자)',
     '- 보호자께 쓰는 정중한 문체(「~습니다」). 넣을 내용과 공문에 없는 날짜·장소·금액은 지어내지 않습니다. 사람 이름·전화번호·이메일은 쓰지 않습니다.',
     '', docs || '(넣은 공문·계획 없음)', '', '[넣을 내용]', String(memo || '').slice(0, 4000) || '(없음)',
-    ...(String(sample || '').trim() ? ['', '[양식의 옛 글(문체만 참고)]', String(sample).replace(PHONE, '').replace(EMAIL, '').slice(0, 3000)] : []),
+    ...(String(sample || '').trim() ? ['', '[양식의 옛 글(문체만 참고)]', cleanSample(sample)] : []),
     '', '[출력] JSON 하나만 출력합니다.',
     '{"title":"…","greeting":["안녕하십니까?","…"],"intro":"…","items":["1. …","  가. …"],"closing":"…","reply":{"need":false},"short":"…","related":[],"target":"…"}'].join('\n');
 }

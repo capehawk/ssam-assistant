@@ -121,6 +121,7 @@ await run('letter', [
     await page.click(`${P} [data-lf-line="${i}"]`);
     await page.click(`${P} [data-lf-role="bodyStart"]`);
     await page.click(`${P} [data-lf="mapSave"]`);
+    await page.waitForFunction(() => (document.querySelector('#toast') || {}).textContent?.includes('양식 자리를 저장했어요'));
     await page.reload(); await page.waitForTimeout(500);
     await page.click('nav.app-side [data-menu-go="etc"]'); await page.click('#menuTabs [data-tab="letter"]');
     await page.waitForSelector(`${P} [data-lf="map"]`, { timeout: 8000 });

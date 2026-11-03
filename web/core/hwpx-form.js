@@ -66,14 +66,15 @@ function inNested(k, p) { for (let u = k.up; u && u !== p; u = u.up) if (local(u
 
 /* ---------- 양식 읽기 ---------- */
 /* 줄 = 표를 품지 않은 문단. 표를 품은 문단은 그 표 칸 안 문단들을 그 자리에 줄로 */
-function linesOf(xml, container, sec, out, inBox) {
+function linesOf(xml, container, sec, out, inBox, top = null) {
   for (const p of kidsNamed(container, 'p')) {
+    const tp = top || p;
     const tables = [...walk(p)].filter(k => local(k) === 'tbl' && !inNested(k, p));
     if (tables.length) {
-      for (const tb of tables) for (const tr of kidsNamed(tb, 'tr')) for (const tc of kidsNamed(tr, 'tc')) for (const sl of kidsNamed(tc, 'subList')) linesOf(xml, sl, sec, out, true);
+      for (const tb of tables) for (const tr of kidsNamed(tb, 'tr')) for (const tc of kidsNamed(tr, 'tc')) for (const sl of kidsNamed(tc, 'subList')) linesOf(xml, sl, sec, out, true, tp);
       continue;
     }
-    out.push({ sec, node: p, box: container, inBox, text: paraText(xml, p), obj: has(p, ['pic', 'rect', 'ellipse', 'line', 'container', 'ole', 'equation']) });
+    out.push({ sec, node: p, box: container, top: tp, inBox, text: paraText(xml, p), obj: has(p, ['pic', 'rect', 'ellipse', 'line', 'container', 'ole', 'equation']) });
   }
 }
 
@@ -98,22 +99,33 @@ export async function readForm(u8) {
 /* ---------- 자리 찾기 ---------- */
 const squash = s => String(s || '').replace(/\s+/g, '');
 const DATE = /(\d{4})(\s*)(\.|년)(\s*)(\d{1,2})(\s*)(\.|월)(\s*)(\d{1,2})?(\s*)(\.|일)?/;
-const isSign = t => { const q = squash(t); return q.length <= 40 && /(학교장|학교)$/.test(q) && /(초|중|고|학)/.test(q); };
-const isDateLine = t => { const m = DATE.exec(t); return !!m && squash(t.replace(m[0], '')).length <= 20; };
-const isGreet = t => /안녕하(십니까|세요|신지요)|(학부모|보호자)님/.test(t);
+/* 학교장 줄: 끝의 「[직인생략]」·「(직인 생략)」·「(인)」은 떼고 「…학교장」·「…학교」·「…학교 교장」 */
+const isSign = t => { const q = squash(t).replace(/[[(（【]?직인생략[\])）】]?$/, '').replace(/[(（](인|印)[)）]$/, ''); return q.length <= 40 && /(학교장|학교|학교교장)$/.test(q) && /(초|중|고|학)/.test(q); };
+const WEEKDAY = /^(\s*)(?:\(([월화수목금토일])\)|([월화수목금토일])요일)/;
+const isDateLine = t => { const m = DATE.exec(t); return !!m && squash(t.replace(m[0], '')).length <= 30; };
+/* 인사: 줄 머리의 「안녕하십니까·존경하는·사랑하는」, 「학부모님, 안녕하…」 (제목 「학부모님께 드리는 글」은 인사가 아님) */
+const isGreet = t => /^\s*(안녕하(십니까|세요|신지요)|존경하는|사랑하는)|^\s*(학부모|보호자)님[,，]?\s*안녕/.test(t);
 const MARK = { title: '{제목}', body: '{본문}', date: '{날짜}', reply: '{회신서}' };
 
 /* lines → { title, bodyStart, bodyEnd, date, sign, reply } (줄 번호, 없으면 -1) */
 export function findRoles(lines) {
   const at = mk => lines.findIndex(l => l.text.includes(mk));
   const r = { title: -1, bodyStart: -1, bodyEnd: -1, date: -1, sign: -1, reply: -1 };
+  const filled = i => String(lines[i] && lines[i].text || '').trim();
   if ([MARK.title, MARK.body, MARK.date].some(m => at(m) >= 0)) {
     r.title = at(MARK.title); r.bodyStart = r.bodyEnd = at(MARK.body); r.date = at(MARK.date); r.reply = at(MARK.reply);
     r.sign = lines.findIndex((l, i) => i > Math.max(r.date, r.bodyEnd) && isSign(l.text));
+    // {회신서} 표시가 없으면 학교장 줄 아래 옛 회신서를 찾음(남거나 둘이 되지 않게)
+    if (r.reply < 0 && r.sign >= 0) for (let k = r.sign + 1; k < lines.length; k++) if (filled(k) || lines[k].obj) { r.reply = k; break; }
     return r;
   }
+  // 머리 표: 맨 앞 줄이 표 안이면 그 표(같은 맨 위 문단)의 줄은 제목·본문으로 고르지 않음 — 날짜·학교장까지 한 표면 머리로 보지 않음
+  let headEnd = -1;
+  if (lines[0] && lines[0].inBox && lines[0].top) {
+    let k = 0; while (k + 1 < lines.length && lines[k + 1].top === lines[0].top) k++;
+    if (!lines.slice(0, k + 1).some(l => isSign(l.text) || isDateLine(l.text))) headEnd = k;
+  }
   // 학교장 줄: 뒤에서부터, 날짜가 같은 줄이거나 바로 위(빈 줄 건너)
-  const filled = i => String(lines[i] && lines[i].text || '').trim();
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!isSign(lines[i].text) && !(isDateLine(lines[i].text) && isSign(lines[i].text.replace(DATE, '')))) continue;
     let d = isDateLine(lines[i].text) ? i : -1;
@@ -122,14 +134,15 @@ export function findRoles(lines) {
     r.sign = i; r.date = d; break;
   }
   const end = r.date >= 0 ? r.date : r.sign >= 0 ? r.sign : lines.length;
-  const greet = lines.findIndex((l, i) => i < end && isGreet(l.text));
+  const greet = lines.findIndex((l, i) => i > headEnd && i < end && isGreet(l.text));
+  const CONTACT = /교장|교감|담당|☎|전화|주소|우\)|http|누리집|www|발행/;
   if (greet >= 0) {
-    for (let k = greet - 1; k >= 0; k--) if (filled(k)) { r.title = k; break; }
+    for (let k = greet - 1; k > headEnd; k--) if (filled(k)) { r.title = k; break; }
     r.bodyStart = greet;
   } else {
-    // 인사가 없으면: 「가정통신문」 머리 다음의 첫 줄이 제목, 그다음부터 본문
-    const head = lines.findIndex(l => /가정통신문|가\s*정\s*통\s*신\s*문/.test(l.text));
-    for (let k = head + 1; k < end; k++) if (filled(k) && !/교장|교감|담당|☎|우\)|http/.test(lines[k].text)) { r.title = k; break; }
+    // 인사가 없으면: 머리(표·「가정통신문」 줄) 다음의 첫 줄이 제목, 그다음부터 본문. 못 찾으면 -1(양식 맞추기)
+    const head = Math.max(headEnd, lines.findIndex(l => /가정통신문|가\s*정\s*통\s*신\s*문/.test(l.text)));
+    for (let k = head + 1; k < end; k++) if (filled(k) && !CONTACT.test(lines[k].text) && !(head < 0 && lines[k].inBox)) { r.title = k; break; }
     for (let k = r.title + 1; r.title >= 0 && k < end; k++) if (filled(k)) { r.bodyStart = k; break; }
   }
   if (r.bodyStart >= 0) {
@@ -141,6 +154,14 @@ export function findRoles(lines) {
 }
 
 export { DATE, isSign, isDateLine };
+
+/* 자리 순서: 제목 < 본문 시작 ≤ 본문 끝 < 날짜 ≤ 학교장 < 회신서 (학교장·회신서는 없어도 됨) */
+export function rolesValid(r) {
+  if (!r || r.title < 0 || r.bodyStart <= r.title || r.bodyEnd < r.bodyStart || r.date <= r.bodyEnd) return false;
+  if (r.sign >= 0 && r.sign < r.date) return false;
+  if (r.reply >= 0 && r.reply <= Math.max(r.date, r.sign)) return false;
+  return true;
+}
 
 /* ---------- 날짜 ---------- */
 /* 양식 줄의 날짜를 발행일(iso)로 — 꼴(「2026 . 3 . 3 .」·「2025년 12월 12일」·「2026. 3. 3.」)과 같은 줄의 다른 글은 그대로. {날짜}는 「YYYY. M. D.」 */
@@ -154,7 +175,42 @@ export function swapDate(text, iso) {
   if (!m) return `${y}. ${mo}. ${d}.`;
   const [, , s1, p1, s2, , s3, p2, s4, , s5, p3] = m;
   const tail = p3 ? s5 + p3 : p1 === '년' ? '일' : '.';
-  return t.slice(0, m.index) + `${y}${s1}${p1}${s2}${mo}${s3}${p2}${s4}${d}${tail}` + t.slice(m.index + m[0].length);
+  let rest = t.slice(m.index + m[0].length);
+  // 뒤에 요일(「(화)」·「화요일」)이 있으면 새 날짜의 요일로
+  const w = WEEKDAY.exec(rest), wd = '일월화수목금토'[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  if (w) rest = w[1] + (w[2] ? `(${wd})` : `${wd}요일`) + rest.slice(w[0].length);
+  return t.slice(0, m.index) + `${y}${s1}${p1}${s2}${mo}${s3}${p2}${s4}${d}${tail}` + rest;
+}
+
+/* 날짜 문단: 글자 조각 안의 날짜 글자만 바꿈(다른 조각·글자 모양·탭·줄바꿈은 그대로), 줄 배치 기억은 지움 */
+function swapDateInPara(xml, p, iso) {
+  const segs = [];
+  for (const k of walk(p)) {
+    if (local(k) !== 't' || k.self || inNested(k, p)) continue;
+    let pos = k.oe;
+    for (const c of [...k.kids, null]) { const end = c ? c.s : k.cs; if (end > pos) segs.push({ s: pos, e: end, text: unesc(xml.slice(pos, end)) }); if (c) pos = c.e; }
+  }
+  const joined = segs.map(g => g.text).join('');
+  if (!joined.includes(MARK.date) && !DATE.exec(joined)) return setText(xml, p, swapDate(joined, iso));
+  const swapped = swapDate(joined, iso);
+  let a = 0; while (a < joined.length && a < swapped.length && joined[a] === swapped[a]) a++;
+  let b = 0; while (b < joined.length - a && b < swapped.length - a && joined[joined.length - 1 - b] === swapped[swapped.length - 1 - b]) b++;
+  const ms = a, me = joined.length - b, rep = swapped.slice(a, swapped.length - b);
+  const edits = [];
+  let off = 0, placed = false;
+  for (const g of segs) {
+    const s0 = off, len = g.text.length; off += len;
+    const cl = v => Math.max(0, Math.min(len, v));
+    const hit = !placed && ms >= s0 && (ms < s0 + len || (ms === s0 + len && me === ms));
+    if (!hit && (s0 + len <= ms || s0 >= me)) continue;
+    const nt = g.text.slice(0, cl(ms - s0)) + (hit ? rep : '') + g.text.slice(cl(me - s0));
+    if (hit) placed = true;
+    edits.push({ s: g.s, e: g.e, text: esc(nt) });
+  }
+  for (const k of p.kids) if (local(k) === 'linesegarray') edits.push({ s: k.s, e: k.e, text: '' });
+  let out = xml.slice(p.s, p.e);
+  for (const ed of edits.sort((x, y) => y.s - x.s)) out = out.slice(0, ed.s - p.s) + ed.text + out.slice(ed.e - p.s);
+  return out;
 }
 
 /* ---------- 문단 만들기 ---------- */
@@ -216,6 +272,20 @@ function paraFrom(proto, text, id, { keepLead = true } = {}) {
   return `${open}${textRun(proto.charPr, body ? (keepLead ? proto.lead : '') + body : '')}</hp:p>`;
 }
 const pick = (protos, lv) => protos[FALL[lv].find(k => protos[k])];
+/* 지우는 문단에 걸린 조절자(머리말·꼬리말·쪽 번호 등)와 떠 있는 개체(글자처럼 취급 아님)는 글만 빼고 옮겨 남김 */
+const OBJ = ['pic', 'rect', 'ellipse', 'line', 'container', 'ole', 'arc', 'polygon', 'curve', 'connectLine', 'textart', 'tbl', 'equation'];
+function anchorsOf(xml, paras) {
+  let out = '';
+  for (const p of paras) for (const run of kidsNamed(p, 'run')) {
+    if (pureText(run)) continue;
+    const kids = run.kids.map(local);
+    if (kids.includes('secPr')) continue;
+    const floating = run.kids.some(k => OBJ.includes(local(k)) && kidsNamed(k, 'pos').some(ps => attr(xml.slice(ps.s, ps.oe), 'treatAsChar') === '0'));
+    if (kids.includes('ctrl') || floating) out += stripT(xml, run);
+  }
+  return out;
+}
+const withRuns = (paraXml, runs) => (runs ? paraXml.replace(/^(<hp:p\b[^>]*>)/, `$1${runs}`) : paraXml);
 
 /* ---------- 회신서 ---------- */
 const solidFill = id => `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0"><hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/>`
@@ -270,7 +340,7 @@ export async function fillForm(form, roles, letter) {
 
   const tl = line(roles.title), dl = line(roles.date), b0 = line(roles.bodyStart);
   if (tl) add(tl.sec, tl.node.s, tl.node.e, setText(secXml[tl.sec], tl.node, x.title || ''));
-  if (dl) add(dl.sec, dl.node.s, dl.node.e, setText(secXml[dl.sec], dl.node, swapDate(dl.text, x.date)));
+  if (dl) add(dl.sec, dl.node.s, dl.node.e, swapDateInPara(secXml[dl.sec], dl.node, x.date));
   let protos = null;
   if (b0) {
     const xml = secXml[b0.sec], box = b0.box, ps = kidsNamed(box, 'p');
@@ -280,17 +350,23 @@ export async function fillForm(form, roles, letter) {
     const range = ps.slice(i0, i1 + 1);
     protos = protosOf(xml, range.filter(p => L.some(l => l.node === p)));
     const keep = range.filter(p => has(p, ['secPr'])).map(p => setText(xml, p, ''));
-    add(b0.sec, ps[i0].s, ps[i1].e, keep.join('') + (x.body || []).map(t => paraFrom(pick(protos, levelOf(t)), t, nid())).join(''));
+    const carry = anchorsOf(xml, range.filter(p => !has(p, ['secPr'])));
+    const paras = (x.body && x.body.length ? x.body : ['']).map(t => paraFrom(pick(protos, levelOf(t)), t, nid()));
+    paras[0] = withRuns(paras[0], carry);
+    add(b0.sec, ps[i0].s, ps[i1].e, keep.join('') + paras.join(''));
   }
   // 회신서: 옛 회신서(시작 줄이 든 구역 맨 위 문단부터 구역 끝까지)를 지우고, 켰으면 새로
   const rl = line(roles.reply), sl = line(roles.sign);
   let header = null, headerName = form.entries.find(e => /^Contents\/header\.xml$/i.test(e.name));
   const inBox = rl && ((sl && topOf(rl) === topOf(sl)) || (b0 && topOf(rl) === topOf(b0)));
   if (inBox) warn.push('reply-in-box');
-  let at = null; // 새 회신서를 넣을 { sec, s, e }
+  let at = null; // 새 회신서를 넣을 { sec, s, e, keep(남길 구역 설정 문단·옮길 조절자) }
   if (rl && !inBox) {
-    const tops = kidsNamed(form.secs[rl.sec].top, 'p'), from = tops.indexOf(topOf(rl));
-    at = { sec: rl.sec, s: tops[from].s, e: tops[tops.length - 1].e };
+    const tops = kidsNamed(form.secs[rl.sec].top, 'p'), from = tops.indexOf(topOf(rl)), gone = tops.slice(from), xml = secXml[rl.sec];
+    // 구역 설정 문단(구역의 첫 문단)은 글만 지우고 남김 — 구역이 문단 없이 비지 않게
+    const kept = gone.filter(p => has(p, ['secPr'])).map(p => setText(xml, p, ''));
+    const carry = anchorsOf(xml, gone.filter(p => !has(p, ['secPr'])));
+    at = { sec: rl.sec, s: tops[from].s, e: tops[tops.length - 1].e, keep: kept.join('') + (carry ? withRuns(paraFrom(protosOf(xml, [])[0], '', nid()), carry) : '') };
   } else if (!inBox) {
     const si = sl ? sl.sec : form.secs.length - 1, top = form.secs[si].top;
     at = { sec: si, s: top.cs, e: top.cs };
@@ -307,6 +383,7 @@ export async function fillForm(form, roles, letter) {
         text = replyXml(x.reply, { normal: pr[0], center, head, bold: pr[1] || pr[0], border: added.id, width: textWidth(secXml[at.sec]), nid, year: String(x.date || '').slice(0, 4) || String(new Date().getFullYear()) });
       }
     }
+    text = (at.keep || '') + text;
     if (text || at.s !== at.e) add(at.sec, at.s, at.e, text);
   }
   // 바꾸기(뒤에서부터). 다른 바꿀 곳 안에 든 것은 건너뜀
