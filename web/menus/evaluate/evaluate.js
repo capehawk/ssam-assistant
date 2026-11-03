@@ -971,39 +971,51 @@ async function upFetch(url, init, keepAlive) {
     if (sig && onAbort) sig.removeEventListener('abort', onAbort);
   }
 }
-/* 이미지를 글자로 읽음 (업스테이지 OCR). 실패하면 ocr_failed */
+/* 이미지를 글자로 읽음 (업스테이지 OCR). 실패하면 ocr_failed.
+   같은 그림(기준 그림 등)은 다시 읽지 않음 — 그림 객체마다 기억(앱을 끄면 사라짐) */
+const OCR_MEMO = new WeakMap();
 async function upstageRead(images, signal) {
-  const key = (E.keys.upstage || '').trim();
   const out = [];
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
-    const blob = im.blob || await (await fetch(`data:${im.mime};base64,${im.b64}`)).blob();
-    const fd = new FormData();
-    fd.append('document', blob, `page-${i + 1}.${/png/.test(im.mime) ? 'png' : 'jpg'}`);
-    fd.append('model', 'ocr');
-    let res;
-    try { res = await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
-    catch (e) {
-      if (e && e.name === 'AbortError') throw { code: 'cancelled' };
-      throw { code: 'blocked', message: String(e && e.message || e) };
-    }
-    if (!res.ok) {
-      const er = await httpError(res);
-      // 키·한도·잠깐 끊김(429·5xx)은 그대로 넘겨 쉬었다가 다시 하게 함. 나머지는 이미지를 못 읽은 것
-      throw ['auth', 'quota', 'rate_limited', 'upstream_error'].includes(er.code) ? er : { code: 'ocr_failed', message: er.message };
-    }
-    let j = null;
-    try { j = await res.json(); } catch (e) { throw { code: 'ocr_failed' }; }
-    const text = String((j && j.text) || (j && Array.isArray(j.pages) ? j.pages.map(p => p && p.text || '').join('\n') : '')).trim();
-    out.push(`--- ${i + 1}번째 이미지 ---\n${text || '(읽은 글자 없음)'}`);
+    let p = im && typeof im === 'object' ? OCR_MEMO.get(im) : null;
+    if (!p) { p = ocrOne(im, i, signal); if (im && typeof im === 'object') { OCR_MEMO.set(im, p); p.catch(() => OCR_MEMO.delete(im)); } }
+    out.push(`--- ${i + 1}번째 이미지 ---\n${(await p) || '(읽은 글자 없음)'}`);
   }
   return `[이미지에서 읽은 글]\n${out.join('\n')}\n[이미지에서 읽은 글 끝]\n아래 요청에서 이미지라고 한 것은 위에 적은 글이에요.\n\n`;
+}
+async function ocrOne(im, i, signal) {
+  const key = (E.keys.upstage || '').trim();
+  const blob = im.blob || await (await fetch(`data:${im.mime};base64,${im.b64}`)).blob();
+  const fd = new FormData();
+  fd.append('document', blob, `page-${i + 1}.${/png/.test(im.mime) ? 'png' : 'jpg'}`);
+  fd.append('model', 'ocr');
+  let res;
+  try { res = await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
+  catch (e) {
+    if (e && e.name === 'AbortError') throw { code: 'cancelled' };
+    throw { code: 'blocked', message: String(e && e.message || e) };
+  }
+  if (!res.ok) {
+    const er = await httpError(res);
+    // 키·한도·잠깐 끊김(429·5xx)은 그대로 넘겨 쉬었다가 다시 하게 함. 나머지는 이미지를 못 읽은 것
+    throw ['auth', 'quota', 'rate_limited', 'upstream_error'].includes(er.code) ? er : { code: 'ocr_failed', message: er.message };
+  }
+  let j = null;
+  try { j = await res.json(); } catch (e) { throw { code: 'ocr_failed' }; }
+  return String((j && j.text) || (j && Array.isArray(j.pages) ? j.pages.map(p => p && p.text || '').join('\n') : '')).trim();
+}
+/* 업스테이지 채팅은 글만 받음: 공통 그림 글 → 공통 글 → 학생 그림 글 → 학생 글 (공통이 앞이라 같은 앞부분) */
+async function upstageFlat(prompt, images, shared, signal) {
+  const sh = shared || {};
+  const head = (sh.images && sh.images.length ? await upstageRead(sh.images, signal) : '') + (String(sh.text || '').trim() ? sh.text + '\n\n' : '');
+  return head + (images && images.length ? await upstageRead(images, signal) : '') + prompt;
 }
 /* Claude 5.x 등은 답하기 전에 먼저 생각(thinking)하고, 생각도 max_tokens 안에서 씀.
    평어 쓰기는 깊은 생각이 필요 없어서 effort를 낮춰 빠르게 하고, 글자 한도는 넉넉히 둠 */
 const CLAUDE_EFFORT_RE = /^claude-(?:opus-(?:4-[5-9]|[5-9])|sonnet-(?:4-[6-9]|[5-9])|haiku-[5-9]|fable-|mythos-)/;
-async function callApi(provider, prompt, { onText, signal: outer, images, careful, model: useModel }) {
-  const imgs = images || [];
+async function callApi(provider, prompt, { onText, signal: outer, images, careful, model: useModel, shared, meter }) {
+  const imgs = images || [], W = window.SSAM_WIRE, use = W.emptyUse();
   // 2분 동안 아무것도 오지 않거나(연결이 멈춤) 모두 15분이 넘으면 끊음
   const wd = new AbortController();
   let idleT = null;
@@ -1022,13 +1034,14 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
       res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model, max_tokens: 32000, stream: true, ...(CLAUDE_EFFORT_RE.test(model) ? { output_config: { effort: careful ? 'medium' : 'low' } } : {}), messages: [{ role: 'user', content: imgs.length ? [...imgs.map(im => ({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.b64 } })), { type: 'text', text: prompt }] : prompt }] })
+        // 공통 부분(shared)을 앞에 두고 끝에 cache_control — 학생마다 같은 앞부분은 캐시로 싸게(ai-wire)
+        body: JSON.stringify({ model, max_tokens: 32000, stream: true, ...(CLAUDE_EFFORT_RE.test(model) ? { output_config: { effort: careful ? 'medium' : 'low' } } : {}), messages: [{ role: 'user', content: W.claudeContent({ text: prompt, images: imgs, shared }) }] })
       });
     } else if (provider === 'gemini') {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [...imgs.map(im => ({ inline_data: { mime_type: im.mime, data: im.b64 } })), { text: prompt }] }] })
+        body: JSON.stringify({ contents: [{ role: 'user', parts: W.geminiParts({ text: prompt, images: imgs, shared }) }] })
       });
     } else if (provider === 'upstage') {
       // 이미지는 generate에서 글로 바꿔 둠
@@ -1041,7 +1054,7 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
       res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
-        body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: imgs.length ? [{ type: 'text', text: prompt }, ...imgs.map(im => ({ type: 'image_url', image_url: { url: `data:${im.mime};base64,${im.b64}`, detail: 'high' } }))] : prompt }] })
+        body: JSON.stringify({ model, stream: true, stream_options: { include_usage: true }, messages: [{ role: 'user', content: W.openaiContent({ text: prompt, images: imgs, shared }) }] })
       });
     }
   } catch (e) {
@@ -1054,6 +1067,7 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
   idle();
   try {
     await readSSE(res, j => {
+      W.readUsage(provider, j, use);
       if (provider === 'claude') {
         if (j.type === 'content_block_delta' && j.delta && j.delta.type === 'text_delta') push(j.delta.text);
         else if (j.type === 'message_delta' && j.delta && j.delta.stop_reason) { stopReason = j.delta.stop_reason; if (stopReason === 'max_tokens') truncated = true; }
@@ -1082,8 +1096,12 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
     if (stopReason === 'refusal') throw { code: 'refused' };
     throw { code: 'empty_completion', message: stopReason === 'max_tokens' ? '생각하는 데 글자 한도를 다 써서 문장을 쓰지 못했어요' : '' };
   }
-  return { text, truncated };
-  } finally { clearTimeout(idleT); clearTimeout(totalT); }
+  return { text, truncated, usage: use };
+  } finally {
+    clearTimeout(idleT); clearTimeout(totalT);
+    // 실패한 요청도 쓴 만큼은 셈
+    if (meter && (use.input || use.cacheRead || use.cacheWrite || use.output)) meter.add(use);
+  }
 }
 /* 모든 생성은 여기로 */
 /* images: [{ mime, b64, blob }] — 평가지 채점에서 씀.
@@ -1093,16 +1111,19 @@ function roleAI(use, task, role) {
   const r = task && window.SSAM && window.SSAM.aiRoles;
   return r ? r.pick(task, role || 'main') : null;
 }
-async function generate(prompt, { onText, signal, fresh, images, careful, use, task, role } = {}) {
+/* shared: { text, images } 학생마다 같은 공통 부분(앞에 두어 캐시), meter: 사용량을 모을 곳 */
+async function generate(prompt, { onText, signal, fresh, images, careful, use, task, role, shared, meter } = {}) {
   const pickd = E.engine === 'account' ? null : roleAI(use, task, role);
   if (pickd && PROVIDERS[pickd.engine] && (E.keys[pickd.engine] || '').trim()) {
     const prov = pickd.engine;
     try {
-      if (prov === 'upstage' && images && images.length) { prompt = await upstageRead(images, signal) + prompt; images = null; }
-      return await callApi(prov, prompt, { onText, signal, images, careful, model: pickd.model });
+      if (prov === 'upstage') { prompt = await upstageFlat(prompt, images, shared, signal); images = null; shared = null; }
+      return await callApi(prov, prompt, { onText, signal, images, careful, model: pickd.model, shared, meter });
     } catch (e) { if (e && typeof e === 'object' && !e.provider) e.provider = prov; throw e; }
   }
   if (E.engine === 'account') {
+    // Claude 계정은 하나로 이어 붙여 보냄(공통 → 학생)
+    if (shared) { const f = window.SSAM_WIRE.flatten({ text: prompt, images: images || [], shared }); prompt = f.text; images = f.images.length ? f.images : null; }
     const opts = { signal, onText, modelTier: careful || S.settings.tier === 'careful' ? 'default' : 'quick' };
     if (fresh || (images && images.length)) opts.cache = false;
     if (images && images.length) {
@@ -1113,11 +1134,8 @@ async function generate(prompt, { onText, signal, fresh, images, careful, use, t
     }
     return cap.sample(prompt, opts);
   }
-  if (E.engine === 'upstage' && images && images.length) {
-    prompt = await upstageRead(images, signal) + prompt;
-    images = null;
-  }
-  if (E.engine && PROVIDERS[E.engine]) return callApi(E.engine, prompt, { onText, signal, images, careful });
+  if (E.engine === 'upstage') { prompt = await upstageFlat(prompt, images, shared, signal); images = null; shared = null; }
+  if (E.engine && PROVIDERS[E.engine]) return callApi(E.engine, prompt, { onText, signal, images, careful, shared, meter });
   throw { code: 'no_engine' };
 }
 /* 한 번에 보낼 수 있는 장수보다 많으면 위아래로 이어 붙임 */

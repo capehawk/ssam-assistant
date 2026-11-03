@@ -12,10 +12,10 @@ const str = (v, n = 400) => String(v == null ? '' : v).trim().slice(0, n);
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /* 그 업무의 검토 AI로 JSON 답 받기. 검토가 꺼졌거나 검토 AI가 없으면 null(부르지 않음), 실패하면 { error } */
-export async function reviewJSON(task, prompt, { images, valid, signal } = {}) {
+export async function reviewJSON(task, prompt, { images, valid, signal, shared, meter } = {}) {
   const use = pick(task, 'review');
   if (!use) return null;
-  try { return await ai.generateJSON(prompt, { use, images, valid, signal }); }
+  try { return await ai.generateJSON(prompt, { use, images, valid, signal, shared, meter }); }
   catch (e) { return { error: (e && e.code) || 'upstream_error' }; }
 }
 

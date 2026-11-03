@@ -43,15 +43,25 @@ export async function open({ width = 1280, height = 860 } = {}) {
   return { page, ctx, browser, url: srv.url, errors, close };
 }
 
-/* Claude API 가짜 응답. handler({ prompt, images }) → 돌려줄 글 */
+/* Claude API 가짜 응답. handler({ prompt(글 조각을 모두 이음), images(그림 수), content, body }) → 돌려줄 글,
+   또는 { text, usage: { input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens }, status }(status 429면 한도) */
 export async function mockClaude(page, handler) {
   await page.route('https://api.anthropic.com/**', async route => {
     const body = JSON.parse(route.request().postData());
     const c = body.messages[0].content;
-    const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+    const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
     const images = typeof c === 'string' ? 0 : c.filter(x => x.type === 'image').length;
-    const out = await handler({ prompt, images });
-    const ev = [{ type: 'content_block_delta', delta: { type: 'text_delta', text: out } }, { type: 'message_delta', delta: { stop_reason: 'end_turn' } }];
+    const r = await handler({ prompt, images, content: c, body });
+    const o = r && typeof r === 'object' ? r : { text: r };
+    if (o.status && o.status !== 200) {
+      await route.fulfill({ status: o.status, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'error', error: { type: o.status === 429 ? 'rate_limit_error' : 'api_error', message: 'mock' } }) });
+      return;
+    }
+    const u = o.usage || {};
+    const ev = [
+      ...(o.usage ? [{ type: 'message_start', message: { usage: { input_tokens: u.input_tokens || 0, cache_creation_input_tokens: u.cache_creation_input_tokens || 0, cache_read_input_tokens: u.cache_read_input_tokens || 0, output_tokens: 1 } } }] : []),
+      { type: 'content_block_delta', delta: { type: 'text_delta', text: o.text } },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, ...(o.usage ? { usage: { output_tokens: u.output_tokens || 0 } } : {}) }];
     await route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: ev.map(e => 'data: ' + JSON.stringify(e) + '\n\n').join('') });
   });
 }

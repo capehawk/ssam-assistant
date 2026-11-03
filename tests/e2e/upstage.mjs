@@ -39,6 +39,12 @@ await page.route(/api\.(anthropic|openai)\.com|generativelanguage\.googleapis\.c
 
 await page.goto(url);
 await page.waitForTimeout(500);
+/* 창체 학습지를 다시 넣음(새 그림) */
+const reupload = async () => {
+  const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('[data-ccsheet][data-cck="auto"]')]);
+  await fc.setFiles([join(FIXTURES, 'sheet-1.png')]);
+  await page.waitForTimeout(300);
+};
 
 await run('upstage', [
   ['설정에서 업스테이지와 키를 넣으면 세로 메뉴 AI가 업스테이지', async () => {
@@ -82,8 +88,16 @@ await run('upstage', [
     const c = lastChat.body.messages[0].content;
     assert(typeof c === 'string' && c.includes('[이미지에서 읽은 글]') && c.includes('분리수거 당번을 정해 매일 확인했다'), '채팅 본문에 읽은 글 없음');
   }],
+  ['같은 학습지 그림으로 [다시 만들기]하면 글자를 다시 읽지 않음(앱이 기억)', async () => {
+    log.length = 0;
+    await page.click('[data-ccre="1"]');
+    await page.waitForFunction(() => !document.querySelector('#ccView .spin'), null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert(log.includes('chat') && !log.includes('ocr'), '순서: ' + log.join(','));
+  }],
   ['글자 읽기가 이미지를 받지 않으면(400) 안내', async () => {
     ocrStatus = 400;
+    await reupload(); // 새로 넣은 그림은 다시 읽음
     await page.click('[data-ccre="1"]');
     await page.waitForFunction(() => document.querySelector('#ccView').textContent.includes('업스테이지가 이미지를 읽지 못했어요'), null, { timeout: 10000 });
     assert((await page.textContent('#ccView')).includes('이미지 기능은 Claude·Gemini·GPT를 권장해요'), '권장 문구 없음');
@@ -91,6 +105,7 @@ await run('upstage', [
   }],
   ['글자 읽기가 요청 한도(429)면 멈추지 않고 쉬었다가 이어서', async () => {
     ocrStatus = 429;
+    await reupload();
     await page.click('[data-ccre="1"]');
     await page.waitForFunction(() => document.querySelector('#ccView').textContent.includes('요청 한도'), null, { timeout: 10000 });
     assert(!(await page.textContent('#ccView')).includes('이미지를 읽지 못했어요'), '429를 읽기 실패로 봄');
