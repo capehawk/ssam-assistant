@@ -47,6 +47,9 @@ try {
   await page.locator('[data-menu-go="training"]').click();
   await page.locator('#tr-form').waitFor({state:'visible'});
   assert.ok(await page.locator('#tr-connect').isVisible(),'연결 화면 표시');
+  assert.equal(await page.locator('#tr-checklist input').count(),3,'시연 필수연수 3개 표시');
+  assert.equal(await page.locator('#tr-checklist input:checked').count(),0,'연결 전 확인완료 표시 없음');
+  assert.equal(await page.locator('#tr-year option[value="all"]').count(),1,'전체 이수연도 선택 지원');
   const update=await page.evaluate(()=>window.__TAURI__.core.invoke('check_update'));
   assert.equal(update.available,false,'테스트판에서 공식 업데이트를 제안하면 안 됩니다.');
   assert.equal(update.page,'','공식 업데이트 경로를 노출하지 않습니다.');
