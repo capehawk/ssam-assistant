@@ -93,7 +93,7 @@ await run('minor-14', [
     await page.waitForFunction(() => !document.querySelector('[data-msg="read"][disabled]'));
     assert(await page.inputValue(`${E} #msgPaste`) === GONGMUN, '붙여 넣은 글이 사라짐');
     await page.click(`${E} [data-msg="read"]`);
-    await page.waitForFunction(s => (document.querySelector(`${s} #msgTitle`) || {}).value === '[연수 안내] AI 활용 수업 연수', E);
+    await page.waitForFunction(s => ((document.querySelector(`${s} #msgBody`) || {}).value || '').startsWith('[연수 안내] AI 활용 수업 연수' + '\n'), E);
     const toast = await page.textContent('#toast');
     assert(toast.includes('줄 2곳은 뺐어요') && toast.includes('이름 1개는 가렸어요'), toast);
   }],

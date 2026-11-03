@@ -35,7 +35,8 @@ test('쪽지 글(기본): 제목 머리, 인사, □ 일시·장소·대상·신
   const r = composeMessage(m, { len: 'base', attach: ['AI 활용 연수 계획', '연수 공문'], sender: '교무부 ○○○(내선 123)' });
   assert.equal(r.title, '[연수 안내] AI 활용 수업 연수');
   const b = r.body;
-  assert.ok(b.startsWith('선생님들, 안녕하세요.\nAI 활용 수업 연수를 아래와 같이 안내드립니다.'), b.slice(0, 80));
+  // 이음은 제목 칸이 없어 본문 첫 줄이 제목, 인사는 늘 「안녕하세요 선생님.」
+  assert.ok(b.startsWith('[연수 안내] AI 활용 수업 연수\n\n안녕하세요 선생님.\nAI 활용 수업 연수를 아래와 같이 안내드립니다.'), b.slice(0, 80));
   for (const l of ['□ 일시: 2026. 11. 12.(목) 15:00~16:30', '□ 장소: 시청각실', '□ 대상: 전 교직원', '□ 신청: 2026. 11. 6.(금)까지 이음 쪽지로 회신', '□ 준비물·유의 사항: 개인 노트북 / 출장 처리 없음',
     '붙임  1. AI 활용 연수 계획 1부.\n      2. 연수 공문 1부.  끝.', '문의: 교무부 ○○○(내선 123)']) assert.ok(b.includes(l), l + '\n---\n' + b);
   assert.ok(b.trim().endsWith('감사합니다.'), b);
@@ -56,7 +57,8 @@ test('짧게·자세히·없는 줄 빼기·문의·붙임 없음·다시 안내
   assert.ok(one.includes('붙임  연수 계획 1부.  끝.'), one);
   const again = composeMessage(m, { again: true });
   assert.equal(again.title, '[다시 안내] AI 활용 수업 연수');
-  assert.ok(again.body.includes('다시 한번 안내드립니다.'), again.body);
+  assert.ok(again.body.startsWith('[다시 안내] AI 활용 수업 연수\n\n안녕하세요 선생님.\n') && again.body.includes('다시 한번 안내드립니다.'), again.body);
+  assert.ok(composeMessage({ ...m, kind: 'etc', title: '' }, {}).body.startsWith('[안내]\n\n안녕하세요 선생님.\n아래와 같이 안내드립니다.'), '제목 없음');
   const two = composeMessage({ ...m, when: [{ date: '2026-11-12', time: '15:00', note: '' }, { date: '2026-11-19', time: '15:00', note: '2차' }] }, {}).body;
   assert.ok(two.includes('□ 일시: 2026. 11. 12.(목) 15:00\n        2026. 11. 19.(목) 15:00 (2차)'), two);
   assert.equal(composeMessage({ ...m, kind: 'etc', title: '' }, {}).title, '[안내]');

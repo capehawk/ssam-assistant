@@ -36,7 +36,7 @@ await run('message', [
     await page.setInputFiles(`${P} #msgFile`, [
       { name: '연수 공문.txt', mimeType: 'text/plain', buffer: Buffer.from(GONGMUN) },
       { name: 'AI 활용 연수 계획.hwpx', mimeType: 'application/octet-stream', buffer: readFileSync(join(ROOT, 'samples', '활동지-예시.hwpx')) }]);
-    await page.waitForFunction(s => (document.querySelector(`${s} #msgTitle`) || {}).value === '[연수 안내] AI 활용 수업 연수', P);
+    await page.waitForFunction(s => ((document.querySelector(`${s} #msgBody`) || {}).value || '').startsWith('[연수 안내] AI 활용 수업 연수' + '\n'), P);
     assert(msgs().length === 1, 'AI 요청 수 ' + msgs().length);
     const p = msgs()[0];
     assert(p.includes('AI 활용 수업 연수 안내') && !p.includes('041-123-4567') && !p.includes('김가람') && !p.includes('김민수'), p.slice(0, 600));
@@ -59,18 +59,19 @@ await run('message', [
     await page.fill(`${P} [data-mf="place"]`, '강당');
     await page.waitForFunction(s => document.querySelector(`${s} #msgBody`).value.includes('□ 장소: 강당'), P);
   }],
-  ['붙임 하나를 빼면 붙임 1개·끝., [모두 복사]는 제목과 본문', async () => {
+  ['붙임 하나를 빼면 붙임 1개·끝., [복사]는 본문(첫 줄이 제목, 따로 제목 칸 없음)', async () => {
+    assert(!(await page.$(`${P} #msgTitle`)) && !(await page.$(`${P} [data-msg="copyTitle"]`)), '제목 칸이 남음');
     await page.uncheck(`${P} [data-att="1"]`);
     await page.waitForFunction(s => document.querySelector(`${s} #msgBody`).value.includes('붙임  연수 공문 1부.  끝.'), P);
     await page.click(`${P} [data-msg="copyAll"]`);
     await page.waitForTimeout(200);
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    assert(clip.startsWith('[연수 안내] AI 활용 수업 연수') && clip.includes('□ 장소: 강당'), clip.slice(0, 200));
+    assert(clip.startsWith('[연수 안내] AI 활용 수업 연수\n\n안녕하세요 선생님.\n') && clip.includes('□ 장소: 강당'), clip.slice(0, 200));
   }],
   ['최근 쪽지에 남고 [다시 안내] → 제목 「[다시 안내] …」·「다시 한번 안내드립니다.」', async () => {
     await page.waitForSelector(`${P} #msgRecent [data-msg-again]`);
     await page.click(`${P} #msgRecent [data-msg-again]`);
-    await page.waitForFunction(s => (document.querySelector(`${s} #msgTitle`) || {}).value === '[다시 안내] AI 활용 수업 연수', P);
+    await page.waitForFunction(s => ((document.querySelector(`${s} #msgBody`) || {}).value || '').startsWith('[다시 안내] AI 활용 수업 연수' + '\n'), P);
     assert((await page.inputValue(`${P} #msgBody`)).includes('다시 한번 안내드립니다.'), '다시 안내 첫 줄');
     assert(msgs().length === 1, '다시 안내에 AI');
   }],
@@ -83,7 +84,7 @@ await run('message', [
     await page.setInputFiles(`${P} #msgFile`, [
       { name: '연수 공문.txt', mimeType: 'text/plain', buffer: Buffer.from(GONGMUN) },
       { name: 'AI 활용 연수 계획.hwpx', mimeType: 'application/octet-stream', buffer: readFileSync(join(ROOT, 'samples', '활동지-예시.hwpx')) }]);
-    await page.waitForFunction(s => (document.querySelector(`${s} #msgTitle`) || {}).value === '[연수 안내] AI 활용 수업 연수', P);
+    await page.waitForFunction(s => ((document.querySelector(`${s} #msgBody`) || {}).value || '').startsWith('[연수 안내] AI 활용 수업 연수' + '\n'), P);
     await page.uncheck(`${P} [data-att="0"]`);
     await page.click(`${P} [data-msg="copyFiles"]`);
     await page.waitForFunction(() => window.__calls.length >= 2);

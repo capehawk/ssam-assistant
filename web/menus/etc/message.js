@@ -106,12 +106,10 @@ export function render() {
       </section>
       <section class="pc-card"><h3>쪽지</h3>
         <div class="seg" role="radiogroup" aria-label="쪽지 길이">${LENS.map(([k, l]) => `<button type="button" data-len="${k}" aria-pressed="${x.len === k}">${l}</button>`).join('')}</div>
-        <div class="pc-out"><div class="pc-out-h"><label class="lab" for="msgTitle">제목</label><button class="btn text pc-copy" type="button" data-msg="copyTitle">복사</button></div>
-          <input class="field" id="msgTitle" value="${esc(x.title)}" autocomplete="off"></div>
-        <div class="pc-out"><div class="pc-out-h"><label class="lab" for="msgBody">본문</label><button class="btn text pc-copy" type="button" data-msg="copyBody">복사</button></div>
+        <div class="pc-out"><div class="pc-out-h"><label class="lab" for="msgBody">본문 <span class="muted">(첫 줄이 제목 · 이음 쪽지 창에 그대로 붙여 넣어요)</span></label></div>
           <textarea class="field" id="msgBody" rows="18">${esc(x.body)}</textarea></div>
         <div id="msgResync">${x.edited ? '<p class="muted pc-resync">본문을 고쳤어요 <button class="btn text tiny" type="button" data-msg="resync">칸으로 다시 맞추기</button></p>' : ''}</div>
-        <div class="row"><button class="btn primary" type="button" data-msg="copyAll">모두 복사</button></div>
+        <div class="row"><button class="btn primary" type="button" data-msg="copyAll">복사</button></div>
         <label class="yp-f"><span class="lab">보내는 사람(문의)</span><input class="field" id="msgSender" value="${esc(getSender())}" placeholder="예) 교무부 ○○○(내선 123)" autocomplete="off"></label>
         <p class="muted" style="margin:0">보내는 사람은 한 번 적어 두면 늘 끝에 붙어요. AI로 보내지 않아요.</p>
       </section>
@@ -122,8 +120,7 @@ export function render() {
 /* 본문·제목만 다시 넣기(입력 칸에 초점이 있어도 그 칸은 덮지 않음) */
 function refreshOut() {
   if (!box) return;
-  const x = cur(), t = box.querySelector('#msgTitle'), b = box.querySelector('#msgBody'), rs = box.querySelector('#msgResync'), at = box.querySelector('#msgAttach');
-  if (t && document.activeElement !== t) t.value = x.title;
+  const x = cur(), b = box.querySelector('#msgBody'), rs = box.querySelector('#msgResync'), at = box.querySelector('#msgAttach');
   if (b && document.activeElement !== b) b.value = x.body;
   if (rs) rs.innerHTML = x.edited ? '<p class="muted pc-resync">본문을 고쳤어요 <button class="btn text tiny" type="button" data-msg="resync">칸으로 다시 맞추기</button></p>' : '';
   if (at && !at.contains(document.activeElement)) at.outerHTML = attachHTML(x);
@@ -210,10 +207,7 @@ document.addEventListener('click', e => {
   else if (a === 'resync') { compose(true); persist(); render(); }
   else if (a === 'copyFiles' && T()) copyFiles();
   else if (a === 'openDir' && T()) openDir();
-  else if (a === 'copyTitle' || a === 'copyBody' || a === 'copyAll') {
-    const text = a === 'copyTitle' ? x.title : a === 'copyBody' ? x.body : `${x.title}\n\n${x.body}`;
-    copyText(text).then(ok => toast(ok ? '복사했어요. 이음 쪽지 창에 붙여 넣으세요' : '복사하지 못했어요'));
-  }
+  else if (a === 'copyAll') copyText(x.body).then(ok => toast(ok ? '복사했어요. 이음 쪽지 창에 붙여 넣으세요' : '복사하지 못했어요'));
 });
 document.addEventListener('change', e => {
   if (!mine(e)) return;
@@ -235,7 +229,7 @@ document.addEventListener('input', e => {
   if (el.dataset.attName != null) { const at = x.attach[+el.dataset.attName]; if (at) { at.name = el.value; compose(); persist(); refreshOut(); } return; }
   if (el.id === 'msgSender') { setSender(el.value); compose(); persist(); refreshOut(); return; }
   if (el.id === 'msgPaste') { M.paste = el.value; return; }
-  if (el.id === 'msgTitle' || el.id === 'msgBody') { x[el.id === 'msgTitle' ? 'title' : 'body'] = el.value; x.edited = true; persist(); refreshOut(); }
+  if (el.id === 'msgBody') { x.body = el.value; x.edited = true; persist(); refreshOut(); }
 });
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-msg-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('[data-msg-drop]'); if (z) z.classList.remove('over'); });

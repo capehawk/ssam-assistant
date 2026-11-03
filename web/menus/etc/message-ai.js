@@ -82,11 +82,14 @@ const eul = w => { const c = String(w || '').trim().slice(-1).charCodeAt(0) - 0x
 const dayText = w => (w.end ? `${fmtDay(w.date)}~${fmtDay(w.end, { noYear: w.end.slice(0, 4) === w.date.slice(0, 4) })}` : fmtDay(w.date));
 const whenText = w => [dayText(w), w.time].filter(Boolean).join(' ') + (w.note ? (w.date || w.time ? ` (${w.note})` : w.note) : '');
 
-/* 쪽지 칸 → { title, body }. len: short(일시·장소·대상·신청) · base(+ 준비물·유의 사항) · long(+ 주요 내용) */
+/* 쪽지 칸 → { title, body }. len: short(일시·장소·대상·신청) · base(+ 준비물·유의 사항) · long(+ 주요 내용)
+   이음 쪽지는 제목 칸이 없어 본문 첫 줄이 제목, 그다음 인사 「안녕하세요 선생님.」 (스펙 2026-11-03 2장) */
+export const GREETING = '안녕하세요 선생님.';
 export function composeMessage(m, { len = 'base', attach = [], sender = '', again = false } = {}) {
   const x = m || {}, title = String(x.title || '').trim();
   const head = again ? '[다시 안내]' : `[${KINDS[x.kind] || KINDS.etc}]`;
-  const lines = ['선생님들, 안녕하세요.', `${title ? `${title}${eul(title)} ` : ''}${again ? '다시 한번 안내드립니다.' : '아래와 같이 안내드립니다.'}`, ''];
+  const full = title ? `${head} ${title}` : head;
+  const lines = [full, '', GREETING, `${title ? `${title}${eul(title)} ` : ''}${again ? '다시 한번 안내드립니다.' : '아래와 같이 안내드립니다.'}`, ''];
   const row = (label, v) => { if (String(v || '').trim()) lines.push(`□ ${label}: ${String(v).trim()}`); };
   const ws = (x.when || []).map(whenText).filter(Boolean);
   if (ws.length) lines.push(`□ 일시: ${ws[0]}`, ...ws.slice(1).map(w => `        ${w}`));
@@ -101,7 +104,7 @@ export function composeMessage(m, { len = 'base', attach = [], sender = '', agai
   lines.push('');
   if (String(sender || '').trim()) lines.push(`문의: ${String(sender).trim()}`);
   lines.push('감사합니다.');
-  return { title: title ? `${head} ${title}` : head, body: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
+  return { title: full, body: lines.join('\n').replace(/\n{3,}/g, '\n\n') };
 }
 
 /* 다시 읽을 때 선생님이 고친 칸은 그대로: keys는 쪽지 칸 이름(title·date·time·place·target·due·how·bring·notes) */

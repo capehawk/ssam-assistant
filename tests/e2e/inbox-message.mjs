@@ -24,7 +24,7 @@ await run('inbox-message', [
     assert((await page.textContent(sheet)).includes('연수·행사 안내'), await page.textContent(sheet));
     await page.waitForSelector(`${sheet} #ibRun:not([disabled])`);
     await page.click(`${sheet} #ibRun`);
-    await page.waitForFunction(s => (document.querySelector(`${s} #msgTitle`) || {}).value === '[연수 안내] 2026 AI 활용 수업 역량 강화 연수', P);
+    await page.waitForFunction(s => ((document.querySelector(`${s} #msgBody`) || {}).value || '').startsWith('[연수 안내] 2026 AI 활용 수업 역량 강화 연수' + '\n'), P);
     assert(prompts.filter(p => p.startsWith('[쪽지 안내]')).length === 1 && prompts[0].includes('역량 강화 연수'), '쪽지 AI');
     const body = await page.inputValue(`${P} #msgBody`);
     assert(body.includes('□ 일시: 2026. 11. 12.(목) 15:00~16:30') && body.includes('붙임  연수안내-공문-예시 1부.  끝.'), body);
