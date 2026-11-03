@@ -3181,6 +3181,7 @@ const GRStore = {
     return {
       kind: 'gr', title: (grUnit() && (grUnit().elem || grUnit().unit)) || GR.title, unitId: GR.unitId, criteria: GR.criteria, critDocs: GR.critDocs.map(d => ({ name: d.name, text: d.text })), createdAt: GR.createdAt || Date.now(),
       settings: { ...GR.settings, mask: GR.settings.mask.map(r => ({ ...r })) }, calibrated: GR.calibrated, refs: GR.refs.slice(),
+      ...(GR.aiUse ? { aiUse: { at: +GR.aiUse.at || 0, sent: +GR.aiUse.sent || 0, cached: +GR.aiUse.cached || 0, out: +GR.aiUse.out || 0 } } : {}),
       // 채점에서 뺀 학생도 번호 자리를 지키도록 저장 (나이스에 차례로 붙여넣을 때 칸이 밀리지 않게)
       students: GR.students.map(s => ({
         id: s.id, no: s.no, n: s.pages.length, skip: s.skip ? 1 : 0, score: s.score ?? null, level: s.level || null, manual: s.manual ? 1 : 0,
@@ -3526,12 +3527,14 @@ function grJSON(text) {
   if (a < Infinity && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch (e) {} }
   throw { code: 'bad_json' };
 }
-function grGradePrompt(st, nCrit) {
+/* 학생마다 같은 공통(shared: 기준 그림 + 이 글, 앞에 두어 캐시)과 학생 글(own: 쪽 수).
+   차례: 기준 그림 → 공통 글 → 학생 그림 → 학생 글 (스펙 2026-11-03 3.2) */
+function grGradeParts(st, nCrit) {
   const n = st.pages.length;
   const crit = grCritText();
-  return [
+  const shared = [
     `당신은 초등학교 수행평가를 채점하는 경력 많은 담임교사입니다.`,
-    `첨부한 이미지 중 앞의 ${n}장은 한 학생의 수행평가지(${n > 1 ? '순서대로' : '1쪽'})입니다.${nCrit ? ` 뒤의 ${nCrit}장은 정답·채점 기준입니다.` : ''} 이름 칸은 가려져 있을 수 있습니다.`,
+    `${nCrit ? `이 글 앞의 그림 ${nCrit}장은 정답·채점 기준입니다. ` : ''}이 글 뒤에 오는 그림은 한 학생의 수행평가지입니다. 이름 칸은 가려져 있을 수 있습니다.`,
     ``,
     `[평가 정보]`, grTaskText(),
     ``,
@@ -3546,6 +3549,12 @@ function grGradePrompt(st, nCrit) {
     `[출력] 아래 형식의 JSON 하나만 출력합니다.`,
     `{"score": 0~100 정수, "summary": "답안에서 드러난 수행 모습 한두 문장", "evidence": ["답안에서 확인한 구체적인 근거", "..."], "strengths": "잘한 점", "improve": "보완할 점", "unreadable": false}`
   ].join('\n');
+  return { shared, own: `바로 위 그림 ${n}장은 한 학생의 수행평가지(${n > 1 ? '순서대로' : '1쪽'})입니다. 이름 칸은 가려져 있을 수 있어요.` };
+}
+/* 평가지 채점 한 번(채점·검토)에 쓴 AI 양: GR.meter에 모아 GR.aiUse로 기록에 남김 */
+function grUse() {
+  const t = GR.meter && GR.meter.total();
+  if (t && (t.sent || t.out)) { GR.aiUse = { at: Date.now(), ...t }; GRStore.save(); }
 }
 function grCalibPrompt(list) {
   return [
@@ -3675,7 +3684,8 @@ async function grGrade(st) {
     const imgs = await grStudentImages(st);
     if (!GR._critCache) { GR._critCache = grCritImages(); GR._critCache.catch(() => { GR._critCache = null; }); }
     const crit = await GR._critCache;
-    const r = await generate(grGradePrompt(st, crit.length), { signal: ctl.signal, images: [...imgs, ...crit], fresh: true, careful: true, task: 'grade' });
+    const parts = grGradeParts(st, crit.length);
+    const r = await generate(parts.own, { signal: ctl.signal, images: imgs, shared: { text: parts.shared, images: crit }, fresh: true, careful: true, task: 'grade', meter: GR.meter });
     const j = grJSON(r.text);
     const sc = Math.round(Number(j.score));
     if (!Number.isFinite(sc)) throw { code: 'bad_json' };
@@ -3702,6 +3712,7 @@ async function grGrade(st) {
     else if (FATAL.includes(code) || code === 'rate_limited') { GR.err = errMsg(code, e); GR.queue.forEach(id => { const s = grStudent(id); if (s) s.status = 'idle'; }); GR.queue = []; }
   } finally {
     GR.running.delete(st.id);
+    grUse();
     grPump();
   }
 }
@@ -3730,6 +3741,8 @@ async function grStart() {
   if (!GR.id) { GR.id = Date.now().toString(36); GR.createdAt = Date.now(); }
   if (neisIsGr() && (NEIS.state === 'armed' || NEIS.state === 'arming')) neisClose();
   GR.err = ''; GR.calibrated = false; GR._critCache = null;
+  // 이 채점에 쓴 AI 양을 새로 모음(다시 채점하면 바뀜)
+  GR.meter = window.SSAM_WIRE.newMeter(); GR.usedNow = true;
   const todo = grActive().filter(s => s.status !== 'done');
   if (!todo.length) { grAfterGrading(); return; }
   todo.forEach(s => { s.status = 'queued'; });
@@ -3826,7 +3839,8 @@ async function grReviewScores(signal) {
       try {
         const imgs = await grStudentImages(st);
         if (!imgs.length) continue;
-        const r = await generate(grGradePrompt(st, crit.length), { signal, images: [...imgs, ...crit], fresh: true, careful: true, use });
+        const parts = grGradeParts(st, crit.length);
+        const r = await generate(parts.own, { signal, images: imgs, shared: { text: parts.shared, images: crit }, fresh: true, careful: true, use, meter: GR.meter });
         const j = grJSON(r.text), sc = Math.round(Number(j && j.score));
         if (!Number.isFinite(sc)) continue;
         const v = Math.max(0, Math.min(100, sc));
@@ -3839,7 +3853,7 @@ async function grReviewScores(signal) {
         GR.rvErr = 1; return;
       }
     }
-  } finally { GR.loading = ''; GRStore.save(); renderGRSoon(); }
+  } finally { GR.loading = ''; grUse(); GRStore.save(); renderGRSoon(); }
 }
 /* 두 의견 고르기: [검토 점수 쓰기]는 점수·요약을 바꾸고 수준을 다시 맞춤 */
 GR_RV.handle = (key, use) => {
@@ -4099,7 +4113,8 @@ function renderGRResults() {
     <button class="btn text back" type="button" data-gr="back">${ICON.back}채점 설정</button>
     <div class="gr-top">
       <div><h2>${esc(grUnit() ? (grUnit().elem || grUnit().unit) : (GR.title || '수행평가'))}</h2>
-        <p class="muted">${busy ? '<span class="spin"></span>' : ''}${esc(phaseText)}${GR.calibrated ? ' · 학생끼리 견주어 점수를 맞췄어요' : ''}</p></div>
+        <p class="muted">${busy ? '<span class="spin"></span>' : ''}${esc(phaseText)}${GR.calibrated ? ' · 학생끼리 견주어 점수를 맞췄어요' : ''}</p>
+        ${GR.aiUse && window.SSAM_WIRE && window.SSAM_WIRE.useText(GR.aiUse) ? `<p class="muted" id="grAiUse">${GR.usedNow ? '' : '지난 채점 '}${esc(window.SSAM_WIRE.useText(GR.aiUse))}</p>` : ''}</div>
       ${busy ? `<div class="meter big"><i style="width:${GR.phase === 'grading' ? Math.round(graded / Math.max(1, total) * 100) : GR.phase === 'writing' ? Math.round(done.filter(s => s.text && !s.stale).length / Math.max(1, graded) * 100) : 100}%"></i></div>` : ''}
     </div>
     ${hasLevels ? `<div class="dist">${LV.map(l => `<span class="dchip ${l.cls} ${lvCount[l.k] !== tg[l.k] ? 'off' : ''}"><span class="sw"></span>${l.name} <b class="num">${lvCount[l.k]}</b><small class="num">/ ${tg[l.k]}명</small></span>`).join('')}</div>` : ''}
@@ -4294,7 +4309,7 @@ const neisIsGr = () => !NEIS.src || NEIS.src.key === 'gr';
 function grNew(keepPages) {
   if (neisIsGr()) neisClose();
   grStop();
-  GR.id = null; GR.createdAt = 0; GR.calibrated = false; GR.err = ''; GR._critCache = null;
+  GR.id = null; GR.createdAt = 0; GR.calibrated = false; GR.err = ''; GR._critCache = null; GR.aiUse = null; GR.meter = null; GR.usedNow = false;
   if (!keepPages) { grFreePages(); GR.pages = []; GR.students = []; GR.settings.startNo = 1; }
   else GR.students.forEach(s => Object.assign(s, { status: 'idle', score: null, score0: null, level: null, manual: false, summary: '', evidence: [], strengths: '', improve: '', text: '', d: 0, stale: false, err: '' }));
   GR.phase = 'setup'; GR.showRes = false;
@@ -4321,6 +4336,7 @@ async function grOpenHistory(id) {
     for (let no = Math.min(...nos); no <= hi; no++) if (!have.has(no) && !ex.has(no)) GR.students.push({ id: grId(), no, pages: [], skip: true, status: 'idle', score: null, level: null, text: '', d: 0, stale: false, manual: false });
   }
   GR.students.sort((x, y) => x.no - y.no);
+  GR.aiUse = b.aiUse && typeof b.aiUse === 'object' ? b.aiUse : null;
   GR.phase = grActive().every(s => s.text && !s.stale) ? 'done' : 'partial';
   if (fixed) GRStore.save();
   GR.showRes = true; $('#grView').classList.add('show-pane');
