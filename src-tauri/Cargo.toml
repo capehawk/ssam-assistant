@@ -1,6 +1,6 @@
 [package]
 name = "ssam"
-version = "0.18.1"
+version = "0.18.2"
 description = "쌤비서"
 authors = ["doguri25"]
 edition = "2021"
