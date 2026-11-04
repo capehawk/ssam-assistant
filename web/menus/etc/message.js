@@ -126,9 +126,8 @@ export function render() {
   if (!box || box.hidden) return;
   const x = cur();
   box.innerHTML = `<div class="m-page msg-page">
-    <div class="m-head"><div><h2>쪽지 작성</h2><p class="muted">공문·연수 계획·행사 계획을 넣으면 선생님들께 보낼 안내 쪽지를 써요. 이음 쪽지 창에 붙여 넣으세요.</p></div>
-      <div class="row"><button class="btn text" type="button" data-msg="new">새 쪽지</button></div></div>
-    ${aiRowHTML('message')}
+    <div class="m-head m-head-row"><div><h2>쪽지 작성</h2><p class="muted">공문·연수 계획·행사 계획을 넣으면 선생님들께 보낼 안내 쪽지를 써요. 이음 쪽지 창에 붙여 넣으세요.</p></div>
+      <div class="m-head-act">${aiRowHTML('message')}<button class="btn text" type="button" data-msg="new">새 쪽지</button></div></div>
     <div class="msg-grid">
       <section class="pc-card"><h3>넣기</h3>
         <div class="msg-drop" data-msg-drop>

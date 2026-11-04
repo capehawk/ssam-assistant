@@ -147,8 +147,9 @@ function render() {
   const t = typeOf(st.form.type), ex = t.example;
   box.innerHTML = `<div class="m-page pc-page">
     <div class="m-head pc-head"><div><h2>새 품의</h2><p class="muted">사려는 것·견적서를 넣고 [초안 만들기]를 누르면 에듀파인에 붙여넣을 제목·품의 사유·산출 내역을 써요.</p></div>
+</div>
+    <div class="pc-type-row"><div class="seg pc-types" role="radiogroup" aria-label="품의 종류">${TYPES.map(x => `<button type="button" role="radio" data-pctype="${x.id}" aria-pressed="${x.id === t.id}" aria-checked="${x.id === t.id}">${x.label}</button>`).join('')}</div>
       <div class="row pc-head-act"><button class="btn" type="button" data-pc="saveTpl">템플릿으로 저장</button><button class="btn text" type="button" data-pc="fresh">새로 쓰기</button></div></div>
-    <div class="seg pc-types" role="radiogroup" aria-label="품의 종류">${TYPES.map(x => `<button type="button" role="radio" data-pctype="${x.id}" aria-pressed="${x.id === t.id}" aria-checked="${x.id === t.id}">${x.label}</button>`).join('')}</div>
     <p class="muted pc-hint" id="pcHint">${esc(t.hint)}</p>
     <div class="pc-grid">
       <section class="pc-card" aria-labelledby="pcMemoH">

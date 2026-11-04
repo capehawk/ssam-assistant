@@ -5704,7 +5704,7 @@ window.SSAM = {
   // 평가 영역 이음(활동지·단원평가 → 평가지 채점): 지금 평가계획의 영역 [{ id, subject, label }]
   planUnits: () => allUnits().map(u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') })),
   onModeChange: fn => { modeHooks.push(fn); },
-  ai: { generate, engineReady, engineName, testKey: () => ({ on: TEST.on, until: TEST.until, untilText: untilText(), using: usingTest() }), providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
+  ai: { generate, engineReady, engineName, testKey: () => ({ on: TEST.on, until: TEST.until, untilText: untilText(), using: usingTest(), own: !!(E.keys.upstage || '').trim() }), providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
   rosterHTML, toast, openSheet, closeSheet, esc, copyText,
   // 단원평가: 이름 칸 가리기 편집기 { shots: [{ url, label }], mask, all, what, save(mask, all) }
   openMaskEditor,

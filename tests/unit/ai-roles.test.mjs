@@ -147,3 +147,17 @@ test('고를 수 있는 AI: 키를 넣은 회사의 모델만, 값은 engine|mod
   assert.equal(aiFromValue(''), null);
   assert.equal(aiFromValue('zzz|x'), null);
 });
+
+test('시험용 업스테이지를 쓰면 AI 줄에 「(시험용)」, 내 업스테이지 키가 있거나 다른 AI면 없음', () => {
+  resetRoles();
+  const up = { engine: 'upstage', current: { engine: 'upstage', model: 'solar-pro3' }, keys: { claude: false, gemini: false, openai: false, upstage: true }, models: { upstage: ['solar-pro3'] }, labels: { upstage: 'Upstage' }, modelLabels: {} };
+  const old = globalThis.window;
+  try {
+    globalThis.window = { SSAM: { ai: { testKey: () => ({ on: true, own: false }) } } };
+    assert.ok(rowText('message', up).includes('(시험용)'), rowText('message', up));
+    globalThis.window = { SSAM: { ai: { testKey: () => ({ on: true, own: true }) } } };
+    assert.ok(!rowText('message', up).includes('시험용'));
+    globalThis.window = { SSAM: { ai: { testKey: () => ({ on: true, own: false }) } } };
+    assert.ok(!rowText('message', env()).includes('시험용'));
+  } finally { globalThis.window = old; }
+});

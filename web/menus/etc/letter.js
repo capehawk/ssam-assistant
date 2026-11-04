@@ -329,9 +329,8 @@ export function render() {
 function draw() {
   const x = c();
   box.innerHTML = `<div class="m-page lf-page">
-    <div class="m-head"><div><h2>가정통신문</h2><p class="muted">학교 양식을 넣어 두고, 공문·계획과 넣을 내용을 주면 학교 양식에 맞춘 가정통신문을 써요.</p></div>
-      <div class="row"><button class="btn text" type="button" data-lf="new">새 가정통신문</button></div></div>
-    ${aiRowHTML('letter')}
+    <div class="m-head m-head-row"><div><h2>가정통신문</h2><p class="muted">학교 양식을 넣어 두고, 공문·계획과 넣을 내용을 주면 학교 양식에 맞춘 가정통신문을 써요.</p></div>
+      <div class="m-head-act">${aiRowHTML('letter')}<button class="btn text" type="button" data-lf="new">새 가정통신문</button></div></div>
     <div class="msg-grid">
       <section class="pc-card"><h3>양식</h3>${formsHTML()}${mapHTML()}
         <h3>넣기</h3>

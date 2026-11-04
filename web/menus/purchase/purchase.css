@@ -92,3 +92,6 @@
 .pc-chip { cursor: pointer; }
 .pc-chip.warn { background: var(--warn-bg, #fff4d6); color: var(--warn-fg, #7a5a00); border-color: transparent; }
 .pc-chip.info { opacity: .85; }
+/* 종류(물품 구입 …)와 [템플릿으로 저장]·[새로 쓰기]를 한 줄로 */
+.pc-type-row{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap}
+.pc-type-row .pc-head-act{margin-left:auto}

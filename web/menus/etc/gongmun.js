@@ -99,8 +99,8 @@ export function render() {
   if (!box || box.hidden) return;
   const all = listDocs(), open = all.filter(d => !d.done), done = all.filter(d => d.done), t = today();
   box.innerHTML = `<div class="m-page gm-page">
-    <div class="m-head"><div><h2>공문 처리</h2><p class="muted">공문을 넣으면 제출 기한과 할 일을 뽑아 기한 차례로 보여 줘요. 쪽지·가정통신문·품의·결과 보고로 바로 이어 써요.</p></div></div>
-    ${aiRowHTML('gongmun')}
+    <div class="m-head m-head-row"><div><h2>공문 처리</h2><p class="muted">공문을 넣으면 제출 기한과 할 일을 뽑아 기한 차례로 보여 줘요. 쪽지·가정통신문·품의·결과 보고로 바로 이어 써요.</p></div>
+      <div class="m-head-act">${aiRowHTML('gongmun')}</div></div>
     <section class="pc-card"><div class="msg-drop" data-gm-drop><p class="muted" style="margin:0">공문 파일(한글·PDF·워드·글)을 여기에 끌어 놓거나 고르세요. 파일마다 하나씩 넣어요.</p>
         <div class="row"><button class="btn text" type="button" data-gm="pick">${S.adding ? '<span class="spin"></span>읽는 중…' : '파일 고르기'}</button><input type="file" id="gmFile" multiple hidden accept=".hwp,.hwpx,.pdf,.docx,.txt"></div></div>
       <label class="yp-f"><span class="lab">또는 공문 글 붙여 넣기</span><textarea class="field" id="gmPaste" rows="3" placeholder="공문 본문을 붙여 넣고 [넣기]"></textarea></label>

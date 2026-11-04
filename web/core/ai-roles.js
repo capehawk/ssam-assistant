@@ -97,6 +97,9 @@ export function rowText(task, env = providerEnv()) {
   const main = pick(task, 'main', env);
   const dflt = defaultLabel(env);
   let s = `AI: ${main ? aiLabel(main, env) : dflt || '아직 정하지 않았어요'}`;
+  // 시험용 업스테이지(Windows 앱, 내 업스테이지 키 없음)로 부르면 표시
+  const tk = globalThis.window && window.SSAM && window.SSAM.ai && window.SSAM.ai.testKey ? window.SSAM.ai.testKey() : null;
+  if (tk && tk.on && !tk.own && (main ? main.engine : env.engine) === 'upstage' && (main || dflt)) s += ' (시험용)';
   if (t.main && !main) s += env.keys[t.main.engine] ? ' (쓸 수 없는 모델이라 기본 AI로)' : ' (키가 없어 기본 AI로)';
   if (!hasReview(task)) return s;
   if (!t.reviewOn) return s + ' · 검토 끔';
