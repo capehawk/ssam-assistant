@@ -10,7 +10,11 @@ await page.addInitScript(() => {
 await page.setViewportSize({ width: 1280, height: 860 });
 await page.goto(url);
 await page.waitForTimeout(400);
-const box = sel => page.locator(sel).first().boundingBox();
+// 탭이 저장된 양식을 불러온 뒤 한 번 더 그리면 잰 칸이 떨어져 null이 될 수 있어, 다시 그린 칸으로 몇 번 더 잼
+const box = async sel => {
+  for (let i = 0; i < 20; i++) { const b = await page.locator(sel).first().boundingBox().catch(() => null); if (b) return b; await page.waitForTimeout(100); }
+  return null;
+};
 const sameRow = (a, b) => a && b && Math.abs((a.y + a.height / 2) - (b.y + b.height / 2)) < Math.max(a.height, b.height);
 
 await run('layout-0417', [
