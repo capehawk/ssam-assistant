@@ -103,6 +103,35 @@ await run('gongmun', [
     await page.waitForTimeout(200);
     assert(await page.locator(`${G} .gm-doc`).count() === 1, '지우기');
   }],
+  ['I1 기한 칸을 키보드로 고치는 중간 값(0002-…)은 저장하지 않고 칸도 그대로', async () => {
+    await page.fill(`${G} #gmPaste`, '세 번째 공문\n수신 각 학교');
+    await page.click(`${G} [data-gm="paste"]`);
+    await page.waitForFunction(s => document.querySelectorAll(`${s} .gm-doc:not(.done)`).length >= 1, G, { timeout: 8000 });
+    await page.waitForTimeout(500);
+    const sel = `${G} .gm-doc >> nth=0 >> [data-gm-due]`;
+    const before = await page.inputValue(sel);
+    await page.focus(sel);
+    await page.evaluate(s => { const el = document.querySelector(`${s} .gm-doc [data-gm-due]`); el.value = '0002-11-20'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }, G);
+    await page.waitForTimeout(200);
+    assert(await page.evaluate(s => document.activeElement === document.querySelector(`${s} .gm-doc [data-gm-due]`), G), '칸에서 초점이 빠짐');
+    const saved = await page.evaluate(() => localStorage.getItem('ssam:gongmun:list'));
+    assert(!saved.includes('0002-11-20'), '중간 값이 저장됨');
+    assert(before !== '0002-11-20');
+  }],
+  ['I7 초안 없이 쓰던 품의가 있으면 [품의]는 묻고, 그만두면 쓰던 품의 그대로', async () => {
+    await page.click('nav.app-side [data-menu-go="purchase"]'); await page.click('#menuTabs [data-tab="new"]');
+    await page.waitForSelector('#pcProject');
+    await page.click('[data-pc="fresh"]').catch(() => {});
+    await page.fill('#pcProject', '쓰던 사업명');
+    await page.waitForTimeout(200);
+    await page.click('nav.app-side [data-menu-go="etc"]'); await page.click('#menuTabs [data-tab="gongmun"]');
+    await page.click(`${G} .gm-doc >> nth=0 >> [data-gm-go="purchase"]`);
+    await page.waitForSelector('#sheetRoot .sheet', { timeout: 3000 });
+    assert((await page.textContent('#sheetRoot .sheet')).includes('쓰던 품의'), '묻지 않음');
+    await page.click('#sheetRoot .sheet [data-close]');
+    await page.click('nav.app-side [data-menu-go="purchase"]'); await page.click('#menuTabs [data-tab="new"]');
+    assert((await page.inputValue('#pcProject')) === '쓰던 사업명', '쓰던 품의가 바뀜');
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();

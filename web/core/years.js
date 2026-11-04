@@ -1,6 +1,7 @@
 /* 학년도: 지금 학년도의 자료는 기존 ssam: 키에 그대로 두고, 다른 학년도는 보관함(archive.js)에 둠.
    공통 키(AI 키·테마 등)는 학년도와 상관없이 그대로. 백업 파일에는 공통 키를 넣지 않음 */
 import { schoolYearOf } from './calendar.js';
+import { dueEvents } from '../menus/etc/gongmun-ai.js';
 
 const PREFIX = 'ssam:';
 export const GLOBAL = ['engine', 'theme', 'nav', 'mode', 'updSkip', 'years', 't', 'backupAt', 'inbox', 'bubble', 'export', 'ai-roles', 'purchase:view', 'purchase:flow', 'msg:sender'];
@@ -49,7 +50,11 @@ export function carryOver(snap, newYear, { classSetup = false } = {}) {
   const gr = parse(snap.grset);
   if (isObj(gr)) out.grset = JSON.stringify({ ...gr, startNo: 1, except: [] });
   const cal = parse(snap.calendar);
-  if (Array.isArray(cal)) out.calendar = JSON.stringify(cal.filter(e => e && typeof e.date === 'string' && e.date >= `${newYear}-03-01`));
+  // 끝나지 않은 공문은 가져가고(2월에 받은 새 학년도 공문), 그 기한·할 일은 달력에 다시 넣음(옛 공문 일정은 버림)
+  const gm = parse(snap['gongmun:list']), openDocs = Array.isArray(gm) ? gm.filter(d => isObj(d) && !d.done) : [];
+  if (openDocs.length) out['gongmun:list'] = JSON.stringify(openDocs);
+  if (Array.isArray(cal) || openDocs.length) out.calendar = JSON.stringify([...(Array.isArray(cal) ? cal : []).filter(e => e && typeof e.date === 'string' && e.date >= `${newYear}-03-01` && e.source !== 'gongmun'),
+    ...dueEvents(openDocs).map(e => ({ ...e, source: 'gongmun' }))]);
   const sc = parse(snap.school);
   if (isObj(sc)) out.school = JSON.stringify({ name: String(sc.name || ''), classes: Number(sc.classes) || 0, students: Number(sc.students) || 0, breaks: [] });
   if (classSetup) {

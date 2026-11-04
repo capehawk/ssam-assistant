@@ -9,7 +9,7 @@ import { aiRowHTML } from '../../core/ai-roles.js';
 import { getSchool } from '../../core/settings.js';
 import { registerInbox } from '../../core/inbox.js';
 import { cleanSheet } from '../evaluate/activity/activity-read.js';
-import { KINDS, gongmunPrompt, normGongmun, dday, ddayText } from './gongmun-ai.js';
+import { KINDS, gongmunPrompt, normGongmun, dday, ddayText, validDue } from './gongmun-ai.js';
 import { listDocs, putDoc, removeDoc, getDoc, newDocId } from './gongmun-model.js';
 import { putMessageFiles } from './message.js';
 import { putLetterSources } from './letter.js';
@@ -33,7 +33,7 @@ async function readDoc(id) {
   try {
     const v = await ai.generateJSON(gongmunPrompt({ name: d0.name, text: d0.text, today: today(), year: getSchool().year }),
       { task: 'gongmun', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
-    const n = normGongmun(v, { year: getSchool().year }), d = getDoc(id);
+    const n = normGongmun(v, { year: getSchool().year, today: today() }), d = getDoc(id);
     if (d) putDoc({ ...d, ...n, title: n.title || d.title, due: n.due || d.due, tasks: n.tasks.length ? n.tasks : d.tasks, read: true });
   } catch (e) {
     toast(e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. [다시 읽기]를 눌러 주세요.' : ai.errorMessage(e && e.code, e), 6000);
@@ -140,13 +140,14 @@ document.addEventListener('change', e => {
   const el = e.target, d = docOf(el);
   if (el.id === 'gmFile') { const fs = [...el.files]; el.value = ''; if (fs.length) addFiles(fs); return; }
   if (el.dataset.gmTask != null && d) { const x = d.tasks[+el.dataset.gmTask]; if (x) { x.done = el.checked; putDoc(d); el.closest('li').classList.toggle('done', el.checked); } return; }
-  if (el.dataset.gmDue != null && d) { putDoc({ ...d, due: el.value }); render(); }
+  // 기한: 맞는 날(2000~2100년)이거나 비웠을 때만 저장. 키보드로 고치는 중에는 다시 그리지 않고 칸을 떠날 때 차례를 맞춤
+  if (el.dataset.gmDue != null && d) {
+    if (el.value && !validDue(el.value)) return;
+    putDoc({ ...d, due: el.value });
+    if (document.activeElement === el) S.dueDirty = true; else render();
+  }
 });
-document.addEventListener('input', e => {
-  if (!mine(e)) return;
-  const el = e.target, d = docOf(el);
-  if (el.dataset.gmDue != null && d && /^\d{4}-\d{2}-\d{2}$/.test(el.value)) { putDoc({ ...d, due: el.value }); render(); }
-});
+document.addEventListener('focusout', e => { if (mine(e) && e.target.dataset && e.target.dataset.gmDue != null && S.dueDirty) { S.dueDirty = false; setTimeout(render, 0); } });
 document.addEventListener('keydown', e => {
   if (!mine(e) || e.key !== 'Enter' || e.isComposing) return;
   const el = e.target, d = docOf(el);

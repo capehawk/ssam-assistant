@@ -40,7 +40,8 @@ function updateRv(mon) {
 const visible = () => curTab === 'weekly' && box && box.isConnected && !box.closest('[hidden]');
 
 /* 학사일정 줄: 고쳐 쓴 글이 있으면 그것, 없으면 그 주 학사일정 */
-const autoEvents = date => listEvents().filter(e => e.date === date).map(e => e.title).join(', ');
+// 공문 제출 기한·할 일(선생님 일)은 보호자께 가는 주간학습안내에 넣지 않음
+const autoEvents = date => listEvents().filter(e => e.date === date && e.source !== 'gongmun').map(e => e.title).join(', ');
 function sheet(mon) {
   const days = weekView(makeCtx(), mon);
   const w = getWeekly(mon);

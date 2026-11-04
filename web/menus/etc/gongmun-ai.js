@@ -17,25 +17,34 @@ export function gongmunPrompt({ name = '', text = '', today = '', year } = {}) {
     '- summary: 선생님이 할 일 중심 요약 1~2문장',
     '- tasks: 학교(담당 선생님)가 할 일 6개까지 [{"text":"…","due":"YYYY-MM-DD 또는 \\"\\""}] (예: 참가 학생 조사, 신청서 제출, 결과 보고)',
     '- kinds: 이어서 쓸 만한 것 — "message"(선생님들께 쪽지 안내), "letter"(보호자 가정통신문), "purchase"(물품 구입·예산 품의), "report"(결과 보고). 맞는 것만',
-    '날짜는 연도가 없으면 학년도에 맞춰 채우세요. 학생 이름·전화번호는 쓰지 마세요.',
+    '날짜는 연도가 없으면 오늘 이후 가장 가까운 그 날로 채우세요. 학생 이름·전화번호는 쓰지 마세요.',
     '{"title":"…","from":"…","no":"…","date":"2026-11-02","due":"2026-11-20","dueNote":"…","summary":"…","tasks":[{"text":"…","due":""}],"kinds":["message"]}',
     `[공문: ${String(name || '공문').slice(0, 80)}]`, String(text || '').slice(0, MAX_TEXT)].join('\n');
 }
 
-/* 날짜: 연도가 없으면 학년도(1~2월은 다음 해) */
-function schoolDate(v, year) {
-  const s = String(v == null ? '' : v).trim(), iso = normDate(s, year);
-  if (!iso || /^\d{4}/.test(s) || !year) return iso;
-  return +iso.slice(5, 7) <= 2 ? `${+iso.slice(0, 4) + 1}${iso.slice(4)}` : iso;
+/* 기한 칸 값: 2000~2100년의 맞는 날만(키보드로 연도를 고치는 중간 값 「0002-…」은 버림) */
+export const validDue = v => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || '')); return !!m && +m[1] >= 2000 && +m[1] <= 2100 && normDate(v) === v; };
+const isoOf = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` : ''; };
+const addDaysIso = (iso, n) => { const t = new Date(`${iso}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+/* 날짜: 연도가 없으면 학년도(1~2월은 다음 해), 그 날이 오늘보다 60일 넘게 앞이면 한 해 뒤(2월에 받은 새 학년도 공문) */
+function schoolDate(v, year, today = '') {
+  const s = String(v == null ? '' : v).trim();
+  if (/^\d{4}/.test(s) || !year) return normDate(s, year);
+  const m = /^(\d{1,2})\s*[-./월]\s*(\d{1,2})/.exec(s);
+  if (!m) return '';
+  const mo = +m[1], d = +m[2];
+  let y = mo <= 2 ? +year + 1 : +year, iso = isoOf(y, mo, d);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(today) && (!iso || iso < addDaysIso(today, -60))) { y++; iso = isoOf(y, mo, d); }
+  return iso;
 }
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
-export function normGongmun(v, { year } = {}) {
+export function normGongmun(v, { year, today = '' } = {}) {
   const o = isObj(v) ? v : {};
   return {
-    title: clean(o.title, 150), from: clean(o.from, 80), no: clean(o.no, 60), date: schoolDate(o.date, year), due: schoolDate(o.due, year),
+    title: clean(o.title, 150), from: clean(o.from, 80), no: clean(o.no, 60), date: schoolDate(o.date, year, today), due: schoolDate(o.due, year, today),
     dueNote: clean(o.dueNote, 120), summary: clean(o.summary, 400),
     tasks: (Array.isArray(o.tasks) ? o.tasks : []).map(t => (typeof t === 'string' ? { text: t } : isObj(t) ? t : {}))
-      .map(t => ({ text: clean(t.text, 120), due: schoolDate(t.due, year), done: false })).filter(t => t.text).slice(0, 6),
+      .map(t => ({ text: clean(t.text, 120), due: schoolDate(t.due, year, today), done: false })).filter(t => t.text).slice(0, 6),
     kinds: [...new Set((Array.isArray(o.kinds) ? o.kinds : []).filter(k => KIND_IDS.includes(k)))]
   };
 }

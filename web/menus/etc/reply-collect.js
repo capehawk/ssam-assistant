@@ -32,10 +32,12 @@ export function normReply(v, opts) {
   const m = /\d+/.exec(str(o.no)), n = m ? +m[0] : NaN;
   const said = new Set((Array.isArray(o.unsure) ? o.unsure : []).map(str));
   const answers = {}, unsure = [];
+  const sq = x => str(x).replace(/\s+/g, '');
   for (const { name, options } of opts) {
-    const t = str(a[name]), hit = options.find(x => x === t) || options.find(x => t && (x.includes(t) || t.includes(x))) || '';
-    answers[name] = hit;
-    if (!hit || said.has(name)) unsure.push(name);
+    const t = sq(a[name]), exact = t ? options.find(x => sq(x) === t) : '';
+    // 띄어쓰기만 다르면 그 선택지. 아니면 빈칸·「못 읽음」 — 「동의하지 않음」이 「동의」로 들어가지 않게 선생님이 고름
+    answers[name] = exact || '';
+    if (!exact || said.has(name)) unsure.push(name);
   }
   return { no: n >= 1 && n <= 99 ? n : null, answers, unsure };
 }

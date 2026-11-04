@@ -680,13 +680,13 @@ const FORM_TEXT = ['project', 'purpose', 'date', 'target', 'place', 'budget', 't
 const busyForm = () => FORM_TEXT.some(k => String(st.form[k] || '').trim())
   || st.form.items.some(i => ['name', 'spec', 'qty', 'price'].some(k => String(i[k] || '').trim())) || st.form.attachMore.length > 0;
 /* 공문 처리 등: 새 품의 넣기 칸에 글을 넣고 바로 [초안 만들기](쓰던 품의는 최근 품의에 남김) */
-export async function putPurchaseText(text) {
-  if (busyForm()) keepRecent();
-  st = { id: newId(), form: normForm(emptyForm('goods')), draft: null }; msg = ''; tried = false; save();
-  go('purchase', 'new');
-  const ta = box && box.querySelector('#pcIntake');
-  if (ta) ta.value = String(text || '');
-  await oneshot();
+export function putPurchaseText(text) {
+  // 초안 없이 쓰던 품의가 있으면 바꿀지 물음(초안이 있으면 최근 작성에 남기고 바로)
+  swapTo({ id: newId(), form: normForm(emptyForm('goods')), draft: null }, { onlyIfLost: true, done: () => {
+    const ta = box && box.querySelector('#pcIntake');
+    if (ta) ta.value = String(text || '');
+    oneshot();
+  } });
 }
 registerInbox('quote', {
   act: () => '품의 › 새 품의의 품목으로 넣기',

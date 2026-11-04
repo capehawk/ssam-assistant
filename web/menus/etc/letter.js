@@ -29,7 +29,7 @@ let box = null, cur = null;
 const blank = () => ({ id: newLetterId(), sources: [], memo: '', related: [], target: '', out: null, send: { title: '', body: '' }, sendEdited: false, collect: { mask: [], rows: [] } });
 const SS = () => window.SSAM || {};
 /* 회신서 스캔(화면에만): pages, busy, tok(읽는 중 다른 가정통신문·새 스캔이면 버림) */
-const RC = { pages: [], busy: false, tok: 0, adding: false };
+const RC = { pages: [], busy: false, tok: 0, adding: false, batch: '', checked: '' }; // batch: 이번 스캔 묶음 id, checked: 가린 모습을 모든 장에서 본 묶음
 const c = () => (cur || (cur = getCurrent() || blank()));
 function save(x = c(), { push = false } = {}) { if (x === c()) saveCurrent(x); if (push && x.out) pushLetter(x); }
 function resend(force = false, x = c()) {
@@ -238,7 +238,7 @@ function collectHTML(x) {
     ${rows.length ? `<div class="yp-tbl-wrap"><table class="yp-tbl lf-rc"><thead><tr><th>번호</th>${opts.map(o => `<th>${esc(o.name)}</th>`).join('')}<th></th></tr></thead><tbody>
       ${order.map(({ r, i }) => `<tr data-rc-row="${i}" class="${r.warn ? 'warn' : ''}"><td><input class="field" type="number" min="1" max="99" data-rc-no="${i}" value="${r.no == null ? '' : r.no}" aria-label="번호" title="${r.warn === 'dup' ? '같은 번호가 또 있어요' : r.warn === 'none' ? '번호를 못 읽었어요' : ''}"></td>
         ${opts.map(o => `<td><select class="field${r.unsure.includes(o.name) ? ' unsure' : ''}" data-rc-a="${i}" data-rc-f="${esc(o.name)}" aria-label="${esc(o.name)}"><option value="">(표시 없음)</option>${o.options.map(v => `<option${r.answers[o.name] === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></td>`).join('')}
-        <td><button class="icon-btn tiny" type="button" data-rc-del="${i}" aria-label="이 줄 빼기">✕</button></td></tr>`).join('')}</tbody></table></div>
+        <td>${r.b && r.b === RC.batch && RC.pages[r.pg] ? `<button class="btn text tiny" type="button" data-rc-view="${i}" title="이 줄의 스캔 보기">${r.pg + 1}장</button>` : ''}<button class="icon-btn tiny" type="button" data-rc-del="${i}" aria-label="이 줄 빼기">✕</button></td></tr>`).join('')}</tbody></table></div>
       <p style="margin:0">${t.map(z => `<b>${esc(z.name)}</b> ${z.counts.map(([o, n]) => `${esc(o)} ${n}명`).join(' · ')}${z.blank ? ` · 표시 없음 ${z.blank}명` : ''}`).join('<br>')}</p>
       <p style="margin:0">${miss.length ? `미제출: ${miss.join(', ')}번` : '모두 냈어요'} <span class="muted">(낸 회신서 ${rows.length}장${allowed ? '' : ' · 설정 › 학급 명단에 학생 수를 넣으면 미제출이 정확해요'})</span></p>
       <div class="row"><button class="btn" type="button" data-lf="rcCopy">표 복사</button>${exportButton('data-lf="rcExport"')}<button class="btn text" type="button" data-lf="rcClear">표 비우기</button></div>` : ''}
@@ -251,41 +251,54 @@ async function rcAdd(files) {
   try {
     const r = await SS().files.readPages(files), pages = Array.isArray(r) ? r : (r && r.pages) || [];
     if (SS().files.freePages) SS().files.freePages(RC.pages);
-    RC.pages = pages; RC.tok++; RC.busy = false;
+    RC.pages = pages; RC.tok++; RC.busy = false; RC.batch = Math.random().toString(36).slice(2, 10); RC.checked = '';
     if (r && r.skipped && r.skipped.length) toast(`읽지 못한 파일: ${r.skipped.map(s => s.name || s).join(', ')}`, 6000);
   } catch (e) { toast(e && e.code ? fileMessage(e.code) : '스캔을 읽지 못했어요. PDF·사진을 넣어 주세요.', 6000); }
   RC.adding = false; render();
 }
+/* 가리기: 모든 장을 넘겨 보며 이름이 가려졌는지 확인(잘라 낸 회신서는 장마다 자리가 달라요). 새 스캔마다 다시 */
 function rcMask(then) {
-  const x = c();
+  const x = c(), batch = RC.batch;
   if (!RC.pages.length || !SS().openMaskEditor) return;
-  SS().openMaskEditor({ shots: RC.pages.slice(0, 6).map((p, i) => ({ url: p.url, label: `${i + 1}장` })), mask: x.collect.mask, all: true, what: '회신서',
-    save: mask => { const y = c(); if (y !== x) return; y.collect.mask = mask || []; save(y); render(); if (then && y.collect.mask.length) then(); } });
+  SS().openMaskEditor({ shots: RC.pages.slice(0, 80).map((p, i) => ({ url: p.url, label: `${i + 1}장 / ${RC.pages.length}장` })), mask: x.collect.mask, all: true, what: '회신서',
+    save: mask => { const y = c(); if (y !== x) return; y.collect.mask = mask || []; if (RC.batch === batch && y.collect.mask.length) RC.checked = batch; save(y); render(); if (then && RC.checked === RC.batch) then(); } });
 }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function rcRead() {
   const x = c(), opts = rcOpts(x);
   if (!RC.pages.length || !opts.length || RC.busy) return;
-  if (!x.collect.mask.length) { toast('먼저 학생 이름 칸을 가려 주세요(가린 그림만 AI로 보내요).', 5000); rcMask(rcRead); return; }
+  if (!x.collect.mask.length || RC.checked !== RC.batch) {
+    toast('모든 장을 넘겨 보며 학생 이름이 가려졌는지 확인해 주세요(가린 그림만 AI로 보내요).', 6000);
+    rcMask(rcRead); return;
+  }
   if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
-  const tok = ++RC.tok, pages = RC.pages, mask = x.collect.mask, shared = replyPrompt(opts), out = new Array(pages.length);
+  const tok = ++RC.tok, batch = RC.batch, pages = RC.pages, mask = x.collect.mask, shared = replyPrompt(opts), out = new Array(pages.length);
   RC.busy = true; render();
-  let next = 0, fails = 0;
+  let next = 0, fails = 0, fatal = null;
   const one = async i => {
-    try {
-      const img = await SS().files.pageImage(pages[i], mask);
-      const v = await ai.generateJSON(`${i + 1}번째 회신서 그림입니다. 위 꼴의 JSON 하나로만 답하세요.`, { shared: { text: shared }, images: [img], task: 'reply', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
-      out[i] = normReply(v, opts);
-    } catch (e) { fails++; out[i] = normReply(null, opts); if (e && (e.code === 'auth' || e.code === 'quota')) throw e; }
+    for (let tryN = 0; ; tryN++) {
+      try {
+        const img = await SS().files.pageImage(pages[i], mask);
+        const v = await ai.generateJSON(`${i + 1}번째 회신서 그림입니다. 위 꼴의 JSON 하나로만 답하세요.`, { shared: { text: shared }, images: [img], task: 'reply', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
+        out[i] = { ...normReply(v, opts), b: batch, pg: i };
+        return;
+      } catch (e) {
+        const code = e && e.code;
+        if (code === 'rate_limited' && tryN < 3 && !fatal) { await sleep(Math.min(30000, (e.retryAfter > 0 ? e.retryAfter * 1000 : 3000))); continue; } // AI 한도: 쉬었다 다시
+        if (code === 'auth' || code === 'quota' || code === 'NO_AI') { fatal = fatal || e; return; } // 키·한도 오류: 모두 멈춤
+        fails++; out[i] = { ...normReply(null, opts), b: batch, pg: i }; return;
+      }
+    }
   };
-  try {
-    await Promise.all(Array.from({ length: Math.min(3, pages.length) }, async () => { while (next < pages.length && tok === RC.tok) await one(next++); }));
-  } catch (e) { toast(ai.errorMessage(e && e.code, e), 6000); }
+  await Promise.all(Array.from({ length: Math.min(3, pages.length) }, async () => { while (next < pages.length && tok === RC.tok && !fatal) await one(next++); }));
   if (tok !== RC.tok) return; // 그새 스캔을 바꾸거나 다른 가정통신문을 열었으면 버림
   RC.busy = false;
+  if (fatal) { render(); toast(`${ai.errorMessage(fatal.code, fatal)} 읽은 표는 그대로 두었어요.`, 7000); return; }
   if (c() !== x) { render(); return; }
-  x.collect.rows = out.filter(Boolean).map(r => ({ no: r.no, answers: r.answers, unsure: r.unsure }));
+  // 이번 스캔 묶음의 줄만 바꾸고 앞서 읽은(고친) 줄은 그대로 — 늦게 낸 회신서는 더해짐
+  x.collect.rows = [...x.collect.rows.filter(r => r.b !== batch), ...out.filter(Boolean)];
   save(x, { push: true }); render();
-  toast(fails ? `${fails}장은 읽지 못했어요. 노란 칸을 확인해 주세요.` : '회신서를 읽었어요. 노란 칸은 꼭 확인해 주세요.', 5000);
+  toast(fails ? `${fails}장은 읽지 못했어요. 노란 줄의 [장]을 눌러 스캔을 보고 고쳐 주세요.` : '회신서를 읽었어요. 노란 칸은 꼭 확인해 주세요.', 5000);
 }
 function sideHTML(x) {
   if (!x.out) return '';
@@ -385,6 +398,8 @@ document.addEventListener('click', async e => {
     }
     F.form.rec.roles = r; render(); return;
   }
+  const rv = e.target.closest('[data-rc-view]');
+  if (rv) { const r = x.collect.rows[+rv.dataset.rcView], pg = r && RC.pages[r.pg]; if (pg && SS().openSheet) SS().openSheet(`<h3>${r.pg + 1}장</h3><img src="${pg.url}" alt="회신서 ${r.pg + 1}장" style="max-width:100%"><div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>닫기</button></div>`); return; }
   const rd = e.target.closest('[data-rc-del]');
   if (rd) { x.collect.rows.splice(+rd.dataset.rcDel, 1); save(x, { push: true }); render(); return; }
   const del = e.target.closest('[data-lf-del]');

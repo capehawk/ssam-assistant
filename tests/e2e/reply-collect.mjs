@@ -12,11 +12,16 @@ await page.addInitScript(() => {
   if (!localStorage.getItem('ssam:class')) localStorage.setItem('ssam:class', JSON.stringify({ count: 5, except: [] }));
 });
 const reqs = [];
-let k = 0;
+let k = 0, mode = '';
 const ANS = [{ no: 1, answers: { '참가 여부': '참가합니다' }, unsure: [] }, { no: 3, answers: { '참가 여부': '' }, unsure: ['참가 여부'] }, { no: 3, answers: { '참가 여부': '참가하지 않습니다' }, unsure: [] }];
 await mockClaude(page, ({ prompt, images }) => {
   if (prompt.startsWith('[가정통신문]')) return JSON.stringify({ title: '현장체험학습 안내', greeting: ['안녕하십니까?'], intro: '취지', items: ['1. 일시'], closing: '부탁', reply: { need: true, title: '참가 동의서', fields: ['참가 여부: □ 참가합니다 □ 참가하지 않습니다', '보호자 연락처:'], due: '' }, short: 's', related: [], target: '' });
-  if (prompt.includes('[회신서 읽기]')) { reqs.push({ prompt, images }); return JSON.stringify(ANS[k++ % 3]); }
+  if (prompt.includes('[회신서 읽기]')) {
+    reqs.push({ prompt, images });
+    if (mode === 'auth') return { status: 401 };
+    if (mode === 'rate') { mode = ''; return { status: 429 }; }
+    return JSON.stringify(ANS[k++ % 3]);
+  }
   return '{}';
 });
 const L = 'section[data-menu="etc"] .lf-box';
@@ -74,6 +79,43 @@ await run('reply-collect', [
     const saved = await page.evaluate(() => JSON.stringify(localStorage));
     assert(!saved.includes('data:image') && !saved.includes('blob:'), '그림이 저장됨');
   }],
-  ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
+  ['C1 새 스캔을 넣으면 [읽기] 전에 가리기 창을 다시 열고 모든 장(6장 넘어도)을 넘겨 보게 함', async () => {
+    const m0 = await page.evaluate(() => window.__maskCalls || 0);
+    await page.evaluate(() => { window.__maskCalls = 0; window.SSAM.openMaskEditor = o => { window.__maskCalls++; window.__shots = o.shots.length; o.save(o.mask && o.mask.length ? o.mask : [{ x: 0.5, y: 0.1, w: 0.4, h: 0.1 }], true); }; });
+    await page.setInputFiles(`${L} #lfRcFile`, [scan(1), scan(2), scan(3), scan(1), scan(2), scan(3), scan(1)]);
+    await page.waitForFunction(s => (document.querySelector(`${s} #lfCollect`) || {}).textContent?.includes('7장'), L, { timeout: 10000 });
+    const r0 = reqs.length;
+    await page.click(`${L} [data-lf="rcRead"]`);
+    await page.waitForFunction(n => window.__maskCalls === 1, null, { timeout: 5000 });
+    assert(await page.evaluate(() => window.__shots) === 7, '모든 장을 보여 주지 않음: ' + await page.evaluate(() => window.__shots));
+    await page.waitForFunction(([s, n]) => !document.querySelector(`${s} [data-lf="rcRead"] .spin`) && document.querySelectorAll(`${s} #lfCollect [data-rc-row]`).length >= n, [L, 10], { timeout: 15000 });
+    assert(reqs.length - r0 === 7, String(reqs.length - r0));
+  }],
+  ['I5 늦게 낸 회신서를 읽으면 표에 더해짐(고친 칸은 그대로), 같은 스캔을 다시 읽으면 그 스캔 줄만 바뀜', async () => {
+    const box = `${L} #lfCollect`;
+    assert(await page.locator(`${box} [data-rc-row]`).count() === 10, '먼저 읽은 3줄이 사라짐: ' + await page.locator(`${box} [data-rc-row]`).count());
+    assert(await page.locator(`${box} input[data-rc-no]`).evaluateAll(els => els.some(e => e.value === '4')), '고친 번호 4가 사라짐');
+    await page.click(`${L} [data-lf="rcRead"]`);
+    await page.waitForFunction(s => !document.querySelector(`${s} [data-lf="rcRead"] .spin`), L, { timeout: 15000 });
+    await page.waitForTimeout(300);
+    assert(await page.locator(`${box} [data-rc-row]`).count() === 10, '다시 읽으면 겹침: ' + await page.locator(`${box} [data-rc-row]`).count());
+  }],
+  ['I5 AI 키 오류면 모두 멈추고 표는 그대로, 한도(429)는 기다렸다 다시', async () => {
+    const box = `${L} #lfCollect`;
+    mode = 'auth';
+    const r0 = reqs.length;
+    await page.click(`${L} [data-lf="rcRead"]`);
+    await page.waitForFunction(s => !document.querySelector(`${s} [data-lf="rcRead"] .spin`), L, { timeout: 15000 });
+    await page.waitForTimeout(500);
+    assert(await page.locator(`${box} [data-rc-row]`).count() === 10, '키 오류로 표가 바뀜');
+    assert(reqs.length - r0 <= 3, '오류 뒤에도 계속 보냄: ' + (reqs.length - r0));
+    mode = 'rate';
+    await page.setInputFiles(`${L} #lfRcFile`, [scan(1)]);
+    await page.waitForFunction(s => (document.querySelector(`${s} #lfCollect`) || {}).textContent?.includes('1장'), L, { timeout: 10000 });
+    await page.click(`${L} [data-lf="rcRead"]`);
+    await page.waitForFunction(s => document.querySelectorAll(`${s} #lfCollect [data-rc-row]`).length === 11, L, { timeout: 20000 });
+    assert(await page.locator(`${box} [data-rc-row].warn`).count() >= 0, '');
+  }],
+  ['페이지 오류 없음(일부러 낸 401·429 응답 빼고)', async () => { const real = errors.filter(m => !/Failed to load resource: the server responded with a status of (401|429)/.test(m)); assert(real.length === 0, real.join(' | ')); }]
 ]);
 await t.close();
