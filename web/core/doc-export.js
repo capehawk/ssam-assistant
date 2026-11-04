@@ -4,7 +4,7 @@
 import { makeHwpx, photoList, fitBox } from './hwpx.js';
 import { zipStore } from './zip.js';
 import { get, set } from './store.js';
-import { saveFile } from './ui.js';
+import { saveFile, toast } from './ui.js';
 
 export const FORMATS = [['hwpx', '한글'], ['docx', '워드'], ['pdf', 'PDF']];
 const KEY = 'export';
@@ -218,6 +218,14 @@ export function exportButton(attrs, { disabled = false, cls = '', prefix = '' } 
   return `<span class="exp-split"><button class="btn${cls ? ' ' + cls : ''}" type="button" ${attrs} data-exp-main${pre}${disabled ? ' disabled' : ''}>${hesc(prefix)}${buttonLabel()}</button>`
     + `<button class="btn${cls ? ' ' + cls : ''} exp-more" type="button" data-exp-menu aria-haspopup="menu" aria-label="파일 형식 고르기" title="파일 형식 고르기"${disabled ? ' disabled' : ''}>▾</button></span>`;
 }
+/* ---------- [다운로드 폴더] (Windows 앱): 내려받은 파일이 쌓이는 다운로드 폴더를 탐색기로 엶. 웹판은 폴더를 열 수 없어 그리지 않음 ---------- */
+const FOLDER_SVG = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10.5v5.5M9.5 13.5 12 16l2.5-2.5"/></svg>';
+export const canOpenDownloads = () => !!(typeof window !== 'undefined' && window.__TAURI__ && window.__TAURI__.core);
+export const downloadsButton = () => (canOpenDownloads()
+  ? `<button class="btn text dl-folder" type="button" data-open-downloads title="내려받은 파일이 있는 다운로드 폴더 열기">${FOLDER_SVG}<span>다운로드 폴더</span></button>` : '');
+export async function openDownloads() {
+  try { await window.__TAURI__.core.invoke('open_downloads'); } catch (e) { toast('다운로드 폴더를 열지 못했어요. 파일 탐색기에서 「다운로드」를 열어 주세요.', 6000); }
+}
 function syncButtons() { document.querySelectorAll('[data-exp-main]').forEach(b => { b.textContent = (b.dataset.expPrefix || '') + buttonLabel(); }); }
 function closeMenu() { const m = document.getElementById('expMenu'); if (m) m.remove(); }
 function openMenu(more) {
@@ -251,10 +259,12 @@ if (typeof document !== 'undefined') {
     + '.exp-menu{position:fixed;z-index:80;width:220px;display:flex;flex-direction:column;padding:6px;border-radius:12px;background:var(--surface,#fff);border:1px solid var(--line,#e4e6eb);box-shadow:0 12px 32px rgba(0,0,0,.18)}'
     + '.exp-menu button{all:unset;cursor:pointer;padding:9px 12px;border-radius:8px;font:inherit;color:var(--ink,#16181d)}'
     + '.exp-menu button:hover,.exp-menu button:focus-visible{background:var(--accent-soft,#eef0ff)}'
-    + '.exp-menu button[aria-checked="true"]{font-weight:700;color:var(--accent-ink,#3730a3)}' }));
+    + '.exp-menu button[aria-checked="true"]{font-weight:700;color:var(--accent-ink,#3730a3)}'
+    + '.dl-folder{display:inline-flex;align-items:center;gap:6px}.dl-folder svg{flex:none}' }));
   document.addEventListener('click', e => {
     const more = e.target.closest && e.target.closest('[data-exp-menu]');
     if (more) { e.preventDefault(); e.stopPropagation(); openMenu(more); return; }
+    if (e.target.closest && e.target.closest('[data-open-downloads]')) { e.preventDefault(); openDownloads(); return; }
     if (!e.target.closest || !e.target.closest('#expMenu')) closeMenu();
   }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });

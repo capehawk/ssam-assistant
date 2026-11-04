@@ -3,7 +3,7 @@
 import { toast, copyText, saveFile } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
 import { aiRowHTML } from '../../../core/ai-roles.js';
-import { exportButton, exportDoc } from '../../../core/doc-export.js';
+import { exportButton, exportDoc, downloadsButton } from '../../../core/doc-export.js';
 import { studentTotal } from './unit-grade.js';
 import {
   listTests, loadTests, graded, makeTitle, filterTests, summaryTable, studentHistory, itemStats, domainStats, reteach,
@@ -35,7 +35,7 @@ function tableHTML(tests) {
   const tb = summaryTable(tests);
   const cell = v => (v == null ? '<td class="muted">-</td>' : `<td class="num">${v}</td>`);
   return `<div class="yp-card">
-    <div class="row"><b>성적 일람표</b><span class="muted">100점으로 바꾼 점수</span><span class="grow"></span><button class="btn" type="button" data-un="csv">엑셀(CSV)</button>${exportButton('data-un="tableHwpx"')}</div>
+    <div class="row"><b>성적 일람표</b><span class="muted">100점으로 바꾼 점수</span><span class="grow"></span><button class="btn" type="button" data-un="csv">엑셀(CSV)</button>${exportButton('data-un="tableHwpx"')}${downloadsButton()}</div>
     <div class="un-grid-wrap"><table class="un-sumt"><thead><tr><th>번호</th>${tb.cols.map(c => `<th data-col="${esc(c.id)}" title="${esc(c.title)}">${esc(c.title)}</th>`).join('')}<th>평균</th></tr></thead>
     <tbody>${tb.rows.map(r => `<tr data-no="${r.no}"><th>${r.no}번</th>${tb.cols.map(c => cell(r.cells[c.id])).join('')}${cell(r.avg)}</tr>`).join('')}
     <tr class="avg"><th>반 평균</th>${tb.cols.map(c => cell(tb.colAvg[c.id])).join('')}<td></td></tr></tbody></table></div></div>`;

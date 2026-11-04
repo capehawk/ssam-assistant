@@ -1,6 +1,6 @@
 /* 평가 › 활동지 5단계(결과·확정, 스펙 4.5)와 학생별 모아 보기(4.6), 교과 평어에 참고하기(4.7). 표·쪽지·기록은 번호만 */
 import { toast, copyText } from '../../../core/ui.js';
-import { exportButton, exportDoc } from '../../../core/doc-export.js';
+import { exportButton, exportDoc, downloadsButton } from '../../../core/doc-export.js';
 import { linkHTML, openLinkSheet } from '../../../core/eval-link.js';
 import { listActivities, getActivity, records, markCounts } from './activity-model.js';
 import { TYPES, MARK, LEVEL } from './activity-ai.js';
@@ -43,7 +43,7 @@ function step5HTML(a) {
   return `<div class="yp-card"><h3>문항별</h3><p class="muted" style="margin:0">× · 안 함이 많은 문항 먼저예요.</p><ul class="ac-stats" id="acStats">${stats}</ul></div>
     <div class="yp-card"><h3>반 표 · 학생 ${g.length}명</h3>
       <div class="ac-grid-wrap"><table class="ac-grid" id="acTable"><thead>${head}</thead><tbody>${rows}</tbody></table></div>
-      <div class="row">${exportButton('data-ac="exportTable"', { prefix: '반 표 · ' })}<button class="btn text" type="button" data-ac="copyTable">표 복사</button>${exportButton('data-ac="exportSlips"', { prefix: '피드백 쪽지 · ' })}</div>
+      <div class="row">${exportButton('data-ac="exportTable"', { prefix: '반 표 · ' })}<button class="btn text" type="button" data-ac="copyTable">표 복사</button>${exportButton('data-ac="exportSlips"', { prefix: '피드백 쪽지 · ' })}${downloadsButton()}</div>
       <p class="muted" style="margin:0">피드백 쪽지는 한 쪽에 4명, 번호만 적혀요.</p></div>
     <div class="yp-card"><h3>교과 평어</h3>${linkHTML(a.link, a.meta.subject, 'data-ac')}${a.link && !a.done ? '<p class="muted" id="acLinkWait" style="margin:0">[확정]하면 평가지 채점의 참고 목록에 나와요.</p>' : ''}</div>
     <div class="row act-next">${a.done ? '<span class="chip ok">확정함 · 학생별 모아 보기에 남아요</span><button class="btn text" type="button" data-ac="undone">확정 풀기</button>' : `<button class="btn primary" type="button" data-ac="done"${g.length ? '' : ' disabled'}>확정</button>`}</div>`;

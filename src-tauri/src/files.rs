@@ -148,6 +148,16 @@ pub async fn note_drag_files(app: tauri::AppHandle, paths: Vec<String>) -> Resul
     }
 }
 
+/// 다운로드 폴더(평가 결과 등 내려받은 파일이 쌓이는 곳)를 탐색기로 엶
+#[tauri::command]
+pub fn open_downloads(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = downloads_dir();
+    app.opener()
+        .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| format!("폴더를 열지 못했어요: {e}"))
+}
+
 /// 붙임 폴더를 탐색기로 엶
 #[tauri::command]
 pub fn note_open_dir(app: tauri::AppHandle, dir: String) -> Result<(), String> {

@@ -330,6 +330,7 @@ fn main() {
             files::note_copy_files,
             files::note_drag_files,
             files::note_open_dir,
+            files::open_downloads,
             bubble::bubble_config,
             bubble::inbox_take,
             bubble::inbox_read,
