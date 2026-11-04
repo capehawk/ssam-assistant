@@ -2,6 +2,7 @@
    머리(표어·「가정통신문」 상자·교장·담당·주소·로고)·학교장 줄은 그대로 두고 제목·본문·날짜만 바꿔 새 .hwpx를 만든다.
    한글이 만든 XML을 통째로 다시 쓰지 않고, 바꿀 문단만 잘라 바꿈(작은 XML 읽개로 요소 위치만 앎). 화면 없이 돌아감(시험) */
 import { unzip, zipStore } from './zip.js';
+import { parseTableLines } from './body-table.js';
 
 /* ---------- 작은 XML 읽개 ---------- */
 /* 요소마다 { name, s(<), oe(여는 태그 끝 다음), cs(닫는 태그 <), e(끝 다음), self, kids, up } */
@@ -156,8 +157,11 @@ export function findRoles(lines) {
 export { DATE, isSign, isDateLine };
 
 /* 자리 순서: 제목 < 본문 시작 ≤ 본문 끝 < 날짜 ≤ 학교장 < 회신서 (학교장·회신서는 없어도 됨) */
-export function rolesValid(r) {
-  if (!r || r.title < 0 || r.bodyStart <= r.title || r.bodyEnd < r.bodyStart || r.date <= r.bodyEnd) return false;
+/* date: false — 결과 보고서처럼 날짜 자리가 없어도 됨(있으면 본문 아래) */
+export function rolesValid(r, { date = true } = {}) {
+  if (!r || r.title < 0 || r.bodyStart <= r.title || r.bodyEnd < r.bodyStart) return false;
+  if (!date && r.date < 0) return !(r.reply >= 0 && r.reply <= Math.max(r.bodyEnd, r.sign));
+  if (r.date <= r.bodyEnd) return false;
   if (r.sign >= 0 && r.sign < r.date) return false;
   if (r.reply >= 0 && r.reply <= Math.max(r.date, r.sign)) return false;
   return true;
@@ -308,20 +312,67 @@ function textWidth(secXml) {
   const w = pw ? +pw[1] - (mg ? +mg[1] + +mg[2] : 11338) : 48190;
   return w > 5000 ? w : 48190;
 }
-function replyXml(reply, { normal, center, head, border, width, nid, year }) {
-  const cellW = [Math.round(width * 0.3), width - Math.round(width * 0.3)], rowH = 1800;
-  const fields = (reply.fields || []).map(f => String(f || '').trim()).filter(Boolean);
-  const rows = [['학년 반 번호', '      학년        반        번'], ['학생 이름', ''], ...fields.map(f => { const i = f.indexOf(':'); return i > 0 ? [f.slice(0, i).trim(), f.slice(i + 1).trim()] : [f, '']; })];
-  const cell = (txt, ci, ri, proto) => `<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="${border}">`
+/* 표 문단 하나: rows([[칸 글]]), 칸 너비 colW(없으면 같게), 칸 문단은 보통 모양 */
+function tableXml(rows, { normal, border, width, nid, colW = null, rowH = 1800 }) {
+  const n = Math.max(1, ...rows.map(r => r.length)), w = colW || Array.from({ length: n }, (_, i) => Math.floor(width / n) + (i === n - 1 ? width % n : 0));
+  const cell = (txt, ci, ri) => `<hp:tc name="" header="${ri === 0 ? 1 : 0}" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="${border}">`
     + '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
-    + paraFrom(proto, txt, nid(), { keepLead: false }) + '</hp:subList>'
-    + `<hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${cellW[ci]}" height="${rowH}"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
-  const tbl = `<hp:tbl id="${nid()}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="2" cellSpacing="0" borderFillIDRef="${border}" noAdjust="0">`
-    + `<hp:sz width="${width}" widthRelTo="ABSOLUTE" height="${rowH * rows.length}" heightRelTo="ABSOLUTE" protect="0"/>`
+    + paraFrom(normal, txt, nid(), { keepLead: false }) + '</hp:subList>'
+    + `<hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${w[ci]}" height="${rowH}"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
+  const tbl = `<hp:tbl id="${nid()}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="${rows.length}" colCnt="${n}" cellSpacing="0" borderFillIDRef="${border}" noAdjust="0">`
+    + `<hp:sz width="${w.reduce((a, b) => a + b, 0)}" widthRelTo="ABSOLUTE" height="${rowH * rows.length}" heightRelTo="ABSOLUTE" protect="0"/>`
     + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
     + '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>'
-    + rows.map((r, ri) => `<hp:tr>${cell(r[0], 0, ri, normal)}${cell(r[1], 1, ri, normal)}</hp:tr>`).join('') + '</hp:tbl>';
-  const tblPara = noBreak(normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
+    + rows.map((r, ri) => `<hp:tr>${Array.from({ length: n }, (_, ci) => cell(r[ci] || '', ci, ri)).join('')}</hp:tr>`).join('') + '</hp:tbl>';
+  return noBreak(normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
+}
+/* 사진 표(2열): 칸마다 사진(글자처럼)과 설명. photos [{ id(BinData 항목), w, h(픽셀), caption }] */
+function photoTableXml(photos, { normal, center, border, width, nid }) {
+  const w = Math.floor(width / 2), maxW = w - 1020 - 400, maxH = 17000, rows = [];
+  for (let i = 0; i < photos.length; i += 2) rows.push(photos.slice(i, i + 2));
+  const fit = p => { const W = Math.max(1, +p.w || 4), H = Math.max(1, +p.h || 3), k = Math.min(maxW / W, maxH / H); return [Math.round(W * k), Math.round(H * k)]; };
+  const pic = (p, [W, H]) => {
+    const id = nid(), ow = Math.max(1, Math.round((+p.w || 4) * 75)), oh = Math.max(1, Math.round((+p.h || 3) * 75)), m = 'e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"';
+    return `<hp:pic id="${id}" zOrder="${id % 100000}" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="${id}" reverse="0">`
+      + `<hp:offset x="0" y="0"/><hp:orgSz width="${W}" height="${H}"/><hp:curSz width="${W}" height="${H}"/><hp:flip horizontal="0" vertical="0"/>`
+      + `<hp:rotationInfo angle="0" centerX="${Math.round(W / 2)}" centerY="${Math.round(H / 2)}" rotateimage="1"/>`
+      + `<hp:renderingInfo><hc:transMatrix ${m}/><hc:scaMatrix ${m}/><hc:rotMatrix ${m}/></hp:renderingInfo>`
+      + `<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="${W}" y="0"/><hc:pt2 x="${W}" y="${H}"/><hc:pt3 x="0" y="${H}"/></hp:imgRect>`
+      + `<hp:imgClip left="0" right="${ow}" top="0" bottom="${oh}"/><hp:inMargin left="0" right="0" top="0" bottom="0"/><hp:imgDim dimwidth="${ow}" dimheight="${oh}"/>`
+      + `<hc:img binaryItemIDRef="${p.id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:effects/>`
+      + `<hp:sz width="${W}" widthRelTo="ABSOLUTE" height="${H}" heightRelTo="ABSOLUTE" protect="0"/>`
+      + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+      + '<hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:pic>';
+  };
+  const sized = rows.map(r => r.map(p => ({ p, sz: fit(p) })));
+  const rowH = sized.map(r => Math.max(...r.map(x => x.sz[1])) + 2600);
+  const picPara = x => noBreak(center.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${center.charPr}">${pic(x.p, x.sz)}<hp:t/></hp:run></hp:p>`;
+  const cell = (x, ri, ci) => `<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="${border}">`
+    + '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+    + (x ? picPara(x) + paraFrom(center, x.p.caption || '', nid(), { keepLead: false }) : paraFrom(normal, '', nid())) + '</hp:subList>'
+    + `<hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${w}" height="${rowH[ri]}"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
+  const tbl = `<hp:tbl id="${nid()}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="2" cellSpacing="0" borderFillIDRef="${border}" noAdjust="0">`
+    + `<hp:sz width="${w * 2}" widthRelTo="ABSOLUTE" height="${rowH.reduce((a, b) => a + b, 0)}" heightRelTo="ABSOLUTE" protect="0"/>`
+    + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+    + '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+    + sized.map((r, ri) => '<hp:tr>' + [0, 1].map(ci => cell(r[ci], ri, ci)).join('') + '</hp:tr>').join('') + '</hp:tbl>';
+  return noBreak(normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
+}
+/* 본문이 든 곳의 글 폭: 표 칸이면 칸 너비 - 칸 여백, 아니면 쪽 글 폭 */
+function boxWidth(xml, box) {
+  const tc = box && local(box) === 'subList' ? box.up : null;
+  if (tc && local(tc) === 'tc') {
+    const sz = kidsNamed(tc, 'cellSz')[0], mg = kidsNamed(tc, 'cellMargin')[0];
+    const tag = n => xml.slice(n.s, n.self ? n.e : n.oe);
+    const w = sz ? +attr(tag(sz), 'width') || 0 : 0, m = mg ? (+attr(tag(mg), 'left') || 0) + (+attr(tag(mg), 'right') || 0) : 1020;
+    if (w - m > 3000) return w - m;
+  }
+  return textWidth(xml);
+}
+function replyXml(reply, { normal, center, head, border, width, nid, year }) {
+  const fields = (reply.fields || []).map(f => String(f || '').trim()).filter(Boolean);
+  const rows = [['학년 반 번호', '      학년        반        번'], ['학생 이름', ''], ...fields.map(f => { const i = f.indexOf(':'); return i > 0 ? [f.slice(0, i).trim(), f.slice(i + 1).trim()] : [f, '']; })];
+  const tblPara = tableXml(rows, { normal, border, width, nid, colW: [Math.round(width * 0.3), width - Math.round(width * 0.3)] });
   return [paraFrom(normal, '', nid()), paraFrom(center, '✂ - - - - - - - - - - - 자 르 는 선 - - - - - - - - - - -', nid(), { keepLead: false }),
     paraFrom(head, reply.title || '회신서', nid(), { keepLead: false }), tblPara,
     ...(String(reply.due || '').trim() ? [paraFrom(normal, reply.due, nid(), { keepLead: false })] : []),
@@ -343,6 +394,14 @@ export async function fillForm(form, roles, letter) {
   const topOf = (l, n = l.node) => { const top = form.secs[l.sec].top; let u = n; while (u.up && u.up !== top) u = u.up; return u; };
 
   const tl = line(roles.title), dl = line(roles.date), b0 = line(roles.bodyStart);
+  // 표 테두리: header.xml에 실선 테두리를 처음 쓸 때 한 번만 더함(못 더하면 0)
+  const headerName = form.entries.find(e => /^Contents\/header\.xml$/i.test(e.name));
+  let header = null, borderId = -1, bins = [];
+  const border = () => {
+    if (borderId < 0) { const a = headerName && addBorder(new TextDecoder().decode(headerName.data)); if (a) { header = a.xml; borderId = a.id; } else borderId = 0; }
+    return borderId;
+  };
+  const noBorder = () => { if (!warn.includes('no-border')) warn.push('no-border'); };
   if (tl) add(tl.sec, tl.node.s, tl.node.e, setText(secXml[tl.sec], tl.node, x.title || ''));
   if (dl) add(dl.sec, dl.node.s, dl.node.e, swapDateInPara(secXml[dl.sec], dl.node, x.date));
   let protos = null;
@@ -355,13 +414,35 @@ export async function fillForm(form, roles, letter) {
     protos = protosOf(xml, range.filter(p => L.some(l => l.node === p)));
     const keep = range.filter(p => has(p, ['secPr'])).map(p => setText(xml, p, ''));
     const carry = anchorsOf(xml, range.filter(p => !has(p, ['secPr'])));
-    const paras = (x.body && x.body.length ? x.body : ['']).map(t => bodyPara(protos, t, nid()));
+    const width = boxWidth(xml, box);
+    const parts = parseTableLines(x.body && x.body.length ? x.body : ['']);
+    const paras = (parts.length ? parts : [{ type: 'line', text: '' }]).map(pt => {
+      if (pt.type === 'line') return bodyPara(protos, pt.text, nid());
+      const b = border();
+      if (!b) { noBorder(); return pt.rows.map(r => bodyPara(protos, r.join(' | '), nid())).join(''); } // 테두리를 못 더하면 글 그대로
+      return tableXml(pt.rows, { normal: protos[0], border: b, width, nid });
+    });
+    // 사진(결과 보고서): 본문 끝에 2열 사진 표. BinData 이름은 양식에 있는 것과 겹치지 않게
+    const ph = (x.photos || []).filter(p => p && p.bytes && p.bytes.length);
+    if (ph.length) {
+      const b = border();
+      if (!b) noBorder();
+      else {
+        const hpf = form.entries.find(e => /content\.hpf$/i.test(e.name));
+        const used = new Set(hpf ? [...new TextDecoder().decode(hpf.data).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]) : []);
+        for (const e of form.entries) used.add(e.name.replace(/^BinData\//, '').replace(/\.[^.]+$/, ''));
+        let k = 1;
+        const items = ph.map(p => { while (used.has(`ssamimg${k}`)) k++; const id = `ssamimg${k++}`; return { ...p, id }; });
+        bins = items;
+        const center = dl ? { open: openTag(secXml[dl.sec], dl.node), charPr: charPrOf(secXml[dl.sec], dl.node), lead: '' } : protos[0];
+        paras.push(photoTableXml(items, { normal: protos[0], center, border: b, width, nid }));
+      }
+    }
     paras[0] = withRuns(paras[0], carry);
     add(b0.sec, ps[i0].s, ps[i1].e, keep.join('') + paras.join(''));
   }
   // 회신서: 옛 회신서(시작 줄이 든 구역 맨 위 문단부터 구역 끝까지)를 지우고, 켰으면 새로
   const rl = line(roles.reply), sl = line(roles.sign);
-  let header = null, headerName = form.entries.find(e => /^Contents\/header\.xml$/i.test(e.name));
   const inBox = rl && ((sl && topOf(rl) === topOf(sl)) || (b0 && topOf(rl) === topOf(b0)));
   if (inBox) warn.push('reply-in-box');
   let at = null; // 새 회신서를 넣을 { sec, s, e, keep(남길 구역 설정 문단·옮길 조절자) }
@@ -377,16 +458,15 @@ export async function fillForm(form, roles, letter) {
   }
   if (at) {
     let text = '';
-    if (x.reply && headerName) {
-      const added = addBorder(new TextDecoder().decode(headerName.data));
-      if (added) {
-        header = added.xml;
+    if (x.reply) {
+      const bid = border();
+      if (bid) {
         const pr = protos || protosOf(secXml[at.sec], []);
         const center = dl ? { open: openTag(secXml[dl.sec], dl.node), charPr: charPrOf(secXml[dl.sec], dl.node), lead: '' } : pr[0];
         const head = tl ? { open: openTag(secXml[tl.sec], tl.node), charPr: charPrOf(secXml[tl.sec], tl.node), lead: '' } : pr[0];
-        text = replyXml(x.reply, { normal: pr[0], center, head, border: added.id, width: textWidth(secXml[at.sec]), nid, year: String(x.date || '').slice(0, 4) || String(new Date().getFullYear()) });
-      } else warn.push('no-border');
-    } else if (x.reply) warn.push('no-border');
+        text = replyXml(x.reply, { normal: pr[0], center, head, border: bid, width: textWidth(secXml[at.sec]), nid, year: String(x.date || '').slice(0, 4) || String(new Date().getFullYear()) });
+      } else noBorder();
+    }
     text = (at.keep || '') + text;
     if (text || at.s !== at.e) add(at.sec, at.s, at.e, text);
   }
@@ -405,9 +485,14 @@ export async function fillForm(form, roles, letter) {
     if (si >= 0) return { name: e.name, data: outXml[si] };
     if (header && headerName && e.name === headerName.name) return { name: e.name, data: header };
     if (/^Preview\/PrvText\.txt$/i.test(e.name)) return { name: e.name, data: prv };
-    if (/content\.hpf$/i.test(e.name)) return { name: e.name, data: new TextDecoder().decode(e.data).replace(/<opf:title\s*\/>|<opf:title>[\s\S]*?<\/opf:title>/, `<opf:title>${esc(x.title || '')}</opf:title>`) };
+    if (/content\.hpf$/i.test(e.name)) {
+      let h = new TextDecoder().decode(e.data).replace(/<opf:title\s*\/>|<opf:title>[\s\S]*?<\/opf:title>/, `<opf:title>${esc(x.title || '')}</opf:title>`);
+      if (bins.length) h = h.replace('</opf:manifest>', bins.map(p => `<opf:item id="${p.id}" href="BinData/${p.id}.jpg" media-type="image/jpg" isEmbeded="1"/>`).join('') + '</opf:manifest>');
+      return { name: e.name, data: h };
+    }
     return { name: e.name, data: e.data };
   });
+  for (const p of bins) files.push({ name: `BinData/${p.id}.jpg`, data: p.bytes });
   return { bytes: zipStore(files), warn };
 }
 export const _test = { paraText, local, setText };

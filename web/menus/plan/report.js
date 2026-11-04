@@ -3,8 +3,11 @@
    원본 파일·사진은 이 화면에만 둠(저장 안 함). 글은 명단·전화번호 줄을 빼고 저장·AI로 보냄. 사진은 AI가 봄(선생님 동의) */
 import { onEnter, go } from '../../core/shell.js';
 import * as ai from '../../core/ai.js';
-import { toast, copyText } from '../../core/ui.js';
-import { onFlush } from '../../core/store.js';
+import { toast, copyText, saveFile } from '../../core/ui.js';
+import { onFlush, get, set } from '../../core/store.js';
+import { forms } from '../../core/form-store.js';
+import { readForm, fillForm, rolesValid } from '../../core/hwpx-form.js';
+import { docToLetter } from '../../core/body-table.js';
 import { getSchool } from '../../core/settings.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { aiRowHTML } from '../../core/ai-roles.js';
@@ -164,7 +167,40 @@ function reportCardHTML(x) {
       <textarea class="field" data-rs-l="${i}" rows="${Math.min(10, Math.max(3, s.lines.length + 1))}" aria-label="${esc(s.h)} 내용(한 줄에 하나)">${esc(s.lines.join('\n'))}</textarea>
       <button class="btn text tiny" type="button" data-rs-del="${i}">이 소제목 빼기</button></div>`).join('')}
       <button class="btn text" type="button" data-rp="addSec">+ 소제목 더하기</button></div>
-    <div class="row">${exportButton('data-rp="export"', { cls: 'primary' })}</div>`;
+    <div class="row rp-out">${formSelHTML()}${R.formId ? '<button class="btn primary" type="button" data-rp="formExport">학교 양식으로 한글 내려받기</button>' : exportButton('data-rp="export"', { cls: 'primary' })}</div>`;
+}
+/* 학교 양식(기타 › 가정통신문에서 넣은 .hwpx 양식, 같은 저장소) */
+const FORM_KEY = 'report:form';
+function formSelHTML() {
+  if (!R.forms) { loadReportForms(); return ''; }
+  if (!R.forms.length) return '<span class="muted">학교 양식(.hwpx)은 기타 › 가정통신문에서 넣어 두면 여기서도 골라 써요.</span>';
+  return `<label class="yp-f"><span class="lab">양식</span><select class="field" id="rpForm"><option value="">쌤비서 기본 문서</option>
+    ${R.forms.map(f => `<option value="${esc(f.id)}"${f.id === R.formId ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>`;
+}
+async function loadReportForms() {
+  if (R.formsLoading) return;
+  R.formsLoading = true;
+  try { const st = await forms(); R.forms = (await st.list()).filter(f => f.kind === 'hwpx'); } catch (e) { R.forms = []; }
+  R.formsLoading = false;
+  const id = String(get(FORM_KEY, '') || '');
+  R.formId = R.forms.some(f => f.id === id) ? id : '';
+  render();
+}
+async function formExport(x) {
+  let rec = null;
+  try { rec = await (await forms()).get(R.formId); } catch (e) { rec = null; }
+  if (!rec || rec.kind !== 'hwpx') { toast('양식을 찾지 못했어요. 기본 문서로 내려받아 주세요.', 5000); R.forms = null; render(); return; }
+  if (!rolesValid(rec.roles, { date: false })) { toast('이 양식의 제목·본문 자리를 기타 › 가정통신문 › [양식 맞추기]에서 정해 주세요.', 7000); return; }
+  const doc = reportDoc(x.r, R.photos, x.captions), name = (doc.title || '결과 보고서').replace(/[\\/:*?"<>|]/g, '_');
+  try {
+    const parsed = await readForm(rec.bytes);
+    const t = new Date(), iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    const { bytes, warn } = await fillForm(parsed, rec.roles, { ...docToLetter(doc), date: iso, reply: null });
+    const where = await saveFile(`${name}.hwpx`, bytes, 'application/hwp+zip');
+    toast((window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '학교 양식으로 한글 파일을 내려받았어요')
+      + (warn.includes('no-border') ? ' · 이 양식에는 표 테두리를 더할 수 없어 표·사진은 글로 넣었어요' : '')
+      + (!R.photos.length && x.captions.length ? ' · 사진은 저장하지 않아 이번 파일에는 없어요' : ''), 7000);
+  } catch (e) { toast(`한글 파일을 만들지 못했어요: ${String((e && e.message) || e || '').slice(0, 80)}`, 7000); }
 }
 const recentHTML = () => {
   const l = listReports();
@@ -260,6 +296,7 @@ document.addEventListener('click', e => {
     const t = a === 'copyTitle' ? x.letter.title : a === 'copyBody' ? x.letter.body : `${x.letter.title}\n\n${x.letter.body}`;
     copyText(t).then(ok => toast(ok ? '복사했어요. 에듀파인 기안에 붙여 넣으세요' : '복사하지 못했어요'));
   } else if (a === 'queue' && x.r) openQueue({ title: x.letter.title, items: letterQueueItems(x.letter) });
+  else if (a === 'formExport' && x.r) formExport(x);
   else if (a === 'export' && x.r) {
     const doc = reportDoc(x.r, R.photos, x.captions);
     exportDoc(doc, doc.title).then(m => toast(R.photos.length || !x.captions.length ? m : `${m} · 사진은 저장하지 않아 이번 파일에는 없어요(사진을 다시 넣어 주세요)`, 6000));
@@ -269,6 +306,7 @@ document.addEventListener('change', e => {
   if (!mine(e)) return;
   const el = e.target, x = c();
   if (el.id === 'rpFile') { const fs = [...el.files]; el.value = ''; if (fs.length) addFiles(fs); return; }
+  if (el.id === 'rpForm') { R.formId = el.value; set(FORM_KEY, el.value); render(); return; }
   if (el.dataset.rpKind != null) { const s = x.sources[+el.dataset.rpKind]; if (s) { s.kind = el.value; save(); } }
 });
 const R_KEYS = { name: 'name', place: 'place', target: 'target', count: 'count', summary: 'summary' };
@@ -304,7 +342,7 @@ onEnter('plan', (tab, section) => {
   if (!box || !section.contains(box)) { box = document.createElement('div'); box.className = 'rp-box'; section.append(box); }
   curTab = tab;
   box.hidden = tab !== 'report';
-  if (tab === 'report') render();
+  if (tab === 'report') { R.forms = null; render(); } // 양식 목록은 들어올 때마다 다시(가정통신문에서 넣은 것)
 });
 export const reportKindLabel = kindLabel;
 export const reportTab = () => curTab;

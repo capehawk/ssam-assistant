@@ -1,5 +1,6 @@
 /* 기타 › 가정통신문 (스펙 2026-11-03 가정통신문): AI는 제목·인사·취지·항목·맺음·회신서 칸·알림 글·관련 공문만 뽑고,
    본문 줄·발송 기안·글 짜임 양식(.hwp·기본) 문서는 앱이 맞춤. 화면 없이 돌아감(시험) */
+import { parseTableLines } from '../../core/body-table.js';
 import { normDate, fmtDay } from './message-ai.js';
 import { relText } from '../plan/report-ai.js';
 import { findRoles, swapDate, DATE } from '../../core/hwpx-form.js';
@@ -61,7 +62,7 @@ export function plainLetterDoc(plain, letter) {
   const big = (p.head || []).find(l => squash(l) === '가정통신문');
   const blocks = (p.head || []).filter(l => l !== big).map(text => ({ type: 'c', text }));
   blocks.push({ type: 'p', text: '' }, { type: 'c', text: x.title || '', bold: true }, { type: 'p', text: '' });
-  for (const l of x.body || []) blocks.push({ type: 'p', text: l });
+  for (const pt of parseTableLines(x.body || [])) blocks.push(pt.type === 'table' ? { type: 'table', head: true, rows: pt.rows } : { type: 'p', text: pt.text });
   blocks.push({ type: 'p', text: '' }, { type: 'c', text: swapDate(p.dateFmt || '{날짜}', x.date) }, { type: 'c', text: p.sign || '', bold: true });
   if (x.reply) {
     blocks.push({ type: 'p', text: '' }, { type: 'c', text: CUT }, { type: 'c', text: x.reply.title || '회신서', bold: true }, { type: 'table', rows: replyRows(x.reply) });
@@ -78,6 +79,7 @@ export function letterPrompt({ sources = [], memo = '', sample = '', today = '',
     '- title: 가정통신문 제목(예: 2026학년도 가을 현장체험학습 안내). 「가정통신문」이라는 말은 빼도 됩니다.',
     '- greeting: 인사 1~2줄(예: 「안녕하십니까?」, 「항상 본교 교육 활동에 관심을 가져 주시는 보호자님께 감사드립니다.」)',
     '- intro: 취지 2~3문장, items: 「1.」·「  가.」·「    1)」 머리를 단 항목 줄(일시·장소·대상·준비물·신청 방법 등, 있는 것만), closing: 맺음 부탁 한 문장',
+    '- 시간표·준비물·일정처럼 칸이 있는 내용은 items에 「| 시간 | 내용 |」 꼴 줄로 넣으면 표가 됩니다(첫 줄은 머리, 한 줄에 한 행, 칸 안에 「|」는 쓰지 않기).',
     '- reply: 신청·동의·회신이 필요하면 {"need":true,"title":"○○ 참가 신청서","fields":["참가 여부: □ 참가합니다  □ 참가하지 않습니다"],"due":"○. ○.(○)까지 담임 선생님께 제출"}, 아니면 {"need":false}',
     '- short: 학부모 알림 앱(e알리미 등)에 보낼 3~5줄 짧은 안내, related: 관련 공문 [{"no":"문서번호","date":"YYYY-MM-DD","title":"제목"}], target: 받는 사람(예: 3학년 보호자)',
     '- 보호자께 쓰는 정중한 문체(「~습니다」). 넣을 내용과 공문에 없는 날짜·장소·금액은 지어내지 않습니다. 사람 이름·전화번호·이메일은 쓰지 않습니다.',

@@ -1,7 +1,8 @@
 /* 기타 › 가정통신문 (스펙 2026-11-03 가정통신문): 학교 양식 + 상위기관 공문·계획 + 넣을 내용 → AI 한 번 →
    학교 양식에 맞춘 가정통신문(.hwpx 양식은 모양 그대로, .hwp·기본 양식은 글 짜임만), 알림 앱용 짧은 글, 발송 기안.
    양식은 IndexedDB(form-store.js), 글은 학년도 자료(letter-model.js). 원본 공문 파일은 저장하지 않음(글만) */
-import { onEnter } from '../../core/shell.js';
+import { onEnter, go } from '../../core/shell.js';
+import { parseTableLines } from '../../core/body-table.js';
 import * as ai from '../../core/ai.js';
 import { toast, copyText, saveFile } from '../../core/ui.js';
 import { readText, fileMessage } from '../../core/files.js';
@@ -69,6 +70,7 @@ const rolesOk = r => rolesValid(r);
 async function addForm(file) {
   F.adding++; render();
   try {
+    if (!F.store) F.store = await forms(); // 탭을 연 바로 그때 넣어도
     const u8 = new Uint8Array(await file.arrayBuffer());
     const isZip = u8[0] === 0x50 && u8[1] === 0x4B;
     let rec;
@@ -195,13 +197,19 @@ const formsHTML = () => {
 };
 const srcHTML = x => (x.sources.length ? `<ul class="rp-src" id="lfSrc">${x.sources.map((s, i) => `<li><span class="rp-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="muted">${s.text.length.toLocaleString('ko-KR')}자</span>
     <button class="icon-btn tiny" type="button" data-lf-del="${i}" aria-label="${esc(s.name)} 빼기" title="빼기">✕</button></li>`).join('')}</ul>` : '<p class="muted" id="lfSrc" style="margin:0">상위기관 공문·계획 파일을 넣으면 그 내용을 따라 써요(선택).</p>');
+/* 본문 표 미리보기(「|」 줄이 있을 때만) */
+function tablesHTML(body) {
+  const ts = parseTableLines(body).filter(p => p.type === 'table');
+  return ts.length ? `<p class="muted" style="margin:0">표 미리보기</p>${ts.map(t => `<table class="yp-tbl lf-tbl"><tbody>${t.rows.map((r, ri) => `<tr>${r.map(c => ri ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</tbody></table>`).join('')}` : '';
+}
 function outHTML(x) {
   const o = x.out;
   if (!o) return '<p class="muted">[가정통신문 쓰기]를 누르면 제목·인사·본문·회신서를 학교 양식에 맞춰 써요.</p>';
   const hwpx = F.form && F.form.rec.kind === 'hwpx';
   return `<label class="yp-f"><span class="lab">제목</span><input class="field" data-lo="title" value="${esc(o.title)}" autocomplete="off"></label>
     <label class="yp-f"><span class="lab">발행일</span><input class="field" type="date" data-lo="date" value="${esc(o.date)}"></label>
-    <label class="yp-f"><span class="lab">본문 <span class="muted">(한 줄에 한 문단 · 「1.」「  가.」「    1)」로 단계)</span></span><textarea class="field" data-lo="body" rows="14">${esc(o.body.join('\n'))}</textarea></label>
+    <label class="yp-f"><span class="lab">본문 <span class="muted">(한 줄에 한 문단 · 「1.」「  가.」「    1)」로 단계 · 「| 시간 | 내용 |」 줄은 표)</span></span><textarea class="field" data-lo="body" rows="14">${esc(o.body.join('\n'))}</textarea></label>
+    <div id="lfTbl">${tablesHTML(o.body)}</div>
     <label class="switch"><input type="checkbox" id="lfReplyOn"${o.replyOn ? ' checked' : ''}>회신서(자르는 선 아래) 붙이기</label>
     ${o.replyOn ? `<div class="lf-reply"><label class="yp-f"><span class="lab">회신서 제목</span><input class="field" data-lr="title" value="${esc(o.reply.title)}" autocomplete="off"></label>
       <label class="yp-f"><span class="lab">칸 <span class="muted">(한 줄에 하나 · 「이름: 내용」, 학년 반 번호·학생 이름 칸은 늘 있어요)</span></span><textarea class="field" data-lr="fields" rows="3">${esc(o.reply.fields.join('\n'))}</textarea></label>
@@ -253,6 +261,22 @@ function refreshSend() {
   if (t && document.activeElement !== t) t.value = x.send.title;
   if (b && document.activeElement !== b) b.value = x.send.body;
   if (rs) rs.innerHTML = x.sendEdited ? '<p class="muted pc-resync">기안을 고쳤어요 <button class="btn text tiny" type="button" data-lf="resync">칸으로 다시 맞추기</button></p>' : '';
+}
+
+/* ---------- 다른 메뉴에서 넣기 ---------- */
+/* 행사계획 등: 이미 쓴 가정통신문 글을 학교 양식에 바로(AI 안 부름). 발행일 오늘, 회신서 끔 */
+export function putLetterDraft({ title = '', body = [], memo = '' } = {}) {
+  go('etc', 'letter');
+  const lines = (Array.isArray(body) ? body : String(body || '').split('\n')).map(l => String(l).replace(/\s+$/, ''));
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  cur = { ...blank(), memo: String(memo || ''), out: { title: String(title || ''), date: today(), body: lines, replyOn: false, reply: { title: '회신서', fields: [], due: '' }, short: '' } };
+  resend(true); save(cur, { push: true }); render();
+}
+/* 공문 처리 등: 넣기 칸에 공문을 넣은 새 가정통신문(쓰기는 선생님이 누름) */
+export function putLetterSources({ sources = [], memo = '' } = {}) {
+  go('etc', 'letter');
+  cur = { ...blank(), memo: String(memo || ''), sources: sources.filter(s => s && String(s.text || '').trim()).slice(0, 10).map(s => ({ name: String(s.name || '공문'), text: cleanSheet(s.text).text })) };
+  save(); render();
 }
 
 /* ---------- 누르기·입력 ---------- */
@@ -327,6 +351,7 @@ document.addEventListener('input', e => {
   if (el.dataset.lo) {
     const k = el.dataset.lo;
     x.out[k] = k === 'body' ? el.value.split('\n') : el.value;
+    if (k === 'body') { const tb = box.querySelector('#lfTbl'); if (tb) tb.innerHTML = tablesHTML(x.out.body); }
     if (k === 'title' || k === 'date') { resend(); refreshSend(); }
     save(x, { push: true }); return;
   }

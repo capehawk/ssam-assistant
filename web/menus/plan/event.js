@@ -18,6 +18,7 @@ import { qrPng } from '../../core/qr.js';
 import { readTable } from '../../core/sheet.js';
 import { listPlans, planText } from './year-model.js';
 import { putReportSources } from './report.js';
+import { putLetterDraft } from '../etc/letter.js';
 import { KINDS, DOCS, REF_KINDS, normRefs, guessKind, refsBlock, normRefNotes, newEvent, listEventPlans, getEvent, saveEvent, deleteEvent, currentEventId, setCurrentEvent, normOptions, normRoles, roleLoad, letterMissing, docDoc, confirmBlockers, normItems } from './event-model.js';
 
 const STEPS = ['행사 정보', '구성안', '문서', '설문·결과'];
@@ -304,7 +305,8 @@ function step3() {
 }
 function letterBoxHTML(miss) {
   return (miss.length ? `<p class="banner warn" id="evLetterMissing"><span class="grow">가정통신문에 빠진 항목: <b>${miss.join('·')}</b></span></p>` : '')
-    + `<div class="row"><button class="btn primary" type="button" data-e="letterDone" ${miss.length ? 'disabled' : ''}>${ev.docs.done ? '완성했어요' : '완성'}</button></div>`;
+    + `<div class="row"><button class="btn primary" type="button" data-e="letterDone" ${miss.length ? 'disabled' : ''}>${ev.docs.done ? '완성했어요' : '완성'}</button>
+      <button class="btn" type="button" data-e="toLetter" title="기타 › 가정통신문에서 고른 학교 양식에 이 글을 넣어요">학교 양식으로</button></div>`;
 }
 
 function step4() {
@@ -723,6 +725,7 @@ document.addEventListener('click', e => {
   }
   else if (a === 'hwpx') downloadDoc();
   else if (a === 'purchase') toPurchase();
+  else if (a === 'toLetter') { if (!String(ev.docs.letter || '').trim()) toast('가정통신문 글이 비어 있어요.'); else putLetterDraft({ title: `${ev.name || '행사'} 안내`, body: ev.docs.letter.split('\n') }); }
   else if (a === 'final') confirmEvent();
   else if (a === 'items') runItems();
   else if (a === 'formCopy') copyText(formText(survey().items)).then(ok => toast(ok ? '문항을 복사했어요. 구글 폼에 붙여넣으세요' : '복사하지 못했어요'));
