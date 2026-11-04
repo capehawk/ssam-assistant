@@ -1,4 +1,4 @@
-// 떠 있는 버튼 › 공문·안내: samples/연수안내-공문-예시.hwpx → 카드 「공문·안내」(공문 처리로) → [실행] → 기타 › 공문 처리(기한·할 일) → [쪽지] → 쪽지 작성에 쪽지 제목
+// 떠 있는 버튼 › 안내·제출 공문: samples/연수안내-공문-예시.hwpx → 카드 「안내·제출 공문」(공문 처리로) → [실행] → 기타 › 공문 처리(기한·할 일) → [쪽지] → 쪽지 작성에 쪽지 제목
 import { join } from 'node:path';
 import { open, run, assert, mockClaude, ROOT } from './helpers.mjs';
 
@@ -19,10 +19,10 @@ await page.goto(url);
 await page.waitForTimeout(400);
 
 await run('inbox-message', [
-  ['연수 안내 공문 예시 → 카드 「공문·안내」 → [실행] → 공문 처리에 기한·할 일 → [쪽지] → 쪽지 작성에 제목', async () => {
+  ['연수 안내 공문 예시 → 카드 「안내·제출 공문」 → [실행] → 공문 처리에 기한·할 일 → [쪽지] → 쪽지 작성에 제목', async () => {
     await page.setInputFiles('#inboxFile', join(ROOT, 'samples', '연수안내-공문-예시.hwpx'));
     await page.waitForSelector(sheet);
-    assert((await page.textContent(sheet)).includes('공문·안내'), await page.textContent(sheet));
+    assert((await page.textContent(sheet)).includes('안내·제출 공문'), await page.textContent(sheet));
     await page.waitForSelector(`${sheet} #ibRun:not([disabled])`);
     await page.click(`${sheet} #ibRun`);
     await page.waitForFunction(s => (document.querySelector(`${s} .gm-doc`) || {}).textContent?.includes('희망자 조사'), P, { timeout: 8000 });

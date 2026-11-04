@@ -198,7 +198,7 @@ async function formExport(x) {
     const { bytes, warn } = await fillForm(parsed, rec.roles, { ...docToLetter(doc), date: iso, reply: null });
     const where = await saveFile(`${name}.hwpx`, bytes, 'application/hwp+zip');
     toast((window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '학교 양식으로 한글 파일을 내려받았어요')
-      + (warn.includes('no-border') ? ' · 이 양식에는 표 테두리를 더할 수 없어 표·사진은 글로 넣었어요' : '')
+      + (warn.includes('no-border') ? ' · 이 양식에는 표 테두리를 더할 수 없어 개요 표는 글로, 사진은 한 장씩 넣었어요' : '')
       + (!R.photos.length && x.captions.length ? ' · 사진은 저장하지 않아 이번 파일에는 없어요' : ''), 7000);
   } catch (e) { toast(`한글 파일을 만들지 못했어요: ${String((e && e.message) || e || '').slice(0, 80)}`, 7000); }
 }

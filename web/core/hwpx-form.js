@@ -347,6 +347,8 @@ function photoTableXml(photos, { normal, center, border, width, nid }) {
   const sized = rows.map(r => r.map(p => ({ p, sz: fit(p) })));
   const rowH = sized.map(r => Math.max(...r.map(x => x.sz[1])) + 2600);
   const picPara = x => noBreak(center.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${center.charPr}">${pic(x.p, x.sz)}<hp:t/></hp:run></hp:p>`;
+  // 표 테두리를 더할 수 없는 양식: 사진마다 문단(그림 + 설명)
+  if (!border) return sized.flat().map(x => picPara(x) + paraFrom(center, x.p.caption || '', nid(), { keepLead: false })).join('');
   const cell = (x, ri, ci) => `<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="${border}">`
     + '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
     + (x ? picPara(x) + paraFrom(center, x.p.caption || '', nid(), { keepLead: false }) : paraFrom(normal, '', nid())) + '</hp:subList>'
@@ -427,7 +429,7 @@ export async function fillForm(form, roles, letter) {
     if (ph.length) {
       const b = border();
       if (!b) noBorder();
-      else {
+      {
         const hpf = form.entries.find(e => /content\.hpf$/i.test(e.name));
         const used = new Set(hpf ? [...new TextDecoder().decode(hpf.data).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]) : []);
         for (const e of form.entries) used.add(e.name.replace(/^BinData\//, '').replace(/\.[^.]+$/, ''));

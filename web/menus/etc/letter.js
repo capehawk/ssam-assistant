@@ -118,7 +118,7 @@ function mapHTML() {
     <p class="muted" style="margin:0">줄을 누르고 자리를 고르세요. 머리·학교장 줄은 그대로 두고, 제목·본문·날짜만 바꿔 넣어요. 양식에 {제목}·{본문}·{날짜}를 적어 두어도 돼요.</p>
     <ol class="lf-lines">${lines.map((l, i) => { const ro = roleOf(r, i); return `<li class="lf-r-${{ 제목: 'title', 본문: 'body', 날짜: 'date', 학교장: 'sign', 회신서: 'reply', 머리: 'head' }[ro] || 'none'}${F.mapSel === i ? ' sel' : ''}">
       <button type="button" data-lf-line="${i}"><span class="lf-badge">${ro || '·'}</span><span class="lf-text">${esc(l.text.trim() ? l.text : l.obj ? '(그림·개체)' : '(빈 줄)')}</span></button>
-      ${F.mapSel === i ? `<span class="row lf-pick">${ROLE_NAMES.map(([k, n]) => `<button class="btn tiny" type="button" data-lf-role="${k}">${n}</button>`).join('')}<button class="btn text tiny" type="button" data-lf-role="noreply">회신서 없음</button></span>` : ''}</li>`; }).join('')}</ol></div>`;
+      ${F.mapSel === i ? `<span class="row lf-pick">${ROLE_NAMES.map(([k, n]) => `<button class="btn tiny" type="button" data-lf-role="${k}">${n}</button>`).join('')}<button class="btn text tiny" type="button" data-lf-role="noreply">회신서 없음</button><button class="btn text tiny" type="button" data-lf-role="nodate">날짜 없음</button></span>` : ''}</li>`; }).join('')}</ol></div>`;
 }
 
 /* ---------- 넣기 ---------- */
@@ -180,7 +180,7 @@ async function download() {
     const m = window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요';
     toast(m + (warn.includes('reply-in-box') ? ' · 양식의 회신서가 본문과 같은 표 안에 있어 회신서는 바꾸지 않았어요' : '')
       + (warn.includes('overlap') ? ' · 겹치는 자리가 있어 일부를 바꾸지 못했어요. [양식 맞추기]를 확인해 주세요' : '')
-      + (warn.includes('no-border') ? ' · 이 양식에는 표 테두리를 더할 수 없어 회신서를 넣지 못했어요' : ''), 8000);
+      + (warn.includes('no-border') ? ' · 이 양식에는 표 테두리를 더할 수 없어 표는 글로 넣고 회신서는 넣지 못했어요' : ''), 8000);
     return;
   }
   const plain = f && f.rec.kind === 'plain' ? f.rec.plain : defaultPlain(getSchool().name);
@@ -237,7 +237,7 @@ function collectHTML(x) {
       <button class="btn primary" type="button" data-lf="rcRead"${RC.pages.length && !RC.busy ? '' : ' disabled'}>${RC.busy ? '<span class="spin"></span>읽는 중…' : '읽기'}</button></div>
     ${rows.length ? `<div class="yp-tbl-wrap"><table class="yp-tbl lf-rc"><thead><tr><th>번호</th>${opts.map(o => `<th>${esc(o.name)}</th>`).join('')}<th></th></tr></thead><tbody>
       ${order.map(({ r, i }) => `<tr data-rc-row="${i}" class="${r.warn ? 'warn' : ''}"><td><input class="field" type="number" min="1" max="99" data-rc-no="${i}" value="${r.no == null ? '' : r.no}" aria-label="번호" title="${r.warn === 'dup' ? '같은 번호가 또 있어요' : r.warn === 'none' ? '번호를 못 읽었어요' : ''}"></td>
-        ${opts.map(o => `<td><select class="field${r.unsure.includes(o.name) ? ' unsure' : ''}" data-rc-a="${i}" data-rc-f="${esc(o.name)}" aria-label="${esc(o.name)}"><option value="">(표시 없음)</option>${o.options.map(v => `<option${r.answers[o.name] === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></td>`).join('')}
+        ${opts.map(o => `<td><select class="field${r.unsure.includes(o.name) ? ' unsure' : ''}" data-rc-a="${i}" data-rc-f="${esc(o.name)}" aria-label="${esc(o.name)}${r.unsure.includes(o.name) ? ' (확인 필요)' : ''}"${r.unsure.includes(o.name) ? ' aria-invalid="true" title="AI가 확실히 읽지 못했어요. 확인해 주세요"' : ''}><option value="">(표시 없음)</option>${o.options.map(v => `<option${r.answers[o.name] === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></td>`).join('')}
         <td>${r.b && r.b === RC.batch && RC.pages[r.pg] ? `<button class="btn text tiny" type="button" data-rc-view="${i}" title="이 줄의 스캔 보기">${r.pg + 1}장</button>` : ''}<button class="icon-btn tiny" type="button" data-rc-del="${i}" aria-label="이 줄 빼기">✕</button></td></tr>`).join('')}</tbody></table></div>
       <p style="margin:0">${t.map(z => `<b>${esc(z.name)}</b> ${z.counts.map(([o, n]) => `${esc(o)} ${n}명`).join(' · ')}${z.blank ? ` · 표시 없음 ${z.blank}명` : ''}`).join('<br>')}</p>
       <p style="margin:0">${miss.length ? `미제출: ${miss.join(', ')}번` : '모두 냈어요'} <span class="muted">(낸 회신서 ${rows.length}장${allowed ? '' : ' · 설정 › 학급 명단에 학생 수를 넣으면 미제출이 정확해요'})</span></p>
@@ -359,14 +359,19 @@ export function putLetterDraft({ title = '', body = [], memo = '' } = {}) {
   go('etc', 'letter');
   const lines = (Array.isArray(body) ? body : String(body || '').split('\n')).map(l => String(l).replace(/\s+$/, ''));
   while (lines.length && !lines[lines.length - 1]) lines.pop();
-  cur = { ...blank(), memo: String(memo || ''), out: { title: String(title || ''), date: today(), body: lines, replyOn: false, reply: { title: '회신서', fields: [], due: '' }, short: '' } };
-  resend(true); save(cur, { push: true }); render();
+  // 아직 쓰지 않은(결과가 없는) 가정통신문이면 그 메모·공문은 남김
+  const x0 = c(), keep = !x0.out ? { sources: x0.sources, memo: x0.memo } : {};
+  cur = { ...blank(), ...keep, ...(memo ? { memo: String(memo) } : {}), out: { title: String(title || ''), date: today(), body: lines, replyOn: false, reply: { title: '회신서', fields: [], due: '' }, short: '' } };
+  rcReset(); resend(true); save(cur, { push: true }); render();
 }
 /* 공문 처리 등: 넣기 칸에 공문을 넣은 새 가정통신문(쓰기는 선생님이 누름) */
 export function putLetterSources({ sources = [], memo = '' } = {}) {
   go('etc', 'letter');
-  cur = { ...blank(), memo: String(memo || ''), sources: sources.filter(s => s && String(s.text || '').trim()).slice(0, 10).map(s => ({ name: String(s.name || '공문'), text: cleanSheet(s.text).text })) };
-  save(); render();
+  const add = sources.filter(s => s && String(s.text || '').trim()).map(s => ({ name: String(s.name || '공문'), text: cleanSheet(s.text).text }));
+  const x0 = c();
+  // 아직 쓰지 않은 가정통신문이면 거기에 공문을 더하고 쓰던 메모는 그대로, 이미 쓴 것이면 새 가정통신문
+  cur = !x0.out ? { ...x0, memo: memo ? String(memo) : x0.memo, sources: [...x0.sources, ...add].slice(-10) } : { ...blank(), memo: String(memo || ''), sources: add.slice(0, 10) };
+  rcReset(); save(); render();
 }
 
 /* ---------- 누르기·입력 ---------- */
@@ -383,6 +388,7 @@ document.addEventListener('click', async e => {
     const replyAfter = () => { r.reply = -1; for (let j = Math.max(r.date, r.sign) + 1; j < L.length; j++) if (filled(j)) { r.reply = j; break; } };
     F.mapSel = -1;
     if (k === 'noreply') r.reply = -1;
+    else if (k === 'nodate') r.date = -1; // 결과 보고서 같은 날짜 없는 양식
     else if (k === 'reply' && i <= Math.max(r.date, r.sign)) { toast('회신서는 날짜·학교장 줄 아래에서 골라 주세요.', 4000); render(); return; }
     else {
       r[k] = i;

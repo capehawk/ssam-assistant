@@ -25,10 +25,10 @@ test('정리: 날짜는 YYYY-MM-DD(월·일만 오면 학년도로, 1~2월은 �
   assert.deepEqual(KINDS.map(k => k[0]), ['message', 'letter', 'purchase', 'report']);
 });
 
-test('D-n: 오늘 D-day, 지나면 「n일 지남」, 기한 없으면 빈칸', () => {
+test('D-n: 오늘은 「오늘」, 지나면 「n일 지남」, 기한 없으면 빈칸', () => {
   assert.equal(dday('2026-11-04', '2026-11-04'), 0); assert.equal(dday('2026-11-07', '2026-11-04'), 3); assert.equal(dday('2026-11-01', '2026-11-04'), -3);
   assert.equal(dday('', '2026-11-04'), null);
-  assert.equal(ddayText(0), 'D-day'); assert.equal(ddayText(3), 'D-3'); assert.equal(ddayText(-3), '3일 지남'); assert.equal(ddayText(null), '');
+  assert.equal(ddayText(0), '오늘'); assert.equal(ddayText(3), 'D-3'); assert.equal(ddayText(-3), '3일 지남'); assert.equal(ddayText(null), '');
   assert.equal(dday('2027-01-02', '2026-12-30'), 3, '해 넘김');
 });
 

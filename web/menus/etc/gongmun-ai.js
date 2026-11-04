@@ -52,7 +52,7 @@ export function normGongmun(v, { year, today = '' } = {}) {
 /* D-n: 기한 - 오늘(날 수), 기한 없으면 null */
 const day = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5 : null; };
 export const dday = (due, today) => { const a = day(due), b = day(today); return a == null || b == null ? null : Math.round(a - b); };
-export const ddayText = n => (n == null ? '' : n === 0 ? 'D-day' : n > 0 ? `D-${n}` : `${-n}일 지남`);
+export const ddayText = n => (n == null ? '' : n === 0 ? '오늘' : n > 0 ? `D-${n}` : `${-n}일 지남`);
 
 /* 차례: 끝나지 않은 것 먼저, 기한 가까운 것(기한 없는 것은 뒤), 같으면 넣은 차례(늦은 것 먼저) */
 export function sortDocs(list) {

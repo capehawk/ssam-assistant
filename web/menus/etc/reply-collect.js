@@ -29,7 +29,8 @@ export function replyPrompt(opts) {
 /* AI 답 → { no: 1~99 | null, answers: { 칸: 선택지 | '' }, unsure: [칸](빈 답도) } */
 export function normReply(v, opts) {
   const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {}, a = o.answers && typeof o.answers === 'object' ? o.answers : {};
-  const m = /\d+/.exec(str(o.no)), n = m ? +m[0] : NaN;
+  // 「3학년 2반 15번」·「3-2-15」 → 15(「번」 앞 숫자, 없으면 마지막 숫자)
+  const sn = str(o.no), byBeon = /(\d+)\s*번/.exec(sn), all = sn.match(/\d+/g), n = byBeon ? +byBeon[1] : all ? +all[all.length - 1] : NaN;
   const said = new Set((Array.isArray(o.unsure) ? o.unsure : []).map(str));
   const answers = {}, unsure = [];
   const sq = x => str(x).replace(/\s+/g, '');

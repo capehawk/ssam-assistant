@@ -17,7 +17,7 @@ function normCollect(c) {
     rows: (Array.isArray(o.rows) ? o.rows : []).filter(isObj).slice(0, 80).map(r => {
       const n = Number(r.no), a = isObj(r.answers) ? r.answers : {};
       const pg = Number(r.pg);
-      return { no: Number.isInteger(n) && n >= 1 && n <= 99 ? n : null, answers: Object.fromEntries(Object.entries(a).slice(0, 8).map(([k, v]) => [str(k, 60), str(v, 60)])), unsure: strs(r.unsure, 8, 60),
+      return { no: Number.isInteger(n) && n >= 1 && n <= 99 ? n : null, answers: Object.fromEntries(Object.entries(a).slice(0, 8).map(([k, v]) => [str(k, 120), str(v, 60)])), unsure: strs(r.unsure, 8, 120),
         b: str(r.b, 16), pg: Number.isInteger(pg) && pg >= 0 ? pg : -1 }; // b: 어느 스캔 묶음, pg: 그 묶음의 몇째 장
     }) };
 }

@@ -5,6 +5,7 @@ import { setEvents } from '../../core/calendar.js';
 import { KINDS, MAX_TEXT, dueEvents, sortDocs } from './gongmun-ai.js';
 
 const KEY = 'gongmun:list', MAX = 40;
+export const MAX_DOCS = MAX;
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 const date = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '');
@@ -16,7 +17,7 @@ function norm(d) {
   return { id: str(d.id, 40), name: str(d.name, 120), title: str(d.title, 150), from: str(d.from, 80), no: str(d.no, 60), date: date(d.date), due: date(d.due),
     dueNote: str(d.dueNote, 120), summary: str(d.summary, 400),
     tasks: (Array.isArray(d.tasks) ? d.tasks : []).filter(isObj).slice(0, 12).map(t => ({ text: str(t.text, 120), due: date(t.due), done: !!t.done })),
-    kinds: (Array.isArray(d.kinds) ? d.kinds : []).filter(k => IDS.includes(k)), text: str(d.text, MAX_TEXT), at: Number(d.at) || 0, done: !!d.done, read: !!d.read };
+    kinds: (Array.isArray(d.kinds) ? d.kinds : []).filter(k => IDS.includes(k)), text: str(d.text, d.done ? 2000 : MAX_TEXT) /* 다 한 공문은 글을 줄임 */, at: Number(d.at) || 0, done: !!d.done, read: !!d.read, touched: !!d.touched }; // touched: 선생님이 기한·할 일을 고침
 }
 export const listDocs = () => { const v = get(KEY, []); return sortDocs((Array.isArray(v) ? v : []).map(norm).filter(Boolean)); };
 function write(list) {

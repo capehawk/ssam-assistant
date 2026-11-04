@@ -10,7 +10,7 @@ import { getSchool } from '../../core/settings.js';
 import { registerInbox } from '../../core/inbox.js';
 import { cleanSheet } from '../evaluate/activity/activity-read.js';
 import { KINDS, gongmunPrompt, normGongmun, dday, ddayText, validDue } from './gongmun-ai.js';
-import { listDocs, putDoc, removeDoc, getDoc, newDocId } from './gongmun-model.js';
+import { listDocs, putDoc, removeDoc, getDoc, newDocId, MAX_DOCS } from './gongmun-model.js';
 import { putMessageFiles } from './message.js';
 import { putLetterSources } from './letter.js';
 import { putReportSources } from '../plan/report.js';
@@ -34,15 +34,20 @@ async function readDoc(id) {
     const v = await ai.generateJSON(gongmunPrompt({ name: d0.name, text: d0.text, today: today(), year: getSchool().year }),
       { task: 'gongmun', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
     const n = normGongmun(v, { year: getSchool().year, today: today() }), d = getDoc(id);
-    if (d) putDoc({ ...d, ...n, title: n.title || d.title, due: n.due || d.due, tasks: n.tasks.length ? n.tasks : d.tasks, read: true });
+    // 읽는 동안 선생님이 고친 기한·할 일은 그대로
+    if (d) putDoc({ ...d, ...n, title: n.title || d.title, due: d.touched && d.due ? d.due : n.due || d.due,
+      tasks: d.touched && d.tasks.length ? d.tasks : n.tasks.length ? n.tasks : d.tasks, read: true });
   } catch (e) {
-    toast(e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. [다시 읽기]를 눌러 주세요.' : ai.errorMessage(e && e.code, e), 6000);
+    toast(e && e.code === 'bad_json' ? 'AI 답을 읽지 못했어요. [AI로 읽기]를 눌러 주세요.' : ai.errorMessage(e && e.code, e), 6000);
   }
   S.reading.delete(id); render();
 }
+/* name이 없으면(붙여 넣은 글) 명단·전화번호 줄을 뺀 글의 첫 줄 */
 function addText(name, text) {
   const cl = cleanSheet(text);
-  const d = { id: newDocId(), name, title: baseName(name), text: cl.text, tasks: [], kinds: [], at: Date.now() };
+  const nm = name || (cl.text.split('\n').map(s => s.trim()).find(Boolean) || '붙여 넣은 공문').slice(0, 60);
+  if (listDocs().length >= MAX_DOCS) toast(`공문이 ${MAX_DOCS}개를 넘어 가장 오래된 것이 목록에서 빠져요. 다 한 공문은 지워 주세요.`, 7000);
+  const d = { id: newDocId(), name: nm, title: baseName(nm), text: cl.text, tasks: [], kinds: [], at: Date.now() };
   putDoc(d);
   return { id: d.id, cut: cl.cut || 0 };
 }
@@ -50,12 +55,18 @@ export async function addFiles(files) {
   S.adding++; render();
   const ids = [], fails = [];
   let cut = 0;
+  let scans = 0;
   for (const f of files) {
     try { const r = addText(f.name, await readText(f)); ids.push(r.id); cut += r.cut; S.files.set(r.id, f); }
-    catch (e) { fails.push(`${f.name}(${fileMessage(e && e.code)})`); }
+    catch (e) {
+      // 글을 읽지 못한 스캔·사진 공문도 넣음(기한·할 일은 직접, [쪽지]는 이 파일을 붙임으로)
+      if (/\.(pdf|png|jpe?g|webp|bmp|gif|heic)$/i.test(f.name || '') || /^image\//.test(f.type || '')) { const r = addText(f.name, ''); S.files.set(r.id, f); scans++; }
+      else fails.push(`${f.name}(${fileMessage(e && e.code)})`);
+    }
   }
   S.adding--; render();
   if (fails.length) toast(`읽지 못한 파일: ${fails.join(', ')}`, 7000);
+  else if (scans) toast(`글을 읽지 못한 스캔·사진 공문 ${scans}개를 넣었어요. 기한·할 일은 직접 적어 주세요. [쪽지]는 이 파일을 붙임으로 보내요.`, 8000);
   else if (cut) toast(`명단·전화번호가 적힌 줄 ${cut}곳은 빼고 넣었어요(AI로 보내지 않아요)`, 5000);
   for (const id of ids) await readDoc(id);
 }
@@ -69,9 +80,10 @@ export async function putGongmunFiles(files) {
 /* ---------- 넘기기 ---------- */
 const docTitle = d => d.title || d.name || '공문';
 function handOff(d, k) {
-  const text = d.text;
-  if (!text.trim()) { toast('공문 글이 없어요.'); return; }
-  if (k === 'message') { const f = S.files.get(d.id); if (f) putMessageFiles([f]); else putMessageFiles([], { text }); } // 원본 파일이 있으면 붙임으로
+  const text = d.text, f = S.files.get(d.id);
+  if (k === 'message' && f) { putMessageFiles([f]); return; } // 원본 파일이 있으면 붙임으로
+  if (!text.trim()) { toast('글을 읽지 못한 공문이라 넘길 글이 없어요. 공문 글을 붙여 넣어 다시 넣어 주세요.', 6000); return; }
+  if (k === 'message') putMessageFiles([], { text });
   else if (k === 'letter') putLetterSources({ sources: [{ name: docTitle(d), text }] });
   else if (k === 'report') putReportSources({ sources: [{ kind: 'official', name: docTitle(d), text }] });
   else if (k === 'purchase') putPurchaseText([docTitle(d), d.summary, '', text.slice(0, 3000)].filter((x, i) => x || i === 2).join('\n'));
@@ -90,7 +102,7 @@ function docHTML(d, t) {
     <div class="row gm-due"><label class="yp-f"><span class="lab">제출 기한${d.dueNote ? ` <span class="muted">(${esc(d.dueNote)})</span>` : ''}</span><input class="field" type="date" data-gm-due value="${esc(d.due)}"></label></div>
     <ul class="gm-tasks">${d.tasks.map((x, i) => `<li class="${x.done ? 'done' : ''}"><label><input type="checkbox" data-gm-task="${i}"${x.done ? ' checked' : ''}><span>${esc(x.text)}</span></label>
       ${x.due ? `<span class="muted">${esc(ddayText(dday(x.due, t)))}</span>` : ''}<button class="icon-btn tiny" type="button" data-gm-tdel="${i}" aria-label="할 일 빼기">✕</button></li>`).join('')}</ul>
-    <div class="row gm-add"><input class="field" data-gm-tadd placeholder="할 일 더하기(Enter)" autocomplete="off"></div>
+    <div class="row gm-add"><input class="field" data-gm-tadd placeholder="할 일 더하기(Enter)" aria-label="할 일 더하기" autocomplete="off"></div>
     <div class="row gm-go">${KINDS.map(([k, l]) => `<button class="btn${d.kinds.includes(k) ? ' primary' : ''}" type="button" data-gm-go="${k}">${l}</button>`).join('')}
       <span class="grow"></span>${d.read || reading ? '' : '<button class="btn text" type="button" data-gm-read>AI로 읽기</button>'}
       <button class="btn text" type="button" data-gm-done>${d.done ? '다시 열기' : '다 했어요'}</button><button class="btn text" type="button" data-gm-del>지우기</button></div></li>`;
@@ -122,15 +134,14 @@ document.addEventListener('click', e => {
   if (e.target.closest('[data-gm-done]') && d) { putDoc({ ...d, done: !d.done }); render(); return; }
   if (e.target.closest('[data-gm-del]') && d) { if (confirm(`「${docTitle(d)}」을 목록에서 지울까요?`)) { removeDoc(d.id); S.files.delete(d.id); render(); } return; }
   const td = e.target.closest('[data-gm-tdel]');
-  if (td && d) { d.tasks.splice(+td.dataset.gmTdel, 1); putDoc(d); render(); return; }
+  if (td && d) { d.tasks.splice(+td.dataset.gmTdel, 1); d.touched = true; putDoc(d); render(); return; }
   const b = e.target.closest('[data-gm]');
   if (!b) return;
   if (b.dataset.gm === 'pick') box.querySelector('#gmFile').click();
   else if (b.dataset.gm === 'paste') {
     const ta = box.querySelector('#gmPaste'), t = ta.value;
     if (!t.trim()) { toast('공문 글을 붙여 넣어 주세요.'); return; }
-    const first = t.split('\n').map(s => s.trim()).find(Boolean) || '붙여 넣은 공문';
-    const r = addText(first.slice(0, 60), t); ta.value = '';
+    const r = addText(null, t); ta.value = '';
     if (r.cut) toast(`명단·전화번호가 적힌 줄 ${r.cut}곳은 빼고 넣었어요(AI로 보내지 않아요)`, 5000);
     render(); readDoc(r.id);
   }
@@ -139,11 +150,11 @@ document.addEventListener('change', e => {
   if (!mine(e)) return;
   const el = e.target, d = docOf(el);
   if (el.id === 'gmFile') { const fs = [...el.files]; el.value = ''; if (fs.length) addFiles(fs); return; }
-  if (el.dataset.gmTask != null && d) { const x = d.tasks[+el.dataset.gmTask]; if (x) { x.done = el.checked; putDoc(d); el.closest('li').classList.toggle('done', el.checked); } return; }
+  if (el.dataset.gmTask != null && d) { const x = d.tasks[+el.dataset.gmTask]; if (x) { x.done = el.checked; d.touched = true; putDoc(d); el.closest('li').classList.toggle('done', el.checked); } return; }
   // 기한: 맞는 날(2000~2100년)이거나 비웠을 때만 저장. 키보드로 고치는 중에는 다시 그리지 않고 칸을 떠날 때 차례를 맞춤
   if (el.dataset.gmDue != null && d) {
     if (el.value && !validDue(el.value)) return;
-    putDoc({ ...d, due: el.value });
+    putDoc({ ...d, due: el.value, touched: true });
     if (document.activeElement === el) S.dueDirty = true; else render();
   }
 });
@@ -153,7 +164,7 @@ document.addEventListener('keydown', e => {
   const el = e.target, d = docOf(el);
   if (el.dataset.gmTadd == null || !d || !el.value.trim()) return;
   e.preventDefault();
-  d.tasks.push({ text: el.value.trim().slice(0, 120), due: '', done: false }); putDoc(d); render();
+  d.tasks.push({ text: el.value.trim().slice(0, 120), due: '', done: false }); d.touched = true; putDoc(d); render();
 });
 document.addEventListener('toggle', e => { if (box && e.target.classList && e.target.classList.contains('gm-done-box')) S.showDone = e.target.open; }, true);
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-gm-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });

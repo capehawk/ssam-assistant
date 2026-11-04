@@ -3,7 +3,7 @@
 import { parseTableLines } from '../../core/body-table.js';
 import { normDate, fmtDay } from './message-ai.js';
 import { relText } from '../plan/report-ai.js';
-import { findRoles, swapDate, DATE } from '../../core/hwpx-form.js';
+import { findRoles, swapDate, DATE, isSign, isDateLine } from '../../core/hwpx-form.js';
 import { cleanSheet } from '../evaluate/activity/activity-read.js';
 
 const PHONE = /0\d{1,2}[-.\s)]?\d{3,4}[-.\s]?\d{4}/g;
@@ -123,4 +123,14 @@ export function composeSend({ title = '', related = [], target = '', date = '' }
     `  가. 발송 대상: ${String(target || '').trim() || '보호자'}`, `  나. 발송일: ${fmtDay(date) || String(date || '')}`, '  다. 발송 방법: 학부모 알림 앱(e알리미 등) 및 가정통신문',
     '', `붙임  「${t}」 가정통신문 1부.  끝.`);
   return { title: `${t} 가정통신문 발송`, body: lines.join('\n') };
+}
+
+/* 행사계획의 가정통신문 글 → 학교 양식 본문: 맨 위 「가정통신문」·제목 줄, 맨 아래 날짜·학교장 줄은 양식에 있으니 뺌 */
+export function letterBodyFromEvent(name, text) {
+  const lines = String(text || '').split('\n').map(l => l.replace(/\s+$/, ''));
+  const sq = t => String(t || '').replace(/\s+/g, '');
+  const title = sq(`${name || ''} 안내`);
+  while (lines.length && (!lines[0].trim() || sq(lines[0]) === '가정통신문' || (title.length > 2 && sq(lines[0]) === title))) lines.shift();
+  while (lines.length && (!lines[lines.length - 1].trim() || isSign(lines[lines.length - 1]) || isDateLine(lines[lines.length - 1]))) lines.pop();
+  return lines;
 }
