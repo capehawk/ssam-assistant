@@ -72,6 +72,30 @@ await run('report-fixes', [
     assert(await page.locator(`${P} #rpRecent [data-rp-open]`).count() === n0 + 1, '쓴 결과가 최근에 없음');
     delay = 0;
   }],
+  ['M1 새로 고침 뒤 사진을 다시 넣으면 옛 사진 설명이 새 사진에 붙지 않음', async () => {
+    await page.click(`${P} [data-rp="new"]`);
+    await page.setInputFiles(`${P} #rpFile`, [photo(1), photo(2)]);
+    await page.waitForFunction(s => document.querySelectorAll(`${s} [data-rp-cap]`).length === 2, P);
+    await page.click(`${P} [data-rp="write"]`);
+    await page.waitForSelector(`${P} #rpBody`, { timeout: 8000 });
+    await page.reload();
+    await page.waitForTimeout(400);
+    await page.click('nav.app-side [data-menu-go="plan"]');
+    await page.click('#menuTabs [data-tab="report"]');
+    await page.waitForSelector(`${P} #rpBody`);
+    await page.setInputFiles(`${P} #rpFile`, [photo(2)]);
+    await page.waitForFunction(s => document.querySelectorAll(`${s} [data-rp-cap]`).length === 1, P);
+    const caps = await page.$$eval(`${P} [data-rp-cap]`, els => els.map(e => e.value));
+    assert(JSON.stringify(caps) === JSON.stringify(['']), JSON.stringify(caps));
+  }],
+  ['M8 사진을 읽는 동안 [새 결과 보고]를 누르면 그 사진은 새 결과 보고에 들어가지 않음', async () => {
+    await page.click(`${P} [data-rp="new"]`);
+    // 사진을 읽는 바로 그때 [새 결과 보고]를 누름
+    await page.evaluate(s => { const o = window.createImageBitmap; window.createImageBitmap = function (...a) { window.createImageBitmap = o; document.querySelector(`${s} [data-rp="new"]`).click(); return o.apply(window, a); }; }, P);
+    await page.setInputFiles(`${P} #rpFile`, [photo(1)]);
+    await page.waitForFunction(s => !document.querySelector(`${s} .spin`), P, { timeout: 10000 });
+    assert(await page.locator(`${P} [data-rp-cap]`).count() === 0, '새 결과 보고에 사진이 들어감');
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();

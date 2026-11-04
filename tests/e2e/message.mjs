@@ -148,6 +148,31 @@ await run('message', [
     await page.waitForFunction(() => navigator.clipboard.readText().then(t => t.endsWith('.hwpx')));
     assert(!(await page.$(`${P} [data-msg-drag="0"]`)), '뺀 붙임에 끌기');
   }],
+  ['M6 끌어 낸 파일을 도로 놓는 것은 한 번만 거름 — 두 번째로 놓으면 붙임으로 넣음', async () => {
+    await page.check(`${P} [data-att="0"]`);
+    const n0 = await page.locator(`${P} [data-att]`).count();
+    await page.evaluate(() => { window.__calls = []; });
+    await page.hover(`${P} [data-msg-drag="all"]`); await page.mouse.down();
+    await page.waitForFunction(() => window.__calls.some(c => c[0] === 'note_drag_files')); await page.mouse.up();
+    const drop = () => page.evaluate(s => {
+      const dt = new DataTransfer(); dt.items.add(new File(['x'], 'AI 활용 연수 계획.hwpx'));
+      document.querySelector(`${s} [data-msg-drop]`).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, P);
+    await drop(); await page.waitForTimeout(300);
+    assert(await page.locator(`${P} [data-att]`).count() === n0, '첫 번째 놓기가 들어감');
+    await drop(); await page.waitForTimeout(500);
+    assert(await page.locator(`${P} [data-att]`).count() === n0 + 1, '두 번째 놓기가 거름');
+  }],
+  ['M5 「⠿」 위를 스치기만 하면 붙임을 저장하지 않음(잠깐 머물 때만 미리 저장)', async () => {
+    await page.click(`${P} [data-msg="new"]`);
+    await page.setInputFiles(`${P} #msgFile`, [{ name: '스치기.txt', mimeType: 'text/plain', buffer: Buffer.from(GONGMUN) }]);
+    await page.waitForSelector(`${P} [data-msg-drag="all"]`);
+    await page.waitForTimeout(500);
+    await page.evaluate(() => { window.__calls = []; });
+    await page.evaluate(s => { const h = document.querySelector(`${s} [data-msg-drag="all"]`); h.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); h.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); }, P);
+    await page.waitForTimeout(600);
+    assert(!(await page.evaluate(() => window.__calls.some(c => c[0] === 'note_save_attachments'))), '스치기만 해도 저장함');
+  }],
   ['I5 본문을 손으로 고친 쪽지는 최근 쪽지 [열기]로 그 본문 그대로', async () => {
     const b0 = await page.inputValue(`${P} #msgBody`);
     await page.fill(`${P} #msgBody`, b0 + '\n덧붙인 한 줄');

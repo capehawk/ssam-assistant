@@ -5,6 +5,7 @@ import { onEnter, go } from '../../core/shell.js';
 import * as ai from '../../core/ai.js';
 import { toast, copyText } from '../../core/ui.js';
 import { onFlush } from '../../core/store.js';
+import { getSchool } from '../../core/settings.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { aiRowHTML } from '../../core/ai-roles.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
@@ -24,7 +25,7 @@ let box = null, cur = null, curTab = '';
 
 const blank = () => ({ id: newReportId(), sources: [], memo: '', r: null, letter: { title: '', body: '' }, letterEdited: false, captions: [] });
 const c = () => (cur || (cur = getCurrent() || blank()));
-const year = () => new Date().getFullYear();
+const year = () => +getSchool().year || new Date().getFullYear(); // 학년도
 /* 최근 결과 보고에 넣기는 칸·메모를 고칠 때마다 하지 않고 잠깐 뒤에 한 번(다른 보고로 옮기거나 앱을 닫을 때는 바로) */
 let pushT = null, pushX = null;
 function flushPush() {
@@ -71,11 +72,17 @@ async function loadPhoto(file) {
 export async function addFiles(files) {
   const x = c(), fails = [];
   let cut = 0;
+  // 다시 연 결과 보고(사진은 저장하지 않음)에 사진을 처음 넣으면 옛 사진의 설명은 버림 — 새 사진에 붙지 않게
+  if (!R.photos.length && files.some(f => IMAGE.test(f.name || '') || /^image\//.test(f.type || ''))) { x.captions = []; if (x.r) x.r.photos = []; }
   R.adding++; render();
+  const here = () => c() === x; // 읽는 동안 다른 결과 보고로 옮기면 사진·쪽 그림은 버리고 글만 그 결과 보고에
   for (const f of files) {
     if (IMAGE.test(f.name || '') || /^image\//.test(f.type || '')) {
       if (R.photos.length >= MAX_PHOTOS) { fails.push(`${f.name}(사진은 ${MAX_PHOTOS}장까지)`); continue; }
-      try { R.photos.push(await loadPhoto(f)); x.captions.push(''); } catch (e) { fails.push(`${f.name}(이 사진 형식은 읽지 못했어요)`); }
+      try {
+        const p = await loadPhoto(f);
+        if (here()) { R.photos.push(p); x.captions.push(''); } else URL.revokeObjectURL(p.url);
+      } catch (e) { fails.push(`${f.name}(이 사진 형식은 읽지 못했어요)`); }
       continue;
     }
     let text = '';
@@ -84,7 +91,7 @@ export async function addFiles(files) {
       if (e && e.code === 'PDF_NO_TEXT' && SS().files && SS().files.toImages) {
         try {
           const imgs = await SS().files.toImages(f), src = { kind: guessSourceKind(f.name, '', year()), name: f.name, text: '' };
-          x.sources.push(src); R.scans.push({ src, imgs: imgs.slice(0, 3) });
+          if (here()) { x.sources.push(src); R.scans.push({ src, imgs: imgs.slice(0, 3) }); }
           continue;
         } catch (e2) {}
       }
@@ -95,7 +102,7 @@ export async function addFiles(files) {
     x.sources.push({ kind: guessSourceKind(f.name, cl.text, year()), name: f.name, text: cl.text });
   }
   R.adding--;
-  save(); render();
+  save(x); render();
   if (fails.length) toast(`넣지 못한 것: ${fails.join(', ')}`, 7000);
   else if (cut) toast(`명단·전화번호가 적힌 줄 ${cut}곳은 빼고 넣었어요(AI로 보내지 않아요)`, 5000);
 }

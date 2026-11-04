@@ -21,6 +21,10 @@ test('문서 종류 짐작: 작년 결과 보고서 · 공문 · 계획서', () 
   assert.equal(guessSourceKind('작년 보고.pdf', '', 2026), 'last');
   assert.equal(guessSourceKind('공문.hwp', '', 2026), 'official');
   assert.equal(guessSourceKind('x.hwpx', '○○교육청\n수신  수신자 참조\n(경유)\n제목  2026 과학의 날 운영 안내', 2026), 'official');
+  // 학년도로 작년 가리기: 올해 결과 보고 글은 작년 보고서가 아님, 공문 표시가 먼저
+  assert.equal(guessSourceKind('2026 과학의 날 결과 보고.hwpx', '2026 과학의 날 행사 운영 결과 보고서', 2026), 'plan');
+  assert.equal(guessSourceKind('결과보고 안내.hwp', '○○교육청\n수신  수신자 참조\n제목  2026 결과 보고 제출 안내', 2026), 'official');
+  assert.equal(guessSourceKind('결과 보고서.hwpx', '과학의 날 결과 보고서', 2026), 'last');
   assert.equal(guessSourceKind('2026 과학의 날 운영 계획.hwpx', '2026 과학의 날 행사 운영 계획\n1. 목적\n...결과 보고: 5월', 2026), 'plan');
 });
 
@@ -105,4 +109,7 @@ test('저장: 지금 결과 보고·최근 20개(사진 바이트는 저장 안 
   for (let i = 0; i < 22; i++) pushReport({ id: 'r' + i, title: 't' + i, r: normReport(RAW), letter: { title: '', body: '' }, captions: [] });
   assert.equal(listReports().length, 20);
   assert.equal(listReports()[0].id, 'r21');
+  // 최근 목록은 넣은 글을 3천 자까지만(저장소 5MB를 넘지 않게)
+  pushReport({ id: 'big', title: 'big', r: normReport(RAW), sources: [{ kind: 'plan', name: 'a', text: 'ㄱ'.repeat(20000) }], letter: { title: '', body: '' }, captions: [] });
+  assert.equal(listReports()[0].sources[0].text.length, 3000);
 });

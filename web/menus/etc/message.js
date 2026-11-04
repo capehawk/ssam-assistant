@@ -284,8 +284,15 @@ document.addEventListener('mousedown', e => {
   dragOut(h.dataset.msgDrag);
 });
 document.addEventListener('mouseup', () => { held = false; });
+// 스치기만 하면 저장하지 않음: 「⠿」 위에 0.3초 머물 때만 미리 저장(다운로드 폴더에 쓸데없는 폴더가 생기지 않게)
+let hoverT = null;
 document.addEventListener('mouseover', e => {
-  if (mine(e) && T() && e.target.closest('[data-msg-drag]')) saveAttachments({ quiet: true });
+  if (!(mine(e) && T() && e.target.closest('[data-msg-drag]')) || hoverT) return;
+  hoverT = setTimeout(() => { hoverT = null; saveAttachments({ quiet: true }); }, 300);
+});
+document.addEventListener('mouseout', e => {
+  const h = e.target.closest && e.target.closest('[data-msg-drag]');
+  if (h && hoverT && !(e.relatedTarget && h.contains(e.relatedTarget))) { clearTimeout(hoverT); hoverT = null; }
 });
 document.addEventListener('dragover', e => { const z = box && e.target.closest && e.target.closest('[data-msg-drop]'); if (z && box.contains(z)) { e.preventDefault(); z.classList.add('over'); } });
 document.addEventListener('dragleave', e => { const z = e.target.closest && e.target.closest('[data-msg-drop]'); if (z) z.classList.remove('over'); });
@@ -294,8 +301,8 @@ document.addEventListener('drop', e => {
   if (!z || !box.contains(z)) return;
   e.preventDefault(); z.classList.remove('over');
   const fs = [...((e.dataTransfer && e.dataTransfer.files) || [])];
-  // 방금 이 화면에서 끌어 낸 붙임을 도로 놓았으면 넣지 않음
-  if (M.dragOut && Date.now() - M.dragOut < 60000 && fs.length && saved && fs.every(f => saved.paths.some(p => p.split(/[\\/]/).pop() === f.name))) return;
+  // 방금 이 화면에서 끌어 낸 붙임을 도로 놓았으면 넣지 않음(한 번만 거름 — 다시 놓으면 넣음)
+  if (M.dragOut && Date.now() - M.dragOut < 60000 && fs.length && saved && fs.every(f => saved.paths.some(p => p.split(/[\\/]/).pop() === f.name))) { M.dragOut = 0; return; }
   if (fs.length) { addFiles(fs); render(); readAll(); }
   else { const t = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (t) { M.paste = t; const p = box.querySelector('#msgPaste'); if (p) p.value = t; } }
 });

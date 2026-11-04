@@ -32,22 +32,37 @@ function resend(force = false, x = c()) {
 }
 
 /* ---------- 양식 ---------- */
+const QUOTA = '양식을 저장하지 못했어요(저장 공간이 꽉 찼을 수 있어요).';
 async function loadForms() {
   F.store = await forms();
-  F.list = await F.store.list();
+  try { F.list = await F.store.list(); } catch (e) { F.list = []; }
+  // 이번에만 쓰는 양식(저장하지 못한 것)을 고른 채면 그대로 둠
+  if (F.form && F.form.temp) return;
   const id = getFormId();
   if (id && (!F.form || F.form.rec.id !== id)) await selectForm(id, { quiet: true });
 }
+let selTok = 0;
 async function selectForm(id, { quiet = false } = {}) {
+  const tok = ++selTok; // 양식을 빨리 바꿔 고르면 마지막 것만
   setFormId(id);
   F.form = null; F.mapOpen = false; F.mapSel = -1;
   if (!id) { render(); return; }
-  const rec = await F.store.get(id);
+  let rec = null;
+  try { rec = await F.store.get(id); } catch (e) { rec = null; }
+  if (tok !== selTok) return;
   if (!rec) { setFormId(''); if (!quiet) toast('양식을 찾지 못했어요. 기본 양식으로 써요.'); render(); return; }
   let parsed = null;
   if (rec.kind === 'hwpx') { try { parsed = await readForm(rec.bytes); } catch (e) { toast('양식 파일을 읽지 못했어요. 다시 넣어 주세요.', 5000); } }
+  if (tok !== selTok) return;
   F.form = { rec, parsed };
   render();
+}
+/* 저장하지 못한(크거나 저장소가 꽉 찬) 양식은 이번에만 */
+async function useTemp(rec, msg) {
+  ++selTok;
+  F.form = { rec, parsed: rec.kind === 'hwpx' ? await readForm(rec.bytes) : null, temp: true };
+  F.mapOpen = false; F.mapSel = -1;
+  toast(msg, 7000);
 }
 const rolesOk = r => rolesValid(r);
 /* 양식 넣기: .hwpx는 모양 그대로 채울 양식, .hwp는 글 짜임만 */
@@ -63,9 +78,9 @@ async function addForm(file) {
     } else {
       rec = { id: newFormId(), name: baseName(file.name), kind: 'plain', plain: plainFromText(await readText(file)), savedAt: Date.now() };
     }
-    if (rec.bytes && rec.bytes.length > MAX_FORM) { toast('양식 파일이 5MB보다 커서 저장하지 않고 이번에만 써요.', 6000); F.form = { rec, parsed: await readForm(rec.bytes) }; F.adding--; render(); return; }
-    await F.store.put(rec);
-    F.list = await F.store.list();
+    if (rec.bytes && rec.bytes.length > MAX_FORM) { await useTemp(rec, '양식 파일이 5MB보다 커서 저장하지 않고 이번에만 써요.'); F.adding--; render(); return; }
+    try { await F.store.put(rec); F.list = await F.store.list(); }
+    catch (e) { await useTemp(rec, `${QUOTA} 이번에만 써요.`); F.adding--; render(); return; }
     F.adding--;
     await selectForm(rec.id, { quiet: true });
     if (rec.kind === 'plain') toast('.hwp 양식은 글 짜임만 따라 만들어요(로고·표 모양은 빠져요). 한글에서 .hwpx로 저장해 넣으면 모양까지 살아요.', 8000);
@@ -150,11 +165,15 @@ async function download() {
   if (f && f.rec.kind === 'hwpx' && f.parsed) {
     const r = f.rec.roles;
     if (!rolesOk(r)) { F.mapOpen = true; render(); toast('양식의 제목·본문·날짜 자리를 먼저 정해 주세요.', 5000); return; }
-    const { bytes, warn } = await fillForm(f.parsed, r, letterOf(x));
-    const where = await saveFile(`${name}.hwpx`, bytes, 'application/hwp+zip');
+    let bytes, warn, where;
+    try {
+      ({ bytes, warn } = await fillForm(f.parsed, r, letterOf(x)));
+      where = await saveFile(`${name}.hwpx`, bytes, 'application/hwp+zip');
+    } catch (e) { toast(`한글 파일을 만들지 못했어요: ${String((e && e.message) || e || '').slice(0, 80)}`, 7000); return; }
     const m = window.__TAURI__ ? `다운로드 폴더에 저장했어요: ${String(where).split(/[\\/]/).pop()}` : '한글 파일을 내려받았어요';
     toast(m + (warn.includes('reply-in-box') ? ' · 양식의 회신서가 본문과 같은 표 안에 있어 회신서는 바꾸지 않았어요' : '')
-      + (warn.includes('overlap') ? ' · 겹치는 자리가 있어 일부를 바꾸지 못했어요. [양식 맞추기]를 확인해 주세요' : ''), 8000);
+      + (warn.includes('overlap') ? ' · 겹치는 자리가 있어 일부를 바꾸지 못했어요. [양식 맞추기]를 확인해 주세요' : '')
+      + (warn.includes('no-border') ? ' · 이 양식에는 표 테두리를 더할 수 없어 회신서를 넣지 못했어요' : ''), 8000);
     return;
   }
   const plain = f && f.rec.kind === 'plain' ? f.rec.plain : defaultPlain(getSchool().name);
@@ -276,10 +295,11 @@ document.addEventListener('click', async e => {
   else if (a === 'map') { F.mapOpen = !F.mapOpen; F.mapSel = -1; render(); }
   else if (a === 'mapClose') { F.mapOpen = false; render(); }
   else if (a === 'mapSave' && F.form) {
-    if (F.list.some(f => f.id === F.form.rec.id)) await F.store.put(F.form.rec);
+    if (F.list.some(f => f.id === F.form.rec.id)) { try { await F.store.put(F.form.rec); } catch (e) { toast(QUOTA, 6000); return; } }
     F.mapOpen = false; render(); toast(rolesOk(F.form.rec.roles) ? '양식 자리를 저장했어요.' : '제목·본문·날짜 자리가 아직 비어 있어요.', 4000);
   } else if (a === 'delForm' && F.form) {
-    await F.store.del(F.form.rec.id); F.list = await F.store.list(); await selectForm('');
+    try { await F.store.del(F.form.rec.id); F.list = await F.store.list(); } catch (e) { toast('양식을 지우지 못했어요. 다시 눌러 주세요.', 5000); return; }
+    await selectForm('');
     toast('양식을 지웠어요.');
   } else if (a === 'write') write();
   else if (a === 'new') { cur = blank(); clearCurrent(); render(); }

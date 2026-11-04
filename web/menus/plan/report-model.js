@@ -21,7 +21,8 @@ export const saveCurrent = d => { const n = normCur(d); return n ? set(CUR, n) :
 export const clearCurrent = () => set(CUR, null);
 
 /* 최근 결과 보고: [{ id, at, title, r, letter, captions, memo, sources }] 늦은 것 먼저, 20개까지 */
-const normItem = x => { const c = normCur(x); return c && c.r ? { ...c, at: Number(x.at) || 0, title: String(x.title || '').slice(0, 120) } : null; };
+// 최근 목록은 넣은 글을 3천 자까지만(20개 × 문서 12개가 저장소 5MB를 넘지 않게)
+const normItem = x => { const c = normCur(x); return c && c.r ? { ...c, sources: c.sources.map(s => ({ ...s, text: s.text.slice(0, 3000) })), at: Number(x.at) || 0, title: String(x.title || '').slice(0, 120) } : null; };
 export const listReports = () => { const v = get(LIST, []); return (Array.isArray(v) ? v : []).map(normItem).filter(Boolean).sort((a, b) => b.at - a.at); };
 let lastAt = 0;
 export function pushReport(x) {

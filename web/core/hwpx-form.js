@@ -237,7 +237,7 @@ function setText(xml, p, text) {
     const n = local(k);
     if (n === 'linesegarray') continue;
     if (n !== 'run') { out += xml.slice(k.s, k.e); continue; }
-    if (pureText(k)) { if (!placed) { out += textRun(attr(xml.slice(k.s, k.oe), 'charPrIDRef') || cp, text); placed = true; } continue; }
+    if (pureText(k)) { if (!placed) { out += textRun(cp, text); placed = true; } continue; } // 글이 든 조각의 글자 모양(앞의 빈 조각 말고)
     out += stripT(xml, k);
   }
   if (!placed) out += textRun(cp, text);
@@ -266,12 +266,16 @@ function protosOf(xml, paras) {
   if (!by[0]) by[0] = Object.values(by)[0] || { open: '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">', charPr: '0', lead: '' };
   return by;
 }
-function paraFrom(proto, text, id, { keepLead = true } = {}) {
-  const open = proto.open.replace(/\bid="[^"]*"/, `id="${id}"`).replace(/pageBreak="1"/, 'pageBreak="0"').replace(/columnBreak="1"/, 'columnBreak="0"');
+const noBreak = open => open.replace(/pageBreak="1"/, 'pageBreak="0"').replace(/columnBreak="1"/, 'columnBreak="0"');
+/* lead: 앞 공백(없으면 본의 앞 공백, keepLead가 거짓이면 없음) */
+function paraFrom(proto, text, id, { keepLead = true, lead = null } = {}) {
+  const open = noBreak(proto.open.replace(/\bid="[^"]*"/, `id="${id}"`));
   const body = String(text || '').trim();
-  return `${open}${textRun(proto.charPr, body ? (keepLead ? proto.lead : '') + body : '')}</hp:p>`;
+  return `${open}${textRun(proto.charPr, body ? (lead != null ? lead : keepLead ? proto.lead : '') + body : '')}</hp:p>`;
 }
 const pick = (protos, lv) => protos[FALL[lv].find(k => protos[k])];
+/* 본문 한 줄 → 문단: 양식에 그 단계가 있으면 그 모양·앞 공백, 없으면 가까운 단계 모양에 선생님이 쓴 앞 공백 */
+const bodyPara = (protos, t, id) => { const lv = levelOf(t); return paraFrom(pick(protos, lv), t, id, protos[lv] ? {} : { lead: (/^[ 　]*/.exec(String(t || '')) || [''])[0] }); };
 /* 지우는 문단에 걸린 조절자(머리말·꼬리말·쪽 번호 등)와 떠 있는 개체(글자처럼 취급 아님)는 글만 빼고 옮겨 남김 */
 const OBJ = ['pic', 'rect', 'ellipse', 'line', 'container', 'ole', 'arc', 'polygon', 'curve', 'connectLine', 'textart', 'tbl', 'equation'];
 function anchorsOf(xml, paras) {
@@ -304,7 +308,7 @@ function textWidth(secXml) {
   const w = pw ? +pw[1] - (mg ? +mg[1] + +mg[2] : 11338) : 48190;
   return w > 5000 ? w : 48190;
 }
-function replyXml(reply, { normal, center, head, bold, border, width, nid, year }) {
+function replyXml(reply, { normal, center, head, border, width, nid, year }) {
   const cellW = [Math.round(width * 0.3), width - Math.round(width * 0.3)], rowH = 1800;
   const fields = (reply.fields || []).map(f => String(f || '').trim()).filter(Boolean);
   const rows = [['학년 반 번호', '      학년        반        번'], ['학생 이름', ''], ...fields.map(f => { const i = f.indexOf(':'); return i > 0 ? [f.slice(0, i).trim(), f.slice(i + 1).trim()] : [f, '']; })];
@@ -316,8 +320,8 @@ function replyXml(reply, { normal, center, head, bold, border, width, nid, year 
     + `<hp:sz width="${width}" widthRelTo="ABSOLUTE" height="${rowH * rows.length}" heightRelTo="ABSOLUTE" protect="0"/>`
     + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
     + '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>'
-    + rows.map((r, ri) => `<hp:tr>${cell(r[0], 0, ri, bold)}${cell(r[1], 1, ri, normal)}</hp:tr>`).join('') + '</hp:tbl>';
-  const tblPara = normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`).replace(/pageBreak="1"/, 'pageBreak="0"') + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
+    + rows.map((r, ri) => `<hp:tr>${cell(r[0], 0, ri, normal)}${cell(r[1], 1, ri, normal)}</hp:tr>`).join('') + '</hp:tbl>';
+  const tblPara = noBreak(normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
   return [paraFrom(normal, '', nid()), paraFrom(center, '✂ - - - - - - - - - - - 자 르 는 선 - - - - - - - - - - -', nid(), { keepLead: false }),
     paraFrom(head, reply.title || '회신서', nid(), { keepLead: false }), tblPara,
     ...(String(reply.due || '').trim() ? [paraFrom(normal, reply.due, nid(), { keepLead: false })] : []),
@@ -351,7 +355,7 @@ export async function fillForm(form, roles, letter) {
     protos = protosOf(xml, range.filter(p => L.some(l => l.node === p)));
     const keep = range.filter(p => has(p, ['secPr'])).map(p => setText(xml, p, ''));
     const carry = anchorsOf(xml, range.filter(p => !has(p, ['secPr'])));
-    const paras = (x.body && x.body.length ? x.body : ['']).map(t => paraFrom(pick(protos, levelOf(t)), t, nid()));
+    const paras = (x.body && x.body.length ? x.body : ['']).map(t => bodyPara(protos, t, nid()));
     paras[0] = withRuns(paras[0], carry);
     add(b0.sec, ps[i0].s, ps[i1].e, keep.join('') + paras.join(''));
   }
@@ -380,9 +384,9 @@ export async function fillForm(form, roles, letter) {
         const pr = protos || protosOf(secXml[at.sec], []);
         const center = dl ? { open: openTag(secXml[dl.sec], dl.node), charPr: charPrOf(secXml[dl.sec], dl.node), lead: '' } : pr[0];
         const head = tl ? { open: openTag(secXml[tl.sec], tl.node), charPr: charPrOf(secXml[tl.sec], tl.node), lead: '' } : pr[0];
-        text = replyXml(x.reply, { normal: pr[0], center, head, bold: pr[1] || pr[0], border: added.id, width: textWidth(secXml[at.sec]), nid, year: String(x.date || '').slice(0, 4) || String(new Date().getFullYear()) });
-      }
-    }
+        text = replyXml(x.reply, { normal: pr[0], center, head, border: added.id, width: textWidth(secXml[at.sec]), nid, year: String(x.date || '').slice(0, 4) || String(new Date().getFullYear()) });
+      } else warn.push('no-border');
+    } else if (x.reply) warn.push('no-border');
     text = (at.keep || '') + text;
     if (text || at.s !== at.e) add(at.sec, at.s, at.e, text);
   }
@@ -401,6 +405,7 @@ export async function fillForm(form, roles, letter) {
     if (si >= 0) return { name: e.name, data: outXml[si] };
     if (header && headerName && e.name === headerName.name) return { name: e.name, data: header };
     if (/^Preview\/PrvText\.txt$/i.test(e.name)) return { name: e.name, data: prv };
+    if (/content\.hpf$/i.test(e.name)) return { name: e.name, data: new TextDecoder().decode(e.data).replace(/<opf:title\s*\/>|<opf:title>[\s\S]*?<\/opf:title>/, `<opf:title>${esc(x.title || '')}</opf:title>`) };
     return { name: e.name, data: e.data };
   });
   return { bytes: zipStore(files), warn };

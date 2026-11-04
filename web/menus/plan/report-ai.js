@@ -12,12 +12,17 @@ const EMAIL = /[\w.+-]+@[\w-]+\.[\w.]+/g;
 const clean = (v, n) => String(v == null ? '' : v).replace(PHONE, '').replace(EMAIL, '').replace(/\(\s*문의\s*\)|\(\s*\)/g, '').replace(/[ \t]+/g, ' ').trim().slice(0, n);
 const KO = '가나다라마바사아자차카타파하';
 
-/* 넣은 문서의 종류 짐작: 이름·첫 줄에 「결과」·「보고」 → 작년 보고서, 이름에 「공문」이나 위쪽에 수신·발신·문서번호 꼴 → 관련 공문, 나머지 계획서 */
+/* 넣은 문서의 종류 짐작: 위쪽에 수신·발신·문서번호 꼴이나 이름에 「공문」 → 관련 공문(먼저 봄),
+   이름에 「작년」, 또는 이름·첫 줄에 「결과 보고」인데 적힌 연도가 학년도(year)보다 앞이거나 없으면 → 작년 보고서, 나머지 계획서 */
 export function guessSourceKind(name, text, year) {
   const n = String(name || ''), head = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
   const first = head[0] || '', top = head.slice(0, 8).join('\n');
-  if (/작년|전년|지난\s*해/.test(n) || /결과\s*보고|보고서/.test(n) || /결과\s*보고/.test(first)) return 'last';
   if (/공문/.test(n) || /^\s*수\s*신(\s|:|$)/m.test(top) || /(^|\n)\s*(시행|발신|접수)\s/.test(top) || /[가-힣A-Za-z]+-\d{2,6}\s*\(\s*\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}/.test(top)) return 'official';
+  if (/작년|전년|지난\s*해/.test(n)) return 'last';
+  if (/결과\s*보고|보고서/.test(n) || /결과\s*보고/.test(first)) {
+    const ys = [...`${n} ${first}`.matchAll(/(20\d{2})/g)].map(m => +m[1]);
+    return !year || !ys.length || Math.max(...ys) < +year ? 'last' : 'plan';
+  }
   return 'plan';
 }
 

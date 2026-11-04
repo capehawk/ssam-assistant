@@ -58,6 +58,19 @@ await run('letter-fixes', [
     assert(await page.locator(`${P} #lfRecent [data-lf-open]`).count() === 2, '쓴 글이 최근에 없음');
     delay = 0;
   }],
+  ['M8·M9 양식을 저장하지 못하면(저장 공간 꽉 참) 알리고 이번에만 쓰고, 다른 탭에 갔다 와도 그 양식 그대로', async () => {
+    await page.evaluate(() => { window.__put = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function () { throw new DOMException('full', 'QuotaExceededError'); }; });
+    await page.setInputFiles(`${P} #lfFormFile`, { name: '꽉찬양식.hwpx', mimeType: 'application/octet-stream', buffer: FORM });
+    await page.waitForFunction(() => (document.querySelector('#toast') || {}).textContent.includes('저장하지 못했어요'), null, { timeout: 8000 });
+    assert((await page.textContent('#toast')).includes('이번에만'), await page.textContent('#toast'));
+    const sel = () => page.evaluate(s => { const o = document.querySelector(`${s} #lfForm`).selectedOptions[0]; return o ? o.textContent : ''; }, P);
+    assert((await sel()).includes('꽉찬양식') && (await sel()).includes('이번에만'), await sel());
+    await page.click('#menuTabs [data-tab="message"]');
+    await page.click('#menuTabs [data-tab="letter"]');
+    await page.waitForTimeout(500);
+    assert((await sel()).includes('꽉찬양식'), '다시 열면 양식이 바뀜: ' + await sel());
+    await page.evaluate(() => { IDBObjectStore.prototype.put = window.__put; });
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();
