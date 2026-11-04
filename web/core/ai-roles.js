@@ -2,12 +2,12 @@
    저장은 회사·모델 이름만(키는 설정 › AI에 그대로). 키가 없는 회사·Claude 계정이면 기본 AI로 */
 import * as store from './store.js';
 
-export const TASKS = [['grade', '채점'], ['writing', '평어·행특·창체'], ['plan', '계획 초안'], ['notes', '피드백·알림'], ['purchase', '품의'], ['message', '쪽지'], ['report', '결과 보고'], ['letter', '가정통신문'], ['gongmun', '공문 처리']];
+export const TASKS = [['grade', '채점'], ['writing', '평어·행특·창체'], ['plan', '계획 초안'], ['notes', '피드백·알림'], ['purchase', '품의'], ['message', '쪽지'], ['report', '결과 보고'], ['letter', '가정통신문'], ['gongmun', '공문 처리'], ['reply', '회신서 읽기']];
 const KEY = 'ai-roles';
 const ENGINES = ['claude', 'gemini', 'openai', 'upstage'];
 const TASK_IDS = TASKS.map(t => t[0]);
 /* 검토 AI가 없는 업무(쪽지는 칸만 뽑고 글은 앱이 맞춤 — 스펙 2026-11-02 4장) */
-const NO_REVIEW = ['message', 'report', 'letter', 'gongmun'];
+const NO_REVIEW = ['message', 'report', 'letter', 'gongmun', 'reply'];
 export const hasReview = task => TASK_IDS.includes(task) && !NO_REVIEW.includes(task);
 
 const normAI = a => (a && ENGINES.includes(a.engine) && typeof a.model === 'string' && a.model.trim() ? { engine: a.engine, model: a.model.trim() } : null);

@@ -15,6 +15,8 @@ import { forms, newFormId, MAX_FORM } from '../../core/form-store.js';
 import { cleanSheet } from '../evaluate/activity/activity-read.js';
 import { letterQueueItems } from '../plan/report-ai.js';
 import { plainFromText, defaultPlain, plainLetterDoc, letterPrompt, normLetter, composeBody, composeSend, formSample, cleanSample } from './letter-ai.js';
+import { rosterAllowed } from '../../core/student-no.js';
+import { replyOptions, replyPrompt, normReply, flagRows, tally, missingNos, collectTSV, collectDoc } from './reply-collect.js';
 import { getCurrent, saveCurrent, clearCurrent, listLetters, pushLetter, newLetterId, getFormId, setFormId } from './letter-model.js';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -24,7 +26,10 @@ const ROLE_NAMES = [['title', '제목'], ['bodyStart', '본문 시작'], ['bodyE
 /* 화면에만: list(양식 목록), form(고른 양식 { rec, parsed }), busy, adding, mapOpen, mapSel */
 export const F = { list: [], form: null, busy: false, adding: 0, mapOpen: false, mapSel: -1, store: null };
 let box = null, cur = null;
-const blank = () => ({ id: newLetterId(), sources: [], memo: '', related: [], target: '', out: null, send: { title: '', body: '' }, sendEdited: false });
+const blank = () => ({ id: newLetterId(), sources: [], memo: '', related: [], target: '', out: null, send: { title: '', body: '' }, sendEdited: false, collect: { mask: [], rows: [] } });
+const SS = () => window.SSAM || {};
+/* 회신서 스캔(화면에만): pages, busy, tok(읽는 중 다른 가정통신문·새 스캔이면 버림) */
+const RC = { pages: [], busy: false, tok: 0, adding: false };
 const c = () => (cur || (cur = getCurrent() || blank()));
 function save(x = c(), { push = false } = {}) { if (x === c()) saveCurrent(x); if (push && x.out) pushLetter(x); }
 function resend(force = false, x = c()) {
@@ -216,6 +221,72 @@ function outHTML(x) {
       <label class="yp-f"><span class="lab">제출 안내</span><input class="field" data-lr="due" value="${esc(o.reply.due)}" autocomplete="off"></label></div>` : ''}
     <div class="row">${hwpx ? '<button class="btn primary" type="button" data-lf="download">한글로 내려받기</button>' : exportButton('data-lf="download"', { cls: 'primary' })}</div>`;
 }
+/* ---------- 회신서 모으기 (스펙 2026-11-04 6장) ---------- */
+const rcOpts = x => (x.out && x.out.replyOn ? replyOptions(x.out.reply.fields) : []);
+function collectHTML(x) {
+  const opts = rcOpts(x);
+  if (!opts.length) return '';
+  const col = x.collect, rows = flagRows(col.rows), allowed = rosterAllowed(), t = tally(col.rows, opts), miss = missingNos(col.rows, allowed);
+  const order = rows.map((r, i) => ({ r, i })).sort((a, b) => (a.r.no == null) - (b.r.no == null) || (a.r.no || 0) - (b.r.no || 0));
+  return `<section class="pc-card" id="lfCollect"><h3>회신서 모으기</h3>
+    <p class="muted" style="margin:0">걷은 회신서를 스캔(PDF·사진)해 넣고 이름 칸을 한 번 가리면, AI가 가린 그림에서 번호와 ☑만 읽어요(이름은 읽지도 저장하지도 않아요).</p>
+    <p style="margin:0">읽을 칸: ${opts.map(o => `<b>${esc(o.name)}</b>(${o.options.map(esc).join(' / ')})`).join(', ')}</p>
+    <div class="row"><button class="btn" type="button" data-lf="rcPick">${RC.adding ? '<span class="spin"></span>읽는 중…' : '스캔 넣기'}</button><input type="file" id="lfRcFile" multiple hidden accept=".pdf,.png,.jpg,.jpeg,.webp">
+      <span class="muted">${RC.pages.length}장</span>
+      <button class="btn text" type="button" data-lf="rcMask"${RC.pages.length ? '' : ' disabled'}>이름 칸 가리기${col.mask.length ? ' (가림)' : ''}</button>
+      <button class="btn primary" type="button" data-lf="rcRead"${RC.pages.length && !RC.busy ? '' : ' disabled'}>${RC.busy ? '<span class="spin"></span>읽는 중…' : '읽기'}</button></div>
+    ${rows.length ? `<div class="yp-tbl-wrap"><table class="yp-tbl lf-rc"><thead><tr><th>번호</th>${opts.map(o => `<th>${esc(o.name)}</th>`).join('')}<th></th></tr></thead><tbody>
+      ${order.map(({ r, i }) => `<tr data-rc-row="${i}" class="${r.warn ? 'warn' : ''}"><td><input class="field" type="number" min="1" max="99" data-rc-no="${i}" value="${r.no == null ? '' : r.no}" aria-label="번호" title="${r.warn === 'dup' ? '같은 번호가 또 있어요' : r.warn === 'none' ? '번호를 못 읽었어요' : ''}"></td>
+        ${opts.map(o => `<td><select class="field${r.unsure.includes(o.name) ? ' unsure' : ''}" data-rc-a="${i}" data-rc-f="${esc(o.name)}" aria-label="${esc(o.name)}"><option value="">(표시 없음)</option>${o.options.map(v => `<option${r.answers[o.name] === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select></td>`).join('')}
+        <td><button class="icon-btn tiny" type="button" data-rc-del="${i}" aria-label="이 줄 빼기">✕</button></td></tr>`).join('')}</tbody></table></div>
+      <p style="margin:0">${t.map(z => `<b>${esc(z.name)}</b> ${z.counts.map(([o, n]) => `${esc(o)} ${n}명`).join(' · ')}${z.blank ? ` · 표시 없음 ${z.blank}명` : ''}`).join('<br>')}</p>
+      <p style="margin:0">${miss.length ? `미제출: ${miss.join(', ')}번` : '모두 냈어요'} <span class="muted">(낸 회신서 ${rows.length}장${allowed ? '' : ' · 설정 › 학급 명단에 학생 수를 넣으면 미제출이 정확해요'})</span></p>
+      <div class="row"><button class="btn" type="button" data-lf="rcCopy">표 복사</button>${exportButton('data-lf="rcExport"')}<button class="btn text" type="button" data-lf="rcClear">표 비우기</button></div>` : ''}
+  </section>`;
+}
+function rcReset() { if (SS().files && SS().files.freePages) SS().files.freePages(RC.pages); RC.pages = []; RC.tok++; RC.busy = false; }
+async function rcAdd(files) {
+  if (!SS().files || !SS().files.readPages) { toast('스캔을 읽는 도구를 아직 불러오지 못했어요. 잠시 뒤 다시 넣어 주세요.'); return; }
+  RC.adding = true; render();
+  try {
+    const r = await SS().files.readPages(files), pages = Array.isArray(r) ? r : (r && r.pages) || [];
+    if (SS().files.freePages) SS().files.freePages(RC.pages);
+    RC.pages = pages; RC.tok++; RC.busy = false;
+    if (r && r.skipped && r.skipped.length) toast(`읽지 못한 파일: ${r.skipped.map(s => s.name || s).join(', ')}`, 6000);
+  } catch (e) { toast(e && e.code ? fileMessage(e.code) : '스캔을 읽지 못했어요. PDF·사진을 넣어 주세요.', 6000); }
+  RC.adding = false; render();
+}
+function rcMask(then) {
+  const x = c();
+  if (!RC.pages.length || !SS().openMaskEditor) return;
+  SS().openMaskEditor({ shots: RC.pages.slice(0, 6).map((p, i) => ({ url: p.url, label: `${i + 1}장` })), mask: x.collect.mask, all: true, what: '회신서',
+    save: mask => { const y = c(); if (y !== x) return; y.collect.mask = mask || []; save(y); render(); if (then && y.collect.mask.length) then(); } });
+}
+async function rcRead() {
+  const x = c(), opts = rcOpts(x);
+  if (!RC.pages.length || !opts.length || RC.busy) return;
+  if (!x.collect.mask.length) { toast('먼저 학생 이름 칸을 가려 주세요(가린 그림만 AI로 보내요).', 5000); rcMask(rcRead); return; }
+  if (!ai.ready()) { toast('설정 › AI에서 키를 넣어 주세요', 5000); return; }
+  const tok = ++RC.tok, pages = RC.pages, mask = x.collect.mask, shared = replyPrompt(opts), out = new Array(pages.length);
+  RC.busy = true; render();
+  let next = 0, fails = 0;
+  const one = async i => {
+    try {
+      const img = await SS().files.pageImage(pages[i], mask);
+      const v = await ai.generateJSON(`${i + 1}번째 회신서 그림입니다. 위 꼴의 JSON 하나로만 답하세요.`, { shared: { text: shared }, images: [img], task: 'reply', valid: o => !!o && typeof o === 'object' && !Array.isArray(o) });
+      out[i] = normReply(v, opts);
+    } catch (e) { fails++; out[i] = normReply(null, opts); if (e && (e.code === 'auth' || e.code === 'quota')) throw e; }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(3, pages.length) }, async () => { while (next < pages.length && tok === RC.tok) await one(next++); }));
+  } catch (e) { toast(ai.errorMessage(e && e.code, e), 6000); }
+  if (tok !== RC.tok) return; // 그새 스캔을 바꾸거나 다른 가정통신문을 열었으면 버림
+  RC.busy = false;
+  if (c() !== x) { render(); return; }
+  x.collect.rows = out.filter(Boolean).map(r => ({ no: r.no, answers: r.answers, unsure: r.unsure }));
+  save(x, { push: true }); render();
+  toast(fails ? `${fails}장은 읽지 못했어요. 노란 칸을 확인해 주세요.` : '회신서를 읽었어요. 노란 칸은 꼭 확인해 주세요.', 5000);
+}
 function sideHTML(x) {
   if (!x.out) return '';
   return `<section class="pc-card"><h3>알림 앱용 짧은 글</h3>
@@ -235,8 +306,14 @@ const recentHTML = () => {
   return l.length ? `<ul class="pc-lib-list" id="lfRecent">${l.map(r => `<li class="pc-lib-row"><div class="grow"><b>${esc(r.out.title || '가정통신문')}</b><span class="muted">${new Date(r.at).toLocaleDateString('ko-KR')}</span></div>
     <button class="btn text" type="button" data-lf-open="${esc(r.id)}">열기</button></li>`).join('')}</ul>` : '<p class="muted" id="lfRecent" style="margin:0">쓴 가정통신문이 최근 20개까지 남아요.</p>';
 };
+// 다시 그리는 중에 지워지는 칸의 blur→change가 또 그리기를 부르면 건너뜀(이미 같은 값을 그리는 중)
+let drawing = false;
 export function render() {
-  if (!box || box.hidden) return;
+  if (!box || box.hidden || drawing) return;
+  drawing = true;
+  try { draw(); } finally { drawing = false; }
+}
+function draw() {
   const x = c();
   box.innerHTML = `<div class="m-page lf-page">
     <div class="m-head"><div><h2>가정통신문</h2><p class="muted">학교 양식을 넣어 두고, 공문·계획과 넣을 내용을 주면 학교 양식에 맞춘 가정통신문을 써요.</p></div>
@@ -254,6 +331,7 @@ export function render() {
       <section class="pc-card"><h3>가정통신문</h3>${outHTML(x)}</section>
     </div>
     <div class="msg-grid">${sideHTML(x)}</div>
+    ${collectHTML(x)}
     <section class="pc-card"><h3>최근 가정통신문</h3>${recentHTML()}</section></div>`;
 }
 function refreshSend() {
@@ -307,10 +385,12 @@ document.addEventListener('click', async e => {
     }
     F.form.rec.roles = r; render(); return;
   }
+  const rd = e.target.closest('[data-rc-del]');
+  if (rd) { x.collect.rows.splice(+rd.dataset.rcDel, 1); save(x, { push: true }); render(); return; }
   const del = e.target.closest('[data-lf-del]');
   if (del) { x.sources.splice(+del.dataset.lfDel, 1); save(); render(); return; }
   const op = e.target.closest('[data-lf-open]');
-  if (op) { const r = listLetters().find(y => y.id === op.dataset.lfOpen); if (r) { cur = { ...r }; delete cur.at; saveCurrent(cur); render(); } return; }
+  if (op) { const r = listLetters().find(y => y.id === op.dataset.lfOpen); if (r) { cur = { ...r }; delete cur.at; saveCurrent(cur); rcReset(); render(); } return; }
   const b = e.target.closest('[data-lf]');
   if (!b) return;
   const a = b.dataset.lf;
@@ -326,7 +406,7 @@ document.addEventListener('click', async e => {
     await selectForm('');
     toast('양식을 지웠어요.');
   } else if (a === 'write') write();
-  else if (a === 'new') { cur = blank(); clearCurrent(); render(); }
+  else if (a === 'new') { cur = blank(); clearCurrent(); rcReset(); render(); }
   else if (a === 'download') download();
   else if (a === 'resync') { resend(true); save(); refreshSend(); }
   else if (a === 'copyShort') copyText(x.out ? x.out.short : '').then(ok => toast(ok ? '복사했어요. 알림 앱에 붙여 넣으세요' : '복사하지 못했어요'));
@@ -334,6 +414,12 @@ document.addEventListener('click', async e => {
     const t = a === 'copySendTitle' ? x.send.title : a === 'copySendBody' ? x.send.body : `${x.send.title}\n\n${x.send.body}`;
     copyText(t).then(ok => toast(ok ? '복사했어요. 에듀파인 기안에 붙여 넣으세요' : '복사하지 못했어요'));
   } else if (a === 'queue') openQueue({ title: x.send.title, items: letterQueueItems(x.send) });
+  else if (a === 'rcPick') box.querySelector('#lfRcFile').click();
+  else if (a === 'rcMask') rcMask();
+  else if (a === 'rcRead') rcRead();
+  else if (a === 'rcCopy') copyText(collectTSV(x.collect.rows, rcOpts(x))).then(ok => toast(ok ? '표를 복사했어요. 엑셀·한글 표에 붙여 넣으세요' : '복사하지 못했어요'));
+  else if (a === 'rcExport') exportDoc(collectDoc(x.collect.rows, rcOpts(x), { title: x.out.reply.title || x.out.title, allowed: rosterAllowed() }), `${x.out.reply.title || '회신서'} 회신 결과`).then(m => toast(m, 6000));
+  else if (a === 'rcClear') { if (confirm('읽은 회신서 표를 비울까요?')) { x.collect.rows = []; save(x, { push: true }); render(); } }
 });
 document.addEventListener('change', e => {
   if (!mine(e)) return;
@@ -341,7 +427,10 @@ document.addEventListener('change', e => {
   if (el.id === 'lfFormFile') { const f = el.files[0]; el.value = ''; if (f) addForm(f); return; }
   if (el.id === 'lfFile') { const fs = [...el.files]; el.value = ''; if (fs.length) addSources(fs); return; }
   if (el.id === 'lfForm') { selectForm(el.value); return; }
-  if (el.id === 'lfReplyOn' && x.out) { x.out.replyOn = el.checked; save(x, { push: true }); render(); }
+  if (el.id === 'lfReplyOn' && x.out) { x.out.replyOn = el.checked; save(x, { push: true }); render(); return; }
+  if (el.id === 'lfRcFile') { const fs = [...el.files]; el.value = ''; if (fs.length) rcAdd(fs); return; }
+  if (el.dataset.rcA != null) { const r = x.collect.rows[+el.dataset.rcA], f = el.dataset.rcF; if (r) { r.answers[f] = el.value; r.unsure = r.unsure.filter(u => u !== f); save(x, { push: true }); render(); } return; }
+  if (el.dataset.rcNo != null) { const r = x.collect.rows[+el.dataset.rcNo], n = +el.value; if (r) { r.no = Number.isInteger(n) && n >= 1 && n <= 99 ? n : null; save(x, { push: true }); render(); } return; }
 });
 document.addEventListener('input', e => {
   if (!mine(e)) return;

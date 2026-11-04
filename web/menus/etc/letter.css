@@ -15,3 +15,4 @@
 .lf-pick { flex-wrap: wrap; gap: 4px; padding: 4px 0 6px 4.5em; }
 .lf-reply { display: flex; flex-direction: column; gap: 8px; padding-left: 12px; border-left: 3px solid var(--line, #e4e6eb); }
 .lf-tbl{margin:.25rem 0 .5rem;width:100%}.lf-tbl th,.lf-tbl td{padding:.25rem .5rem;text-align:left}
+.lf-rc input[type=number]{width:4.5rem}.lf-rc tr.warn td,.lf-rc select.unsure{background:#fff6cc}
