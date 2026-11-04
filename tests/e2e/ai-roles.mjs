@@ -137,12 +137,12 @@ await run('ai-roles', [
     assert((await page.textContent('#grSetup [data-ai-row="writing"] .ai-row-t')).trim() === 'AI: Claude Sonnet 5.5 · 검토 끔', '평어 줄');
     assert(!fb || fb.includes('검토 끔'), fb);
   }],
-  ['설정 › AI: 기본 검토 AI 고르기·업무별 한눈에 8줄(품의·쪽지·결과 보고·가정통신문 포함)·[기본으로 되돌리기]', async () => {
+  ['설정 › AI: 기본 검토 AI 고르기·업무별 한눈에 10줄(품의·쪽지·결과 보고·가정통신문·공문 처리·회신서 읽기 포함)·[기본으로 되돌리기]', async () => {
     await page.click('nav.app-side [data-menu-go="settings"]'); await page.click('#menuTabs [data-tab="ai"]');
     await page.waitForSelector('#setReviewAi');
     await page.selectOption('#setReviewAi', 'claude|claude-haiku-5-5');
     await page.waitForFunction(() => (JSON.parse(localStorage.getItem('ssam:ai-roles')).review || {}).model === 'claude-haiku-5-5');
-    assert(await page.locator('#setRoleList li').count() === 8, '8줄');
+    assert(await page.locator('#setRoleList li').count() === 10, '10줄');
     assert((await page.textContent('#setRoleList')).includes('품의'), '품의 줄');
     assert((await page.textContent('#setRoleList')).includes('채점') && (await page.textContent('#setRoleList')).includes('검토: Claude Opus 5.5'), await page.textContent('#setRoleList'));
     await page.click('[data-set="resetRoles"]');
