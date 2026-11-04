@@ -3,6 +3,8 @@ import { open, run, assert, mockClaude } from './helpers.mjs';
 
 const t = await open();
 const { page, ctx, url, errors } = t;
+// 품의 칸을 다루는 시험: [자세히 고치기]를 펼친 채로 (처음 화면은 purchase-oneshot.mjs)
+await page.addInitScript(() => { if (!localStorage.getItem('ssam:purchase:view')) localStorage.setItem('ssam:purchase:view', JSON.stringify('full')); });
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: url.replace(/\/$/, '') });
 await page.addInitScript(() => {
   if (!localStorage.getItem('ssam:engine')) localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: 'sk-test' }, remember: true }));
@@ -36,11 +38,12 @@ await run('purchase', [
     assert(bad === 0, '주민번호·계좌 칸이 있음');
     await page.click(`${P} [data-pctype="goods"]`);
   }],
-  ['목적·일시가 비면 AI를 부르지 않고 빨간 칸', async () => {
+  ['품목이 비면 AI를 부르지 않고 빨간 칸 (목적은 AI가 짐작, 일시는 필수 아님)', async () => {
     await fill('#pcTarget', '5학년 4개 반');
     await page.click(`${P} [data-pc="draft"]`);
     assert(prompts.length === 0, 'AI를 부름');
-    assert(await page.locator(`${P} #pcPurpose.bad`).count() === 1 && await page.locator(`${P} #pcDate.bad`).count() === 1, '빨간 칸 아님');
+    assert(await page.locator(`${P} [data-item="0"][data-f="name"].bad`).count() === 1, '품목 빨간 칸 아님');
+    assert(await page.locator(`${P} #pcPurpose.bad`).count() === 0 && await page.locator(`${P} #pcDate.bad`).count() === 0, '목적·일시가 빨간 칸');
   }],
   ['칸을 채우면 합계가 보이고 초안(제목·사유·산출 내역)이 나옴', async () => {
     await fill('#pcProject', '5학년 과학 실험 재료 구입');
@@ -68,7 +71,7 @@ await run('purchase', [
     await page.click(`${P} [data-copy="calc"]`);
     await page.waitForTimeout(150);
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    assert(clip === '품명\t규격\t수량\t단가\t금액\n비커\t500ml\t2\t3000\t6000\n시험관\t\t10\t500\t5000\n합계\t\t\t\t11000', '클립보드: ' + JSON.stringify(clip));
+    assert(clip === '품명\t규격\t단위\t수량\t단가\t금액\n비커\t500ml\t개\t2\t3000\t6000\n시험관\t\t개\t10\t500\t5000\n합계\t\t\t\t\t11000', '클립보드: ' + JSON.stringify(clip));
   }],
   ['메모에 주민번호가 있으면 막고 알려 줌', async () => {
     const before = prompts.length;
@@ -89,8 +92,8 @@ await run('purchase', [
     assert(await page.inputValue(`${P} #pcPurpose`) === '용해와 용액 모둠 실험', '입력이 사라짐');
     answer = 'ok';
   }],
-  ['[한글 파일로 내려받기]는 .hwpx', async () => {
-    const [dl] = await Promise.all([page.waitForEvent('download'), page.click(`${P} [data-pc="hwpx"]`)]);
+  ['[한글로 내려받기](처음 형식)는 .hwpx', async () => {
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click(`${P} [data-pc="export"]`)]);
     assert(dl.suggestedFilename().endsWith('.hwpx'), '이름: ' + dl.suggestedFilename());
   }],
   ['새로고침해도 쓰던 입력과 초안이 남음', async () => {

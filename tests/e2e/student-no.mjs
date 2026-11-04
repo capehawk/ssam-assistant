@@ -12,7 +12,7 @@ const sent = [];
 let reads = [3, 1, 2], noDelay = 0;
 await page.route('https://api.anthropic.com/**', async route => {
   const c = JSON.parse(route.request().postData()).messages[0].content;
-  const prompt = typeof c === 'string' ? c : c.find(x => x.type === 'text').text;
+  const prompt = typeof c === 'string' ? c : c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   sent.push({ prompt, images: typeof c === 'string' ? [] : c.filter(x => x.type === 'image').map(x => x.source.data) });
   let out = '{}';
   if (prompt.startsWith('[번호 읽기]') && noDelay) await new Promise(r => setTimeout(r, noDelay));
@@ -116,6 +116,21 @@ await run('student-no', [
     assert(await page.locator('#sheetRoot li.warn').count() === 3, String(await page.locator('#sheetRoot li.warn').count()));
     assert(await page.isDisabled('#sheetRoot #noOk'), '노란 줄이 있는데 채점 가능');
     const ins = page.locator('#sheetRoot [data-noi]');
+    // 못 읽은 번호 칸을 누르면 그 학생의 번호 칸(크게)과 시험지 첫 쪽(번호 칸 표시)이 그 줄 아래에 펼쳐짐
+    await ins.nth(2).click();
+    await page.waitForSelector('#sheetRoot [data-noview="2"]:not([hidden]) .no-view-page img');
+    const v = await page.evaluate(async () => {
+      const box = document.querySelector('#sheetRoot [data-noview="2"]'), im = box.querySelector('.no-view-page img'); await im.decode();
+      const r = box.getBoundingClientRect(), sh = document.querySelector('#sheetRoot .sheet');
+      return { w: im.naturalWidth, crop: !!box.querySelector('.no-view-crop img[src^="data:image"]'), left: parseFloat(box.querySelector('.no-view-box').style.left),
+        others: [...document.querySelectorAll('#sheetRoot [data-noview]')].filter(x => !x.hidden).length, h: r.height, wide: sh.scrollWidth <= sh.clientWidth + 1 };
+    });
+    assert(v.w === 320 && v.crop && v.left > 65 && v.left < 75 && v.others === 1 && v.h > 100 && v.wide, JSON.stringify(v));
+    assert(await page.evaluate(() => document.activeElement && document.activeElement.dataset.noi === '2'), '번호 칸에 바로 쓸 수 없음');
+    await page.click('#sheetRoot [data-nozoom="2"]');
+    assert(await page.locator('#sheetRoot [data-noview="2"]').isHidden(), '다시 누르면 접힘');
+    await page.click('#sheetRoot [data-nozoom="0"]');
+    await page.waitForSelector('#sheetRoot [data-noview="0"]:not([hidden]) .no-view-page img');
     await ins.nth(1).fill('2'); await ins.nth(2).fill('3');
     assert(!(await page.isDisabled('#sheetRoot #noOk')), '고쳤는데 막힘');
     assert(grades().length === n0, '확인 전에 채점함');
@@ -193,6 +208,10 @@ await run('student-no', [
     assert(sent.filter(s => s.prompt.startsWith('[번호 읽기]')).length === n0 + 1, '번호 읽기 요청');
     const vals = await page.$$eval('#sheetRoot [data-noi]', els => els.map(e => e.value));
     assert(vals.join(',') === '2,3,1', vals.join(','));
+    await page.click('#sheetRoot [data-nozoom="1"]');
+    await page.waitForSelector('#sheetRoot [data-noview="1"]:not([hidden]) .no-view-page img');
+    const pw = await page.evaluate(async () => { const im = document.querySelector('#sheetRoot [data-noview="1"] .no-view-page img'); await im.decode(); return im.naturalWidth; });
+    assert(pw === 310, '평가지 채점: 2번째 스캔이 아님 ' + pw);
     assert(!sent.some(s => s.prompt.includes('수행평가를 채점하는')), '확인 전에 채점함');
     await page.click('#sheetRoot #noOk');
     await until(() => sent.filter(s => s.prompt.includes('수행평가를 채점하는')).length >= 3, 15000);

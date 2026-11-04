@@ -845,21 +845,46 @@ try {
     if (/fable|mythos/i.test(E.models.claude || '')) { E.models.claude = 'claude-opus-5-5'; saveEngine(); }
   }
 } catch (e) {}
+/* 시험용 업스테이지(Windows 앱, 빌드 때 넣은 키, 2027. 3. 31.까지): 웹 쪽에는 키가 없고 표시(TEST_MARK)만.
+   앱(ai_proxy)이 표시를 진짜 키로 바꿔 보냄. 내 키가 있으면 내 키 */
+const TEST_MARK = 'ssam-test-upstage';
+/* 시험용 업스테이지 중계(Vercel): 키는 Vercel 환경 변수에만 있고, 기한·하루 횟수는 중계가 지킴. 웹판·Windows 앱 모두 바로 부름 */
+const RELAY = 'https://ssam-relay.vercel.app';
+/* 중계가 낸 오류(한도·기한·준비 안 됨)는 그 까닭을 그대로(quota로 멈춤) */
+async function relayError(res) {
+  let j = null;
+  try { j = await res.clone().json(); } catch (e) {}
+  return j && j.ssam ? { code: 'quota', test: true, message: String(j.message || '시험용 업스테이지를 지금 쓸 수 없어요. 설정 › AI에 내 AI 키를 넣어 주세요.') } : null;
+}
+const TEST = { on: false, until: '', daily: 400 };
+const keyOf = p => (E.keys[p] || '').trim() || (p === 'upstage' && TEST.on ? TEST_MARK : '');
+const usingTest = () => E.engine === 'upstage' && !(E.keys.upstage || '').trim() && TEST.on;
+const untilText = () => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(TEST.until); return m ? `${+m[1]}. ${+m[2]}. ${+m[3]}.` : ''; };
 function engineReady() {
   if (E.engine === 'account') return !!cap.sample;
-  if (E.engine && PROVIDERS[E.engine]) return !!(E.keys[E.engine] || '').trim();
+  if (E.engine && PROVIDERS[E.engine]) return !!keyOf(E.engine);
   return false;
 }
 function engineName() {
   if (E.engine === 'account') return 'Claude 계정';
+  if (usingTest()) return `시험용 ${PROVIDERS.upstage.label}(${untilText()}까지)`;
   return E.engine && PROVIDERS[E.engine] ? PROVIDERS[E.engine].label : '';
+}
+/* 업무별 AI 고르기용: 회사·모델 목록과 키가 있는지만(키 값은 주지 않음). 직접 입력한 모델도 목록에 */
+function aiProviders() {
+  return Object.entries(PROVIDERS).map(([id, p]) => {
+    const models = p.models.slice();
+    if (E.models[id] && !models.some(m => m[0] === E.models[id])) models.push([E.models[id], E.models[id]]);
+    return { id, name: p.name, label: p.label, models, hasKey: !!keyOf(id) };
+  });
 }
 /* 처음 정하기: Claude 안이면 계정, 아니면 키가 있는 곳 */
 function settleEngine() {
   if (E.engine === 'account' && cap.sample) return;
-  if (E.engine && PROVIDERS[E.engine] && E.keys[E.engine]) return;
+  if (E.engine && PROVIDERS[E.engine] && keyOf(E.engine)) return;
   if (cap.sample) { E.engine = 'account'; return; }
-  const withKey = Object.keys(PROVIDERS).find(p => E.keys[p]);
+  // 시험용 업스테이지는 아직 AI를 고르지 않았거나 업스테이지를 골랐을 때만(다른 AI를 골라 둔 선생님은 바꾸지 않음)
+  const withKey = Object.keys(PROVIDERS).find(p => (E.keys[p] || '').trim()) || (TEST.on && (!E.engine || E.engine === 'upstage') ? 'upstage' : null);
   E.engine = withKey || (E.engine && PROVIDERS[E.engine] ? E.engine : null);
 }
 
@@ -963,39 +988,58 @@ async function upFetch(url, init, keepAlive) {
     if (sig && onAbort) sig.removeEventListener('abort', onAbort);
   }
 }
-/* 이미지를 글자로 읽음 (업스테이지 OCR). 실패하면 ocr_failed */
+/* 이미지를 글자로 읽음 (업스테이지 OCR). 실패하면 ocr_failed.
+   같은 그림(기준 그림 등)은 다시 읽지 않음 — 그림 객체마다 기억(앱을 끄면 사라짐) */
+const OCR_MEMO = new WeakMap();
 async function upstageRead(images, signal) {
-  const key = (E.keys.upstage || '').trim();
   const out = [];
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
-    const blob = im.blob || await (await fetch(`data:${im.mime};base64,${im.b64}`)).blob();
-    const fd = new FormData();
-    fd.append('document', blob, `page-${i + 1}.${/png/.test(im.mime) ? 'png' : 'jpg'}`);
-    fd.append('model', 'ocr');
-    let res;
-    try { res = await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
-    catch (e) {
-      if (e && e.name === 'AbortError') throw { code: 'cancelled' };
-      throw { code: 'blocked', message: String(e && e.message || e) };
-    }
-    if (!res.ok) {
-      const er = await httpError(res);
-      // 키·한도·잠깐 끊김(429·5xx)은 그대로 넘겨 쉬었다가 다시 하게 함. 나머지는 이미지를 못 읽은 것
-      throw ['auth', 'quota', 'rate_limited', 'upstream_error'].includes(er.code) ? er : { code: 'ocr_failed', message: er.message };
-    }
-    let j = null;
-    try { j = await res.json(); } catch (e) { throw { code: 'ocr_failed' }; }
-    const text = String((j && j.text) || (j && Array.isArray(j.pages) ? j.pages.map(p => p && p.text || '').join('\n') : '')).trim();
-    out.push(`--- ${i + 1}번째 이미지 ---\n${text || '(읽은 글자 없음)'}`);
+    let p = im && typeof im === 'object' ? OCR_MEMO.get(im) : null;
+    if (!p) { p = ocrOne(im, i, signal); if (im && typeof im === 'object') { OCR_MEMO.set(im, p); p.catch(() => OCR_MEMO.delete(im)); } }
+    out.push(`--- ${i + 1}번째 이미지 ---\n${(await p) || '(읽은 글자 없음)'}`);
   }
   return `[이미지에서 읽은 글]\n${out.join('\n')}\n[이미지에서 읽은 글 끝]\n아래 요청에서 이미지라고 한 것은 위에 적은 글이에요.\n\n`;
+}
+async function ocrOne(im, i, signal) {
+  const key = keyOf('upstage');
+  const blob = im.blob || await (await fetch(`data:${im.mime};base64,${im.b64}`)).blob();
+  const fd = new FormData();
+  fd.append('document', blob, `page-${i + 1}.${/png/.test(im.mime) ? 'png' : 'jpg'}`);
+  fd.append('model', 'ocr');
+  let res;
+  try { res = key === TEST_MARK ? await fetch(RELAY + '/api/ocr', { method: 'POST', signal, body: fd }) : await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
+  catch (e) {
+    if (e && e.test) throw e;
+    if (e && e.name === 'AbortError') throw { code: 'cancelled' };
+    throw { code: 'blocked', message: String(e && e.message || e) };
+  }
+  if (!res.ok) {
+    if (key === TEST_MARK) { const te = await relayError(res); if (te) throw te; }
+    const er = await httpError(res);
+    // 키·한도·잠깐 끊김(429·5xx)은 그대로 넘겨 쉬었다가 다시 하게 함. 나머지는 이미지를 못 읽은 것
+    throw ['auth', 'quota', 'rate_limited', 'upstream_error'].includes(er.code) ? er : { code: 'ocr_failed', message: er.message };
+  }
+  let j = null;
+  try { j = await res.json(); } catch (e) { throw { code: 'ocr_failed' }; }
+  return String((j && j.text) || (j && Array.isArray(j.pages) ? j.pages.map(p => p && p.text || '').join('\n') : '')).trim();
+}
+/* 업스테이지 채팅은 글만 받음: 공통 그림 글 → 공통 글 → 학생 그림 글 → 학생 글 (공통이 앞이라 같은 앞부분) */
+async function upstageFlat(prompt, images, shared, signal) {
+  const sh = shared || {};
+  const head = (sh.images && sh.images.length ? await upstageRead(sh.images, signal) : '') + (String(sh.text || '').trim() ? sh.text + '\n\n' : '');
+  return head + (images && images.length ? await upstageRead(images, signal) : '') + prompt;
 }
 /* Claude 5.x 등은 답하기 전에 먼저 생각(thinking)하고, 생각도 max_tokens 안에서 씀.
    평어 쓰기는 깊은 생각이 필요 없어서 effort를 낮춰 빠르게 하고, 글자 한도는 넉넉히 둠 */
 const CLAUDE_EFFORT_RE = /^claude-(?:opus-(?:4-[5-9]|[5-9])|sonnet-(?:4-[6-9]|[5-9])|haiku-[5-9]|fable-|mythos-)/;
-async function callApi(provider, prompt, { onText, signal: outer, images, careful }) {
-  const imgs = images || [];
+/* 요청 모양·사용량 모듈(core/ai-wire.js). 보통은 core/ai.js가 window.SSAM_WIRE로 넣어 두고, 없으면 여기서 불러옴 */
+async function wire() {
+  if (!window.SSAM_WIRE) window.SSAM_WIRE = await import(new URL('core/ai-wire.js', document.baseURI).href);
+  return window.SSAM_WIRE;
+}
+async function callApi(provider, prompt, { onText, signal: outer, images, careful, model: useModel, shared, meter }) {
+  const imgs = images || [], W = await wire(), use = W.emptyUse();
   // 2분 동안 아무것도 오지 않거나(연결이 멈춤) 모두 15분이 넘으면 끊음
   const wd = new AbortController();
   let idleT = null;
@@ -1004,8 +1048,8 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
   const signal = anySignal([outer, wd.signal]);
   idle();
   try {
-  const key = (E.keys[provider] || '').trim();
-  const model = E.models[provider];
+  const key = keyOf(provider);
+  const model = useModel || E.models[provider];
   let text = '', truncated = false, stopReason = '';
   const push = t => { if (!t) return; text += t; onText && onText({ text, delta: t }); };
   let res;
@@ -1014,38 +1058,44 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
       res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model, max_tokens: 32000, stream: true, ...(CLAUDE_EFFORT_RE.test(model) ? { output_config: { effort: careful ? 'medium' : 'low' } } : {}), messages: [{ role: 'user', content: imgs.length ? [...imgs.map(im => ({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.b64 } })), { type: 'text', text: prompt }] : prompt }] })
+        // 공통 부분(shared)을 앞에 두고 끝에 cache_control — 학생마다 같은 앞부분은 캐시로 싸게(ai-wire)
+        body: JSON.stringify({ model, max_tokens: 32000, stream: true, ...(CLAUDE_EFFORT_RE.test(model) ? { output_config: { effort: careful ? 'medium' : 'low' } } : {}), messages: [{ role: 'user', content: W.claudeContent({ text: prompt, images: imgs, shared }) }] })
       });
     } else if (provider === 'gemini') {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [...imgs.map(im => ({ inline_data: { mime_type: im.mime, data: im.b64 } })), { text: prompt }] }] })
+        body: JSON.stringify({ contents: [{ role: 'user', parts: W.geminiParts({ text: prompt, images: imgs, shared }) }] })
       });
     } else if (provider === 'upstage') {
       // 이미지는 generate에서 글로 바꿔 둠
-      res = await upFetch(UPSTAGE_CHAT, {
-        method: 'POST', signal,
-        headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
-        body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: prompt }] })
-      }, idle);
+      const upBody = JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: prompt }] });
+      res = key === TEST_MARK
+        ? await fetch(RELAY + '/api/chat', { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: upBody })
+        : await upFetch(UPSTAGE_CHAT, {
+          method: 'POST', signal,
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
+          body: upBody
+        }, idle);
     } else {
       res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST', signal,
         headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
-        body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: imgs.length ? [{ type: 'text', text: prompt }, ...imgs.map(im => ({ type: 'image_url', image_url: { url: `data:${im.mime};base64,${im.b64}`, detail: 'high' } }))] : prompt }] })
+        body: JSON.stringify({ model, stream: true, stream_options: { include_usage: true }, messages: [{ role: 'user', content: W.openaiContent({ text: prompt, images: imgs, shared }) }] })
       });
     }
   } catch (e) {
+    if (e && e.test) throw e;
     const er = wd.signal.aborted ? wd.signal.reason : e;
     if (er && er.name === 'TimeoutError') throw { code: 'upstream_error', message: er.message || '응답이 너무 오래 걸려서 멈췄어요' };
     if (e && e.name === 'AbortError') throw { code: 'cancelled' };
     throw { code: 'blocked', message: String(e && e.message || e) };
   }
-  if (!res.ok) throw await httpError(res);
+  if (!res.ok) { if (key === TEST_MARK) { const te = await relayError(res); if (te) throw te; } throw await httpError(res); }
   idle();
   try {
     await readSSE(res, j => {
+      W.readUsage(provider, j, use);
       if (provider === 'claude') {
         if (j.type === 'content_block_delta' && j.delta && j.delta.type === 'text_delta') push(j.delta.text);
         else if (j.type === 'message_delta' && j.delta && j.delta.stop_reason) { stopReason = j.delta.stop_reason; if (stopReason === 'max_tokens') truncated = true; }
@@ -1074,13 +1124,41 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
     if (stopReason === 'refusal') throw { code: 'refused' };
     throw { code: 'empty_completion', message: stopReason === 'max_tokens' ? '생각하는 데 글자 한도를 다 써서 문장을 쓰지 못했어요' : '' };
   }
-  return { text, truncated };
-  } finally { clearTimeout(idleT); clearTimeout(totalT); }
+  return { text, truncated, usage: use };
+  } finally {
+    clearTimeout(idleT); clearTimeout(totalT);
+    // 실패한 요청도 쓴 만큼은 셈
+    if (meter && (use.input || use.cacheRead || use.cacheWrite || use.output)) meter.add(use);
+  }
 }
 /* 모든 생성은 여기로 */
-/* images: [{ mime, b64, blob }] — 평가지 채점에서 씀 */
-async function generate(prompt, { onText, signal, fresh, images, careful }) {
+/* images: [{ mime, b64, blob }] — 평가지 채점에서 씀.
+   use: { engine, model } 이 AI로 부름. task: 업무(grade·writing·plan·notes) — 업무에 정한 AI(없으면 기본), role: 'main'|'review' */
+function roleAI(use, task, role) {
+  if (use) return use;
+  const r = task && window.SSAM && window.SSAM.aiRoles;
+  return r ? r.pick(task, role || 'main') : null;
+}
+/* shared: { text, images } 학생마다 같은 공통 부분(앞에 두어 캐시), meter: 사용량을 모을 곳 */
+/* 글쓰기 원칙(core/write-style.js — 번역투·AI 단골 표현 빼기): 글을 쓰는 업무는 요청 끝에 원칙을 붙이고, 답의 이중 피동 등은 고침 */
+async function generate(prompt, opts = {}) {
+  const st = window.SSAM_STYLE, w = !!(st && opts && opts.task && st.WRITE_TASKS.includes(opts.task));
+  const r = await generateRaw(w ? st.withStyle(prompt, opts.task) : prompt, opts);
+  if (w && r && typeof r.text === 'string') r.text = st.tidyKo(r.text);
+  return r;
+}
+async function generateRaw(prompt, { onText, signal, fresh, images, careful, use, task, role, shared, meter } = {}) {
+  const pickd = E.engine === 'account' ? null : roleAI(use, task, role);
+  if (pickd && PROVIDERS[pickd.engine] && keyOf(pickd.engine)) {
+    const prov = pickd.engine;
+    try {
+      if (prov === 'upstage') { prompt = await upstageFlat(prompt, images, shared, signal); images = null; shared = null; }
+      return await callApi(prov, prompt, { onText, signal, images, careful, model: pickd.model, shared, meter });
+    } catch (e) { if (e && typeof e === 'object' && !e.provider) e.provider = prov; throw e; }
+  }
   if (E.engine === 'account') {
+    // Claude 계정은 하나로 이어 붙여 보냄(공통 → 학생)
+    if (shared) { const f = (await wire()).flatten({ text: prompt, images: images || [], shared }); prompt = f.text; images = f.images.length ? f.images : null; }
     const opts = { signal, onText, modelTier: careful || S.settings.tier === 'careful' ? 'default' : 'quick' };
     if (fresh || (images && images.length)) opts.cache = false;
     if (images && images.length) {
@@ -1091,11 +1169,8 @@ async function generate(prompt, { onText, signal, fresh, images, careful }) {
     }
     return cap.sample(prompt, opts);
   }
-  if (E.engine === 'upstage' && images && images.length) {
-    prompt = await upstageRead(images, signal) + prompt;
-    images = null;
-  }
-  if (E.engine && PROVIDERS[E.engine]) return callApi(E.engine, prompt, { onText, signal, images, careful });
+  if (E.engine === 'upstage') { prompt = await upstageFlat(prompt, images, shared, signal); images = null; shared = null; }
+  if (E.engine && PROVIDERS[E.engine]) return callApi(E.engine, prompt, { onText, signal, images, careful, shared, meter });
   throw { code: 'no_engine' };
 }
 /* 한 번에 보낼 수 있는 장수보다 많으면 위아래로 이어 붙임 */
@@ -1184,7 +1259,7 @@ const Store = {
     if (this.mode === 'db') {
       try {
         const q = await cap.db.doc(this.base() + '/p_' + id).collection('sets').limit(1000).get();
-        q.docs.forEach(d => { const b = d.data(); out.set(d.id, { items: (b.items || []).map(x => ({ t: x.t, d: x.d ? 1 : 0 })), want: b.want || N, saved: 1 }); });
+        q.docs.forEach(d => { const b = d.data(); out.set(d.id, { items: (b.items || []).map(itemOut), want: b.want || N, saved: 1 }); });
       } catch (e) {}
       return fixSetEndings(id, out);
     }
@@ -1194,7 +1269,7 @@ const Store = {
   },
   // sets: 그 평가계획의 묶음 (다른 평가계획을 연 뒤에 끝난 작업이 엉뚱한 묶음을 저장하지 않게 넘겨받음)
   saveSet(planId, key, set, sets = S.sets) {
-    const body = { items: set.items.map(x => ({ t: x.t, d: x.d ? 1 : 0 })), want: set.want || N, at: Date.now() };
+    const body = { items: set.items.map(itemOut), want: set.want || N, at: Date.now() };
     if (this.mode === 'db') return writeDoc(this.base() + '/p_' + planId + '/sets/' + key, body);
     if (this.mode === 'local') {
       this._lt = this._lt || {}; this._lf = this._lf || {};
@@ -1203,7 +1278,7 @@ const Store = {
         delete this._lt[planId]; delete this._lf[planId];
         if (this._gone && this._gone.has(planId)) return; // 지운 평가계획
         const all = {};
-        sets.forEach((v, k) => { if (v.items.length) all[k] = { items: v.items.map(x => ({ t: x.t, d: x.d ? 1 : 0 })), want: v.want }; });
+        sets.forEach((v, k) => { if (v.items.length) all[k] = { items: v.items.map(itemOut), want: v.want }; });
         this.lsSet('ssam:sets:' + planId, all);
       };
       this._lf[planId] = write;
@@ -1479,6 +1554,7 @@ function enqueueAll() {
   pump();
 }
 function pump() {
+  if (!S.running.size && !S.queue.length) S.noReview = false; // 검토 실패로 멈춘 것은 그 차례에만
   if (S.paused || !engineReady()) { updateGen(); return; }
   while (S.running.size < conc() && S.queue.length) run(S.queue.shift());
   updateGen();
@@ -1509,10 +1585,11 @@ const SAMPLE_MSG = {
 /* 업스테이지를 쓰면 이미지 화면에 한 줄 안내 (쓰는 것은 막지 않음) */
 const upNote = () => E.engine === 'upstage' ? '<p class="muted up-note">업스테이지는 이미지를 글자로 읽어서 보내요. 손글씨 이미지는 Claude·Gemini·GPT를 권장해요.</p>' : '';
 function errMsg(code, e) {
-  const nm = engineName() || 'AI';
+  // 업무별 AI로 부른 오류는 그 회사 이름으로
+  const nm = (e && e.provider && PROVIDERS[e.provider] ? PROVIDERS[e.provider].label : engineName()) || 'AI';
   const m = {
     auth: `${nm} 키가 맞지 않아요(또는 권한이 없어요). 왼쪽 아래 AI 버튼에서 API 키를 다시 확인해 주세요.`,
-    quota: e && /^하루/.test(e.message || '') ? `${nm}의 하루 사용 한도를 다 썼어요. 내일 이어서 하거나 결제 설정을 확인해 주세요.` : `${nm} 사용 한도(크레딧·결제)가 부족해요. 결제나 한도를 확인한 뒤 이어서 만들기를 눌러 주세요.`,
+    quota: e && e.test ? e.message : e && /^하루/.test(e.message || '') ? `${nm}의 하루 사용 한도를 다 썼어요. 내일 이어서 하거나 결제 설정을 확인해 주세요.` : `${nm} 사용 한도(크레딧·결제)가 부족해요. 결제나 한도를 확인한 뒤 이어서 만들기를 눌러 주세요.`,
     bad_model: `${nm}에서 이 모델을 쓸 수 없어요. 평어 쓰는 방식에서 다른 모델을 골라 주세요.`,
     blocked: IN_VIEWER ? 'claude.ai 안에서는 외부 API 호출이 막혀 있어요. 평어 쓰는 방식에서 \'Claude 계정\'을 고르거나, 배포한 주소에서 API 키를 써 주세요.' : `${nm}에 연결하지 못했어요. 인터넷 연결과 API 키를 확인해 주세요.` + (E.engine === 'upstage' && !IN_APP ? ' 웹에서 계속 막히면 업스테이지는 Windows 앱에서 써 주세요.' : ''),
     ocr_failed: '업스테이지가 이미지를 읽지 못했어요. 이미지 기능은 Claude·Gemini·GPT를 권장해요.',
@@ -1527,6 +1604,63 @@ function errMsg(code, e) {
   };
   return m[code] || SAMPLE_MSG[code] || SAMPLE_MSG.upstream_error;
 }
+/* ---------- 검토 AI (평어·행특·창체·평가지 평어 문장) ---------- */
+const RV = () => (window.SSAM && window.SSAM.review) || null;
+/* items: [{ o, f }] — o[f]가 문장. 검토 AI가 문제를 적은 문장에만 o[rv] = { problem, fix }, 검토한 문장은 o[d] = 1.
+   반환: 'off'(검토 꺼짐·볼 문장 없음) | 'ok' | 'fail'(키·한도·연결 — 쓴 글은 그대로) */
+async function reviewSentences(kind, info, items, signal, keys = { rv: 'rv', d: 'rvd' }) {
+  const R = RV();
+  if (!R || !R.texts) return 'off';
+  const list = items.filter(x => x.o && !x.o[keys.d] && String(x.o[x.f] || '').trim());
+  if (!list.length) return 'off';
+  const sent = list.map(x => x.o[x.f]);
+  const res = await R.texts(kind, info, sent, { signal });
+  if (res == null) return 'off';
+  const got = Array.isArray(res) ? res : (res.partial || []);
+  // 검토하는 동안 바뀐 문장(다시 쓰기·손으로 고침)의 의견은 버림
+  for (const r of got) { const x = list[r.i - 1]; if (x && x.o[x.f] === sent[r.i - 1]) x.o[keys.rv] = { problem: r.problem, fix: r.fix }; }
+  if (!Array.isArray(res)) return res.error === 'cancelled' ? 'off' : 'fail';
+  list.forEach((x, i) => { if (x.o[x.f] === sent[i]) x.o[keys.d] = 1; });
+  return 'ok';
+}
+const rvOpen = (o, k = 'rv') => !!(o && o[k] && !o[k].done);
+function rvInline(o, key, title, k = 'rv', f = 't') {
+  const R = RV();
+  if (!R || !rvOpen(o, k)) return '';
+  return `<div class="rv-inline" data-rv-for="${esc(key)}">${R.opinionHTML({ title, main: o[f], alt: o[k].fix, why: o[k].problem, use: key, keep: key, useLabel: '고친 문장 쓰기' })}</div>`;
+}
+const rvBarHTML = n => { const R = RV(); return R ? R.reviewBar(n, 'data-rv-next') : ''; };
+const GR_RV = { handle: () => false }; // 평가지 채점 점수 검토(아래에서 채움)
+const RV_FAIL_HTML = '<p class="rv-fail" role="status">검토하지 못했어요. 쓴 글은 그대로 쓸 수 있어요.</p>';
+/* 저장할 문장: 사용함 표시와 검토 의견 */
+const itemOut = x => ({ t: x.t, d: x.d ? 1 : 0, ...(x.rvd ? { rvd: 1 } : {}), ...(x.rv ? { rv: x.rv } : {}) });
+const pyInfo = (u, lv) => [u.std && `[성취기준] ${u.std}`, u.elem && `[평가요소] ${u.elem}`, `[수준] ${LVNAME[lv]}${u.crit[lv] ? ': ' + u.crit[lv] : ''}`].filter(Boolean).join('\n');
+/* 의견 고르기: 열쇠 → 그 문장. py:평가요소:수준:번호 · hk:학생:번호 · cc:영역:번호:활동 · gr:학생 */
+function rvTarget(key) {
+  const p = String(key || '').split(':').map(decodeURIComponent);
+  if (p[0] === 'py') { const set = getSet(p[1], p[2]), o = set.items[+p[3]]; return o && { o, f: 't', save: () => S.planId && Store.saveSet(S.planId, setKey(p[1], p[2]), set), render: () => { renderList(); renderTabs(); } }; }
+  if (p[0] === 'hk') { const st = hkStudent(p[1]), o = st && (st.results || [])[+p[2]]; return o && { o, f: 't', save: () => HKStore.save(), render: () => { renderHKEditor(); renderHKList(); } }; }
+  if (p[0] === 'cc') { const it = ccArea(p[1]).items[+p[2]], o = it && it.parts && it.parts[p[3]]; return o && { o, f: 't', save: () => CCStore.save(), render: renderCCResults }; }
+  if (p[0] === 'gr') { const o = grStudent(p[1]); return o && { o, f: 'text', rv: 'trv', save: () => GRStore.save(), render: renderGRResults }; }
+  return null;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-rv-use],[data-rv-keep],[data-rv-next]');
+  const view = b && b.closest('#planView,#hkView,#ccView,#grView');
+  if (!view) return;
+  e.stopPropagation(); e.preventDefault();
+  if (b.dataset.rvNext != null) { const op = view.querySelector('.rv-op'); if (op) { op.scrollIntoView({ block: 'center', behavior: 'smooth' }); const x = op.querySelector('button'); if (x) x.focus({ preventScroll: true }); } return; }
+  const use = b.dataset.rvUse != null, key = use ? b.dataset.rvUse : b.dataset.rvKeep;
+  if (GR_RV.handle(key, use)) return;
+  const tg = rvTarget(key);
+  if (!tg) return;
+  const k = tg.rv || 'rv';
+  if (!rvOpen(tg.o, k)) return;
+  if (use) { tg.o[tg.f] = tg.o[k].fix; if (k === 'trv') tg.o.stale = false; }
+  tg.o[k] = { ...tg.o[k], done: use ? 'review' : 'main' };
+  tg.save(); tg.render();
+  toast(use ? '고친 문장을 썼어요' : '그대로 두었어요');
+}, true);
 async function run(job) {
   const u = unitById(job.unitId);
   const key = setKey(job.unitId, job.lv);
@@ -1537,6 +1671,7 @@ async function run(job) {
   S.running.set(key, { ctl });
   set.status = 'running'; set.err = '';
   if (job.fresh) set.items = set.items.filter(x => x.d);
+  const before = new Set(set.items); // 이번에 쓴 문장만 검토
   const target = job.more ? set.items.length + job.more : Math.max(set.want || N, N);
   set.want = Math.max(N, target);
   renderUnitsSoon(); renderListSoon(job.unitId, job.lv);
@@ -1551,7 +1686,7 @@ async function run(job) {
       const keys = unitKeys(job.unitId);
       let consumed = 0, added = 0;
       const res = await generate(prompt, {
-        signal: ctl.signal,
+        signal: ctl.signal, task: 'writing',
         fresh: !!(job.fresh || job.more || attempts > 1),
         onText: ({ text }) => {
           const lines = text.split('\n'); const complete = lines.length - 1;
@@ -1569,6 +1704,15 @@ async function run(job) {
     }
     set.status = set.items.length >= target ? 'done' : 'part';
     S.consecutiveErr = 0; concOk();
+    // 검토 AI: 새로 쓴 문장을 10개씩 (사용함으로 표시한 문장은 빼고)
+    const fresh = set.items.filter(x => !before.has(x) && !x.d);
+    if (!S.noReview && fresh.length && RV() && RV().pick('writing', 'review')) {
+      renderListSoon(job.unitId, job.lv);
+      // 검토하는 동안 창을 닫아도 쓴 문장은 남게 먼저 저장
+      if (planId) { Store.saveSet(planId, key, set, sets); set.saved = 1; }
+      const r = await reviewSentences('pyeongeo', pyInfo(u, job.lv), fresh.map(o => ({ o, f: 't' })), ctl.signal);
+      if (r === 'fail') { S.noReview = true; set.rvErr = 1; } else if (r === 'ok') delete set.rvErr;
+    }
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
     if (e && e.text) { const keys = unitKeys(job.unitId); e.text.split('\n').slice(0, -1).forEach(l => addLine(job.unitId, set, l, target, keys)); }
@@ -1807,6 +1951,7 @@ function renderPane() {
       <h2>${esc(u.elem || u.unit || '평가요소')}</h2>
     </div>
     ${banner}
+    <div class="ai-row" data-ai-row="writing"></div>
     ${noCrit ? `<div class="banner warn"><span class="grow">이 평가요소에서는 평가기준(상·중·하)을 찾지 못했어요. 성취기준과 평가요소만으로 평어를 만들어요.</span></div>` : ''}
     <details class="info" id="infoBox" ${S.infoOpen ? 'open' : ''}>
       <summary>${ICON.chev}성취기준과 평가기준 보기</summary>
@@ -1841,11 +1986,11 @@ function renderList() {
   const busy = s.status === 'running' || s.status === 'queued';
   let items = s.items.map((x, i) => ({ ...x, i }));
   if (S.remainOnly) items = items.filter(x => !x.d);
-  const rows = items.map(x => `<li class="sent ${x.d ? 'done' : ''} ${x.fresh ? 'fresh' : ''}" data-i="${x.i}" tabindex="0" role="button" aria-label="${x.d ? '사용함. ' : ''}${esc(x.t)} 복사">
+  const rows = items.map(x => `<li class="sent ${x.d ? 'done' : ''} ${x.fresh ? 'fresh' : ''}${rvOpen(x) ? ' rv-mark' : ''}" data-i="${x.i}" tabindex="0" role="button" aria-label="${x.d ? '사용함. ' : ''}${esc(x.t)} 복사">
       <span class="n"><span class="num-text">${x.i + 1}</span>${ICON.check}</span>
       <span class="t">${esc(x.t)}</span>
       <span class="side"><span class="len">${x.t.length}자</span><button class="icon-btn x" type="button" data-x="${x.i}" aria-label="이 문장 빼기" title="이 문장 빼기">${ICON.x}</button><button class="undo" type="button" data-undo="${x.i}">되돌리기</button></span>
-    </li>`).join('');
+    </li>${rvOpen(x) ? `<li class="rv-li">${rvInline(x, ['py', u.id, S.lv, x.i].map(encodeURIComponent).join(':'), `${x.i + 1}번 문장`)}</li>` : ''}`).join('');
   let tail = '';
   if (s.status === 'running') tail = `<li class="skel" aria-hidden="true"></li><li class="skel" aria-hidden="true"></li>`;
   else if (s.status === 'queued' && !s.items.length) tail = `<li class="skel" aria-hidden="true"></li><li class="skel" aria-hidden="true"></li><li class="skel" aria-hidden="true"></li>`;
@@ -1858,6 +2003,7 @@ function renderList() {
   }
   if (s.status === 'error') head = `<div class="banner err"><span class="grow">${esc(s.err || SAMPLE_MSG.upstream_error)}</span><button class="btn" type="button" data-act="retry">다시 시도</button></div>` + head;
   if (busy) head = `<div class="muted" style="display:flex;gap:8px;align-items:center;padding:2px 2px 6px"><span class="spin"></span>${s.status === 'queued' ? '차례를 기다리는 중이에요' : `${LVNAME[S.lv]} 수준 평어를 쓰는 중이에요 · ${s.items.length}/${s.want || N}`}</div>` + head;
+  head += (s.rvErr ? RV_FAIL_HTML : '') + rvBarHTML(s.items.filter(x => rvOpen(x)).length);
   if (S.remainOnly && s.items.length && !items.length) head += `<div class="empty"><h3>이 수준 문장을 모두 썼어요</h3><p>10개 더를 누르면 겹치지 않는 문장을 더 만들어요.</p></div>`;
   box.innerHTML = head + ((rows || tail) ? `<ul class="list ${lvc}">${rows}${tail}</ul>` : '');
   s.items.forEach(x => { delete x.fresh; });
@@ -2066,9 +2212,13 @@ async function checkUpdate(manual) {
   catch (e) { if (manual) toast('업데이트를 확인하지 못했어요: ' + String(e && (e.message || e)).slice(0, 120), 5000); return; }
   UPD.info = info;
   if (!info.available) {
+    const top0 = $('#updTop'); if (top0) top0.hidden = true;
     if (manual) toast(info.latest ? `최신 버전이에요 (${info.current})` : '아직 올라온 업데이트가 없어요');
     return;
   }
+  // 알림 창을 실수로 닫아도 ⋮ 옆 버튼으로 다시 열 수 있게
+  const top = $('#updTop');
+  if (top) { top.hidden = false; $('#updTopText').textContent = `새 버전 ${info.latest}`; top.setAttribute('aria-label', `새 버전 ${info.latest} 설치`); }
   const dot = $('#menuUpdate');
   if (dot && !dot.querySelector('.dot')) { dot.insertAdjacentHTML('beforeend', '<span class="dot"></span>'); dot.lastChild.previousSibling.textContent = `새 버전 ${info.latest} 설치`; }
   if (!manual) {
@@ -2131,11 +2281,32 @@ async function runUpdate(sh, info) {
   } finally { if (un) try { un(); } catch (e) {} }
 }
 if (IN_APP) {
+  document.getElementById('updTop')?.addEventListener('click', () => { if (UPD.info && UPD.info.available && !UPD.busy) openUpdate(UPD.info); });
   try {
     window.__TAURI__.core.invoke('app_version').then(v => { UPD.version = v; const el = $('#menuVer'); el.textContent = `쌤비서 ${v}`; el.hidden = false; }).catch(() => {});
   } catch (e) {}
   setTimeout(() => checkUpdate(false), 2500);
 }
+/* 시험용 업스테이지(Vercel 중계에 키가 있고 기한 안이면): 내 키가 없을 때 그것으로(처음 한 번 알림) — 웹판·Windows 앱 모두 */
+(function testKeyInfo() {
+  if (IN_VIEWER || typeof fetch !== 'function') return;
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const tm = ctl ? setTimeout(() => ctl.abort(), 6000) : null;
+  fetch(RELAY + '/api/info', ctl ? { signal: ctl.signal } : {}).then(r => (r.ok ? r.json() : null)).then(info => {
+    if (tm) clearTimeout(tm);
+    if (!info || !info.available || !/^\d{4}-\d{2}-\d{2}$/.test(info.until || '')) return;
+    const t = new Date(), now = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    if (now > info.until) return;
+    TEST.on = true; TEST.until = info.until; TEST.daily = Number(info.daily) || 400;
+    settleEngine(); updateGen();
+    document.dispatchEvent(new CustomEvent('ssam:ai-changed'));
+    if (usingTest()) {
+      let told = null; try { told = localStorage.getItem('ssam:testkey:told'); } catch (e) {}
+      if (!told) { try { localStorage.setItem('ssam:testkey:told', '1'); } catch (e) {} setTimeout(() => toast(`시험용으로 업스테이지 AI를 쓰고 있어요(${untilText()}까지, 하루 ${TEST.daily}번). 내 AI 키를 넣으면 그 키로 바뀌어요 — 설정 › AI`, 10000), 4000); }
+    }
+    try { noteEngine(); } catch (e) {}
+  }).catch(() => { if (tm) clearTimeout(tm); });
+})();
 async function openUninstall() {
   const T = window.__TAURI__;
   if (!T || !T.core) return;
@@ -2199,6 +2370,7 @@ function drawEngine(sh) {
     <label class="switch"><input type="checkbox" id="keyRemember" ${E.remember ? 'checked' : ''}>${HERE}에 키 기억하기</label>
     ${!IN_APP && /\.github\.io$/i.test(location.hostname) ? `<p class="muted" style="margin:0">웹판은 ${esc(location.hostname)} 주소를 같은 계정의 다른 웹페이지와 함께 써요. 함께 쓰는 PC에서는 키를 기억하지 않거나 Windows 앱을 쓰는 것이 안전해요.</p>` : ''}
     <div class="row"><button class="btn tonal" type="button" id="keyTest">연결 확인</button><span class="muted" id="keyMsg"></span></div>
+    ${p === 'upstage' && TEST.on && !(E.keys.upstage || '').trim() ? `<p class="banner info" style="margin:0"><span class="grow">키를 넣지 않으면 <b>시험용 업스테이지</b>(${esc(untilText())}까지, 하루 ${TEST.daily}번)로 써요. 쌤비서 중계 서버를 거쳐 업스테이지로 가고, 보낸 글은 저장하지 않아요.</span></p>` : ''}
     <p class="muted" style="margin:0">키 받는 곳: <a href="${esc(P.keyUrl)}" target="_blank" rel="noopener">${esc(P.keyHost)}</a><br>키는 ${HERE}에만 저장되고, 평어를 만들 때 ${esc(P.name)} 회사로만 보내져요. 사용 요금은 키 주인에게 청구돼요.</p>`;
   const key = box.querySelector('#apiKey');
   key.addEventListener('input', () => { E.keys[p] = key.value.trim(); saveEngine(); box.querySelector('#keyMsg').textContent = ''; updateGen(); });
@@ -2213,7 +2385,7 @@ function drawEngine(sh) {
   box.querySelector('#keyRemember').addEventListener('change', e => { E.remember = e.target.checked; saveEngine(); });
   box.querySelector('#keyTest').addEventListener('click', async e => {
     const msg = box.querySelector('#keyMsg');
-    if (!E.keys[p]) { msg.textContent = '키를 먼저 넣어 주세요.'; return; }
+    if (!keyOf(p)) { msg.textContent = '키를 먼저 넣어 주세요.'; return; }
     e.target.disabled = true;
     msg.innerHTML = '<span style="display:inline-flex;gap:6px;align-items:center"><span class="spin"></span>확인하는 중…</span>';
     try {
@@ -2601,7 +2773,7 @@ const HKStore = {
   },
   write() {
     this.t = null;
-    const body = { settings: HK.settings, students: HK.students.map(s => ({ id: s.id, no: s.no, label: s.label || '', memo: s.memo || '', done: s.done ? 1 : 0, results: (s.results || []).slice(0, 4).map(r => ({ t: r.t, d: r.d ? 1 : 0 })) })), at: Date.now() };
+    const body = { settings: HK.settings, students: HK.students.map(s => ({ id: s.id, no: s.no, label: s.label || '', memo: s.memo || '', done: s.done ? 1 : 0, results: (s.results || []).slice(0, 4).map(itemOut), ...(s.rvErr ? { rvErr: 1 } : {}) })), at: Date.now() };
     if (Store.mode === 'db') writeDoc(Store.base() + '/hk', body);
     else if (Store.mode === 'local') Store.lsSet('ssam:hk', body);
   }
@@ -2709,6 +2881,7 @@ function hkEnqueue(id, front) {
   hkPump();
 }
 function hkPump() {
+  if (!HK.running.size && !HK.queue.length) HK.noReview = false; // 검토 실패로 멈춘 것은 그 차례에만
   if (HK.waitUntil && Date.now() < HK.waitUntil) { if (S.mode === 'hk') { renderHKList(); hkEditorSoft(); } return; }
   if (engineReady()) while (HK.running.size < conc() && HK.queue.length) hkRun(HK.queue.shift());
   if (S.mode === 'hk') { renderHKList(); hkEditorSoft(); }
@@ -2727,7 +2900,7 @@ document.addEventListener('focusout', e => {
   setTimeout(() => { if (!hkTyping()) { HK.editorDirty = false; renderHKEditor(); } }, 0);
 });
 async function hkCall(prompt, signal) {
-  const r = await generate(prompt, { signal, fresh: true });
+  const r = await generate(prompt, { signal, fresh: true, task: 'writing' });
   return r.text;
 }
 async function hkRun(id) {
@@ -2753,6 +2926,14 @@ async function hkRun(id) {
     }
     s.results = [...keep, ...fixed.map(t => ({ t, d: 0 }))];
     s.rl = 0; concOk();
+    // 검토 AI: 새 후보만 (메인 결과는 먼저 보여 줌)
+    const fresh = s.results.filter(x => !keep.includes(x));
+    if (!HK.noReview && fresh.length && RV() && RV().pick('writing', 'review')) {
+      HKStore.save(); // 검토하는 동안 창을 닫아도 후보는 남게
+      if (S.mode === 'hk') { renderHKList(); hkEditorSoft(id); }
+      const r = await reviewSentences('hk', `[분량] ${HK.settings.min}~${HK.settings.max}${unitWord()}`, fresh.map(o => ({ o, f: 't' })), ctl.signal);
+      if (r === 'fail') { HK.noReview = true; s.rvErr = 1; } else if (r === 'ok') delete s.rvErr;
+    }
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
     if (code === 'rate_limited' && E.engine !== 'account' && (s.rl = (s.rl || 0) + 1) <= 4) {
@@ -2782,7 +2963,7 @@ async function hkAdjust(id, idx, dir) {
   try {
     const out = await hkCall(hkFixPrompt(s, r.t, dir));
     const c = out.split('\n').map(hkClean).filter(Boolean).join(' ');
-    if (c) { r.t = dir === 'longer' ? c : hkTrim(c); r.d = 0; }
+    if (c) { r.t = dir === 'longer' ? c : hkTrim(c); r.d = 0; delete r.rv; }
     toast(dir === 'longer' ? '조금 길게 고쳤어요' : '조금 짧게 고쳤어요');
   } catch (e) { toast(errMsg((e && e.code) || 'upstream_error', e), 4500); }
   finally { delete r.busy; HKStore.save(); renderHKEditor(); renderHKList(); }
@@ -2802,7 +2983,7 @@ function renderHKSettings() {
   const s = HK.settings;
   const box = $('#hkSet'); if (!box) return;
   const active = document.activeElement && box.contains(document.activeElement) ? document.activeElement.id : null;
-  box.innerHTML = `
+  box.innerHTML = `<div class="ai-row" data-ai-row="writing"></div>
     <div class="hk-opt"><span class="lab">분량 기준</span>
       <div class="seg" data-hkset="unit"><button type="button" data-v="char" aria-pressed="${s.unit === 'char'}">글자 수</button><button type="button" data-v="byte" aria-pressed="${s.unit === 'byte'}">나이스 바이트</button></div></div>
     <div class="hk-opt"><span class="lab">분량</span>
@@ -2850,7 +3031,7 @@ function renderHKEditor() {
   const res = (s.results || []).map((r, i) => {
     const cur = r.draft != null ? r.draft : r.t;
     const ok = rangeOk(cur);
-    return `<div class="hk-res ${r.d ? 'done' : ''}" data-ri="${i}">
+    return `<div class="hk-res ${r.d ? 'done' : ''}${rvOpen(r) ? ' rv-mark' : ''}" data-ri="${i}">
       ${r.edit ? `<textarea class="field hk-edit" data-edit="${i}" rows="7">${esc(cur)}</textarea>`
         : `<div class="hk-text" role="button" tabindex="0" data-pick="${i}" aria-label="${r.d ? '사용함. ' : ''}눌러서 복사">${r.d ? ICON.check : ''}${esc(r.t)}</div>`}
       <div class="hk-meta">
@@ -2863,6 +3044,7 @@ function renderHKEditor() {
           <button class="icon-btn" type="button" data-hkr="del" data-i="${i}" aria-label="이 글 지우기" title="이 글 지우기">${ICON.x}</button>
         </span>
       </div>
+      ${r.edit ? '' : rvInline(r, ['hk', s.id, i].map(encodeURIComponent).join(':'), `후보 ${i + 1}`)}
     </div>`;
   }).join('');
   box.innerHTML = `
@@ -2877,7 +3059,7 @@ function renderHKEditor() {
       <button class="btn primary" type="button" data-hk="gen" ${busy ? 'disabled' : ''}>${busy ? '<span class="spin"></span>쓰는 중' : ICON.spark + (s.results && s.results.length ? '새 후보 만들기' : '행특 만들기')}</button>
       <span class="muted num">후보 ${HK.settings.variants}개 · ${HK.settings.min}~${HK.settings.max}${unitWord()}${engineReady() ? ' · ' + esc(engineName()) : ''}</span>
     </div>
-    ${s.err ? `<div class="banner err"><span class="grow">${esc(s.err)}</span></div>` : ''}
+    ${s.err ? `<div class="banner err"><span class="grow">${esc(s.err)}</span></div>` : ''}${s.rvErr ? RV_FAIL_HTML : ''}
     ${!engineReady() ? `<div class="banner info"><span class="grow">글을 만들 AI를 먼저 정해 주세요.</span><button class="btn primary" type="button" data-act="settings">API 키 넣기</button></div>` : ''}
     <div class="hk-results">${res || (busy ? '<div class="skel" style="height:120px"></div>' : '')}</div>
     ${res ? '<p class="muted">글을 누르면 복사되고 완료로 표시돼요. 마음에 드는 글만 쓰고 나머지는 지워도 돼요.</p>' : ''}`;
@@ -2925,7 +3107,7 @@ document.addEventListener('click', e => {
     const s = hkStudent(HK.sel); const i = +rb.dataset.i; const r = s && s.results[i]; if (!r) return;
     const a = rb.dataset.hkr;
     if (a === 'edit') {
-      if (r.edit) { const v = r.draft != null ? r.draft : r.t; r.t = v.replace(/\s*\n+\s*/g, ' ').trim(); delete r.draft; delete r.edit; HKStore.save(); renderHKList(); }
+      if (r.edit) { const v = r.draft != null ? r.draft : r.t, nt = v.replace(/\s*\n+\s*/g, ' ').trim(); if (nt !== r.t) delete r.rv; r.t = nt; delete r.draft; delete r.edit; HKStore.save(); renderHKList(); }
       else r.edit = 1;
       renderHKEditor(); if (r.edit) { const ta = document.querySelector(`[data-edit="${i}"]`); ta && ta.focus(); }
     } else if (a === 'del') { s.results.splice(i, 1); if (!s.results.some(x => x.d)) s.done = 0; HKStore.save(); renderHKEditor(); renderHKList(); }
@@ -3044,7 +3226,8 @@ const GR = {
   // byNo·noBox: 적힌 번호로 학생 맞추기(걷은 순서와 상관없이, core/student-no.js) · 번호 칸 { x, y, w, h }
   // mix: 평어 내용 — 'plan' 평가계획 위주 · 'mix' 섞어서(기본) · 'sheet' 평가지 위주
   phase: 'setup',     // setup | grading | ranking | writing | done
-  queue: [], running: new Map(), err: '', loading: '', view: 'no', calibrated: false, history: [], showRes: false
+  queue: [], running: new Map(), err: '', loading: '', view: 'no', calibrated: false, history: [], showRes: false,
+  refs: [], refsAll: false  // refs: 평어에 참고할 단원평가·활동지 ['activity:<id>' | 'unit:<id>'] (활동지 스펙 4.8)
 };
 const LV_KEYS = ['top', 'high', 'mid', 'low'];
 // 나이스에 차례로 붙여넣기 상태 (아래 「전체복사」 부분에서 씀)
@@ -3058,12 +3241,14 @@ const GRStore = {
   body() {
     return {
       kind: 'gr', title: (grUnit() && (grUnit().elem || grUnit().unit)) || GR.title, unitId: GR.unitId, criteria: GR.criteria, critDocs: GR.critDocs.map(d => ({ name: d.name, text: d.text })), createdAt: GR.createdAt || Date.now(),
-      settings: { ...GR.settings, mask: GR.settings.mask.map(r => ({ ...r })) }, calibrated: GR.calibrated,
+      settings: { ...GR.settings, mask: GR.settings.mask.map(r => ({ ...r })) }, calibrated: GR.calibrated, refs: GR.refs.slice(),
+      ...(GR.aiUse ? { aiUse: { at: +GR.aiUse.at || 0, sent: +GR.aiUse.sent || 0, cached: +GR.aiUse.cached || 0, out: +GR.aiUse.out || 0 } } : {}),
       // 채점에서 뺀 학생도 번호 자리를 지키도록 저장 (나이스에 차례로 붙여넣을 때 칸이 밀리지 않게)
       students: GR.students.map(s => ({
         id: s.id, no: s.no, n: s.pages.length, skip: s.skip ? 1 : 0, score: s.score ?? null, level: s.level || null, manual: s.manual ? 1 : 0,
         summary: s.summary || '', evidence: s.evidence || [], strengths: s.strengths || '', improve: s.improve || '',
-        unreadable: s.unreadable ? 1 : 0, text: s.text || '', d: s.d ? 1 : 0, stale: s.stale ? 1 : 0
+        unreadable: s.unreadable ? 1 : 0, text: s.text || '', d: s.d ? 1 : 0, stale: s.stale ? 1 : 0,
+        ...(s.trv ? { trv: s.trv } : {}), ...(s.trvd ? { trvd: 1 } : {}), ...(s.rv ? { rv: s.rv } : {})
       }))
     };
   },
@@ -3188,7 +3373,11 @@ async function readPdfPages(file, onPage) {
       const vp = p.getViewport({ scale: Math.min(3, 1800 / Math.max(v0.width, v0.height)) });
       const [c, g] = whiteCanvas(vp.width, vp.height);
       await p.render({ canvasContext: g, viewport: vp }).promise;
-      out.push(await canvasToPage(c, `${file.name} ${i}쪽`));
+      const page = await canvasToPage(c, `${file.name} ${i}쪽`);
+      // 글자층(인쇄본 PDF 쪽): 한꺼번에 넣기에서 정답·교사용 쪽을 가리는 데 씀
+      // 줄은 살림(「이름: 교사용」·「(예시)」 같은 줄 표시로 나누게)
+      try { const tc = await p.getTextContent(); page.text = pdfPageText(tc.items, v0.width, v0.height, false, p.rotate || 0).replace(/[ \t]+/g, ' ').replace(/ *\n+ */g, '\n').trim().slice(0, 2000); } catch (e) { page.text = ''; }
+      out.push(page);
       p.cleanup();
       onPage && onPage(i, doc.numPages);
     }
@@ -3399,12 +3588,14 @@ function grJSON(text) {
   if (a < Infinity && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch (e) {} }
   throw { code: 'bad_json' };
 }
-function grGradePrompt(st, nCrit) {
+/* 학생마다 같은 공통(shared: 기준 그림 + 이 글, 앞에 두어 캐시)과 학생 글(own: 쪽 수).
+   차례: 기준 그림 → 공통 글 → 학생 그림 → 학생 글 (스펙 2026-11-03 3.2) */
+function grGradeParts(st, nCrit) {
   const n = st.pages.length;
   const crit = grCritText();
-  return [
+  const shared = [
     `당신은 초등학교 수행평가를 채점하는 경력 많은 담임교사입니다.`,
-    `첨부한 이미지 중 앞의 ${n}장은 한 학생의 수행평가지(${n > 1 ? '순서대로' : '1쪽'})입니다.${nCrit ? ` 뒤의 ${nCrit}장은 정답·채점 기준입니다.` : ''} 이름 칸은 가려져 있을 수 있습니다.`,
+    `${nCrit ? `이 글 앞의 그림 ${nCrit}장은 정답·채점 기준입니다. ` : ''}이 글 뒤에 오는 그림은 한 학생의 수행평가지입니다. 이름 칸은 가려져 있을 수 있습니다.`,
     ``,
     `[평가 정보]`, grTaskText(),
     ``,
@@ -3419,6 +3610,13 @@ function grGradePrompt(st, nCrit) {
     `[출력] 아래 형식의 JSON 하나만 출력합니다.`,
     `{"score": 0~100 정수, "summary": "답안에서 드러난 수행 모습 한두 문장", "evidence": ["답안에서 확인한 구체적인 근거", "..."], "strengths": "잘한 점", "improve": "보완할 점", "unreadable": false}`
   ].join('\n');
+  return { shared, own: `바로 위 그림 ${n}장은 한 학생의 수행평가지(${n > 1 ? '순서대로' : '1쪽'})입니다. 이름 칸은 가려져 있을 수 있어요.` };
+}
+/* 평가지 채점 한 번(채점·검토)에 쓴 AI 양: GR.meter에 모아 GR.aiUse로 기록에 남김 */
+function grUse() {
+  const t = GR.meter && GR.meter.total();
+  // 이번 채점 양이 생긴 뒤에야 「지난 채점」을 떼고 보임
+  if (t && (t.sent || t.out)) { GR.aiUse = { at: Date.now(), ...t }; GR.usedNow = true; GRStore.save(); }
 }
 function grCalibPrompt(list) {
   return [
@@ -3465,6 +3663,46 @@ const GR_MIX = {
     rule: '그 학생의 근거와 잘한 점이 구체적으로 드러나게 씁니다.'
   }
 };
+/* 평어에 참고할 단원평가·활동지(체크한 것만): 그 학생 한 줄 */
+const grUnitLink = u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') });
+/* 체크한 것 중 지금 평가요소에 이어 둔 것만(다른 평가요소에서 체크한 것·나중에 이음을 끈 것은 평어에 쓰지 않음) */
+function grActiveRefs() {
+  const R = window.SSAM && window.SSAM.evalRefs, u = grUnit();
+  if (!R || !u || !GR.refs.length) return [];
+  const ok = new Set(R.linked(grUnitLink(u)).map(r => `${r.kind}:${r.id}`));
+  return GR.refs.filter(k => ok.has(k));
+}
+const grRefList = () => grActiveRefs().map(k => ({ kind: k.slice(0, k.indexOf(':')), id: k.slice(k.indexOf(':') + 1) }));
+function grRefLine(no) {
+  const R = window.SSAM && window.SSAM.evalRefs;
+  const list = R ? grRefList() : [];
+  const L = list.length ? R.lines(list, no) : '';
+  return L ? `\n  참고: ${L}` : '';
+}
+/* 평가요소에 이어 둔 단원평가·활동지 목록(최근 5개 → 더보기), 기본 체크 안 함 */
+function grRefsHTML(u) {
+  const R = window.SSAM && window.SSAM.evalRefs;
+  if (!u || !R) return '';
+  const list = R.linked(grUnitLink(u));
+  if (!list.length) return '<p class="muted gr-refs-none">이 평가요소에 이어 둔 단원평가·활동지가 없어요. 단원평가·활동지에서 「교과 평어에 참고하기」를 켜면 여기에 나와요.</p>';
+  const show = GR.refsAll ? list : list.slice(0, 5);
+  return `<div class="gr-refs" id="grRefs"><span class="lab">참고할 단원평가·활동지 <span class="muted">(체크한 것만 평어를 쓸 때 참고해요)</span></span>
+    ${show.map(r => { const k = `${r.kind}:${r.id}`; return `<label class="switch"><input type="checkbox" data-gr-ref="${esc(k)}"${GR.refs.includes(k) ? ' checked' : ''}>${r.kind === 'unit' ? '단원평가' : '활동지'} 「${esc(r.title)}」 <span class="muted">${esc(r.date)}</span></label>`; }).join('')}
+    ${list.length > show.length ? `<button class="btn text tiny" type="button" data-gr-ref-more>더보기 (${list.length - show.length}개)</button>` : ''}</div>`;
+}
+/* 한꺼번에 넣기(gr-bundle.js가 나눠 줌): 정답·기준 글 → 정답표 문서, 정답·교사용·빈 쪽 → 정답표 그림, 학생 쪽 → 평가지 */
+function grPutBundle(b) {
+  if (['grading', 'ranking', 'writing'].includes(GR.phase)) { toast('채점하는 중에는 넣을 수 없어요. 끝나거나 멈춘 뒤에 넣어 주세요.', 5000); return; }
+  const crit = b.pages.filter((p, i) => b.roles[i] !== 'student'), stu = b.pages.filter((p, i) => b.roles[i] === 'student');
+  const text = String(b.doc.teacher || b.doc.student || '').trim();
+  if (stu.length && (GR.id || GR.students.some(s => s.status === 'done' || s.text))) grNew(false);
+  if (text) GR.critDocs.push({ name: '한꺼번에 넣은 정답·기준', text: text.slice(0, CRIT_DOC_MAX) });
+  const room = Math.max(0, CRIT_IMG_MAX - GR.critImgs.length);
+  if (crit.length) GR.critImgs.push(...crit.slice(0, room));
+  if (stu.length) { GR.pages.push(...stu); grBuildStudents(); }
+  GR._critCache = null; renderGR(); GRStore.save();
+  toast([text && '정답·기준 문서', crit.length && `정답표 그림 ${Math.min(room, crit.length)}쪽`, stu.length && `학생 ${GR.students.length}명`].filter(Boolean).join(' · ') + '을 넣었어요', 5000);
+}
 function grWritePrompt(lv, group, avoid) {
   const [lo, hi] = grLength();
   const mode = GR_MIX[GR.settings.mix] ? GR.settings.mix : 'mix';
@@ -3490,7 +3728,8 @@ function grWritePrompt(lv, group, avoid) {
     `6. 학생마다 시작하는 말, 핵심 표현, 서술어를 다르게 써서 서로 겹치지 않게 합니다.`,
     `7. ${pronounRule()}`,
     ``, `[학생]`,
-    ...group.map(who),
+    ...(grActiveRefs().length ? ['', '[참고: 단원평가·활동지] 학생 줄 아래 「참고:」는 같은 평가 영역의 다른 평가 결과입니다. 그 학생다운 평어를 쓰는 데만 참고하고, 점수·평가 이름은 쓰지 않습니다.', ''] : []),
+    ...group.map(s => who(s) + grRefLine(s.no)),
     avoid.length ? `\n[이미 쓴 평어] 아래와 표현이 겹치지 않게 씁니다.\n${avoid.slice(-30).map(t => '- ' + t).join('\n')}` : '',
     ``, `[출력] JSON 배열 하나만 출력합니다. 예: [{"no": ${group[0].no}, "text": "평어"}]`
   ].filter(x => x !== '').join('\n');
@@ -3507,7 +3746,8 @@ async function grGrade(st) {
     const imgs = await grStudentImages(st);
     if (!GR._critCache) { GR._critCache = grCritImages(); GR._critCache.catch(() => { GR._critCache = null; }); }
     const crit = await GR._critCache;
-    const r = await generate(grGradePrompt(st, crit.length), { signal: ctl.signal, images: [...imgs, ...crit], fresh: true, careful: true });
+    const parts = grGradeParts(st, crit.length);
+    const r = await generate(parts.own, { signal: ctl.signal, images: imgs, shared: { text: parts.shared, images: crit }, fresh: true, careful: true, task: 'grade', meter: GR.meter });
     const j = grJSON(r.text);
     const sc = Math.round(Number(j.score));
     if (!Number.isFinite(sc)) throw { code: 'bad_json' };
@@ -3519,6 +3759,7 @@ async function grGrade(st) {
       status: 'done'
     });
     if (GR.single && prevLevel) { st.level = prevLevel; st.stale = true; }
+    delete st.rv; // 다시 채점하면 지난 검토 의견은 지움
     st.rl = 0; concOk();
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
@@ -3533,13 +3774,16 @@ async function grGrade(st) {
     else if (FATAL.includes(code) || code === 'rate_limited') { GR.err = errMsg(code, e); GR.queue.forEach(id => { const s = grStudent(id); if (s) s.status = 'idle'; }); GR.queue = []; }
   } finally {
     GR.running.delete(st.id);
+    GR.warm = false;
+    grUse();
     grPump();
   }
 }
 function grPump() {
   if (GR.waitUntil && Date.now() < GR.waitUntil) { renderGRSoon(); return; }
   if (GR.phase === 'grading') {
-    while (GR.running.size < conc() && GR.queue.length) { const s = grStudent(GR.queue.shift()); if (s && !s.skip) grGrade(s); }
+    // 첫 학생은 혼자(GR.warm): 끝난 뒤 공통 부분(기준 그림·글)이 캐시에 있어 나머지가 싸게
+    while (GR.running.size < (GR.warm ? 1 : conc()) && GR.queue.length) { const s = grStudent(GR.queue.shift()); if (s && !s.skip) grGrade(s); }
     if (!GR.running.size && !GR.queue.length) {
       const act = grActive();
       if (GR.single) { GR.single = false; GR.phase = act.every(s => s.status === 'done' && s.text && !s.stale) ? 'done' : 'partial'; GRStore.save(); }
@@ -3561,6 +3805,8 @@ async function grStart() {
   if (!GR.id) { GR.id = Date.now().toString(36); GR.createdAt = Date.now(); }
   if (neisIsGr() && (NEIS.state === 'armed' || NEIS.state === 'arming')) neisClose();
   GR.err = ''; GR.calibrated = false; GR._critCache = null;
+  // 이 채점에 쓴 AI 양을 새로 모음(다시 채점하면 바뀜)
+  GR.meter = window.SSAM_WIRE ? window.SSAM_WIRE.newMeter() : null; GR.usedNow = false; GR.warm = true;
   const todo = grActive().filter(s => s.status !== 'done');
   if (!todo.length) { grAfterGrading(); return; }
   todo.forEach(s => { s.status = 'queued'; });
@@ -3610,7 +3856,7 @@ async function grCalibrate(signal) {
   if (list.length < 3) return;
   GR.loading = '학생들끼리 견주어 점수를 맞추는 중'; renderGRSoon();
   try {
-    const r = await generate(grCalibPrompt(list), { fresh: true, careful: true, signal });
+    const r = await generate(grCalibPrompt(list), { fresh: true, careful: true, signal, task: 'grade' });
     const arr = grJSON(r.text);
     if (!Array.isArray(arr)) return;
     const m = new Map(arr.map(x => [Number(x.no), Math.round(Number(x.score))]));
@@ -3632,8 +3878,62 @@ async function grAfterGrading() {
   if (hadTexts) grAssign(true);
   else { grAssign(false); grActive().forEach(s => { if (s.status === 'done') s.stale = true; }); }
   GRStore.save();
+  GR.calCtl = ctl;
+  await grReviewScores(ctl.signal);
+  GR.calCtl = null;
+  if (ctl.signal.aborted || GR.phase !== 'ranking') return; // 멈추기를 눌렀음
   await grWrite();
 }
+/* 검토 AI: 「읽기 어려움」과 나눈 수준이 바뀌는 바로 위·아래 학생만 같은 그림·채점 기준으로 다시 채점.
+   10점 이상 다르면 두 의견(st.rv). 키·한도·연결로 실패하면 「검토하지 못했어요」, 남은 검토는 그만둠 */
+async function grReviewScores(signal) {
+  const R = RV(), use = R && R.pick ? R.pick('grade', 'review') : null;
+  if (!use) return;
+  const ids = R.grReviewNeeded(grActive());
+  if (!ids.length) return;
+  delete GR.rvErr;
+  GR.loading = '검토 AI가 수준 경계에 있는 학생을 다시 보고 있어요'; renderGRSoon();
+  try {
+    if (!GR._critCache) { GR._critCache = grCritImages(); GR._critCache.catch(() => { GR._critCache = null; }); }
+    const crit = await GR._critCache;
+    for (const id of ids) {
+      if (signal.aborted) return;
+      const st = grStudent(id);
+      if (!st || st.status !== 'done') continue;
+      try {
+        const imgs = await grStudentImages(st);
+        if (!imgs.length) continue;
+        const parts = grGradeParts(st, crit.length);
+        const r = await generate(parts.own, { signal, images: imgs, shared: { text: parts.shared, images: crit }, fresh: true, careful: true, use, meter: GR.meter });
+        const j = grJSON(r.text), sc = Math.round(Number(j && j.score));
+        if (!Number.isFinite(sc)) continue;
+        const v = Math.max(0, Math.min(100, sc));
+        if (R.grDiffers(st.score, v)) st.rv = { score: v, summary: String(j.summary || '').trim().slice(0, 300) };
+        else delete st.rv;
+      } catch (e) {
+        const code = (e && e.code) || 'upstream_error';
+        if (code === 'cancelled') return;
+        if (code === 'bad_json') continue;
+        GR.rvErr = 1; return;
+      }
+    }
+  } finally { GR.loading = ''; grUse(); GRStore.save(); renderGRSoon(); }
+}
+/* 두 의견 고르기: [검토 점수 쓰기]는 점수·요약을 바꾸고 수준을 다시 맞춤 */
+GR_RV.handle = (key, use) => {
+  if (!String(key).startsWith('grs:')) return false;
+  const s = grStudent(decodeURIComponent(String(key).slice(4)));
+  if (!s || !rvOpen(s)) return true;
+  if (use) {
+    s.score = s.rv.score; if (s.rv.summary) s.summary = s.rv.summary;
+    if (!GR.running.size && !GR.writeCtl) grAssign(true);
+    else if (GR.writeCtl) GR.needAssign = true; // 평어를 다 쓴 뒤에 맞춤
+  }
+  s.rv = { ...s.rv, done: use ? 'review' : 'main' };
+  GRStore.save(); renderGR();
+  toast(use ? '검토 점수를 썼어요' : '그대로 두었어요');
+  return true;
+};
 
 /* ---------- 평어 쓰기 ---------- */
 function grConfirmRewrite() {
@@ -3658,6 +3958,7 @@ async function grWrite(only) {
   if (GR.writeCtl) { GR.pendingWrite = GR.pendingWrite || new Set(); (only || grActive().map(s => s.id)).forEach(id => GR.pendingWrite.add(id)); return; }
   GR.phase = 'writing'; GR.err = '';
   const ctl = new AbortController(); GR.writeCtl = ctl;
+  grWrote = new Set();
   renderGRSoon();
   const want = grActive().filter(s => s.status === 'done' && s.level && (only ? only.includes(s.id) : s.stale || !s.text));
   want.forEach(s => { s.writing = true; });
@@ -3691,35 +3992,45 @@ async function grWrite(only) {
       if (seen.has(k) && !ctl.signal.aborted) { const avoid = grActive().filter(x => x.level === s.level && x.text && x !== s).map(x => x.text); await grWriteChunk(s.level, [s], avoid, ctl.signal); }
       seen.set(normKey(s.text).slice(0, 18), s.id);
     }
+    // 검토 AI: 이번에 쓴 평어만 10개씩 (사용함 표시한 학생은 빼고). 검토하는 동안 창을 닫아도 평어는 남게 먼저 저장
+    const wrote = [...grWrote].filter(x => x.text && !x.d);
+    if (!ctl.signal.aborted && wrote.length && RV() && RV().pick('writing', 'review')) {
+      GRStore.save();
+      const r = await reviewSentences('gr', grTaskText(), wrote.map(o => ({ o, f: 'text' })), ctl.signal, { rv: 'trv', d: 'trvd' });
+      if (r === 'fail') GR.rvErr = 1; else if (r === 'ok') delete GR.rvErr;
+    }
   } catch (e) {
     const code = (e && e.code) || 'upstream_error';
     if (code !== 'cancelled') GR.err = errMsg(code, e);
   } finally {
     grActive().forEach(s => { delete s.writing; });
     GR.writeCtl = null;
+    // 쓰는 동안 [검토 점수 쓰기]를 골랐으면 이제 수준을 다시 맞춤 (바뀐 학생은 「다시 쓰세요」)
+    if (GR.needAssign) { GR.needAssign = false; grAssign(true); }
     GR.phase = grActive().some(s => s.status === 'done' && (!s.text || s.stale)) ? 'partial' : 'done';
     GRStore.save();
     renderGRSoon();
     if (GR.pendingWrite && GR.pendingWrite.size) { const ids = [...GR.pendingWrite]; GR.pendingWrite = null; setTimeout(() => grWrite(ids), 0); }
   }
 }
+let grWrote = new Set(); // 이번 쓰기에서 평어를 쓴 학생 (검토는 이 학생만)
 async function grWriteChunk(lv, chunk, avoid, signal) {
-  const r = await generate(grWritePrompt(lv, chunk, avoid), { signal, fresh: true });
+  const r = await generate(grWritePrompt(lv, chunk, avoid), { signal, fresh: true, task: 'writing' });
   const arr = grJSON(r.text);
   const list = Array.isArray(arr) ? arr : (arr && Array.isArray(arr.items) ? arr.items : []);
   for (const x of list) {
     const s = chunk.find(c => c.no === Number(x.no));
     const t = cleanLine(String(x.text || ''));
-    if (s && t) { s.text = t; s.stale = false; s.d = 0; delete s.writing; }
+    if (s && t) { s.text = t; s.stale = false; s.d = 0; delete s.writing; delete s.trv; delete s.trvd; grWrote.add(s); }
   }
   // 빠진 학생은 한 명씩
   for (const s of chunk.filter(c => c.writing)) {
     if (signal && signal.aborted) return;
-    const r2 = await generate(grWritePrompt(lv, [s], avoid.concat(chunk.filter(c => c.text).map(c => c.text))), { signal, fresh: true });
+    const r2 = await generate(grWritePrompt(lv, [s], avoid.concat(chunk.filter(c => c.text).map(c => c.text))), { signal, fresh: true, task: 'writing' });
     const a2 = grJSON(r2.text);
     const x = Array.isArray(a2) ? a2[0] : a2;
     const t = x && cleanLine(String(x.text || ''));
-    if (t) { s.text = t; s.stale = false; s.d = 0; }
+    if (t) { s.text = t; s.stale = false; s.d = 0; delete s.trv; delete s.trvd; grWrote.add(s); }
     delete s.writing;
   }
 }
@@ -3752,15 +4063,17 @@ function renderGRSetup() {
   const locked = ['grading', 'ranking', 'writing'].includes(GR.phase);
   const u = grUnit();
   const per = Math.max(1, st.pagesPer | 0), rem = GR.pages.length % per;
-  box.innerHTML = `
+  box.innerHTML = `<div class="ai-row" data-ai-row="grade"></div><div class="ai-row" data-ai-row="writing"></div>
     <div class="gr-step">
       <div class="gr-h"><span class="sn">1</span><b>무엇을 채점할까요</b></div>
+      ${!locked && window.SSAM.bundleBoxHTML ? window.SSAM.bundleBoxHTML('gr', '정답·채점 기준 문서와 학생 평가지 스캔을 한꺼번에 넣으면 알아서 나눠요') : ''}
       <label class="lab" for="grUnit">평가요소</label>
       <select class="field" id="grUnit" ${locked ? 'disabled' : ''}>
         <option value="">${S.plan ? '직접 입력' : '직접 입력 (교과 평어 탭에서 평가계획을 넣으면 고를 수 있어요)'}</option>
         ${grUnitOptions()}
       </select>
       ${u ? `<p class="muted gr-crit">${esc(u.subject)} · ${esc(u.unit || '')}<br>상: ${esc(u.crit.high || '-')}</p>` : `<input class="field" id="grTitle" placeholder="수행평가 제목 (예: 3학년 수학 곱셈 서술형)" value="${esc(GR.title)}" ${locked ? 'disabled' : ''} autocomplete="off">`}
+      ${grRefsHTML(u)}
       <div class="crit-box" id="grCritBox">
       <label class="lab" for="grCrit">채점 기준·정답 <span class="muted">(있으면 넣기)</span></label>
       <textarea class="field" id="grCrit" rows="3" placeholder="예) 1번 정답 456, 풀이식이 있으면 만점 / 2번 까닭을 두 가지 이상 쓰면 상" ${locked ? 'disabled' : ''}>${esc(GR.criteria)}</textarea>
@@ -3864,7 +4177,8 @@ function renderGRResults() {
     <button class="btn text back" type="button" data-gr="back">${ICON.back}채점 설정</button>
     <div class="gr-top">
       <div><h2>${esc(grUnit() ? (grUnit().elem || grUnit().unit) : (GR.title || '수행평가'))}</h2>
-        <p class="muted">${busy ? '<span class="spin"></span>' : ''}${esc(phaseText)}${GR.calibrated ? ' · 학생끼리 견주어 점수를 맞췄어요' : ''}</p></div>
+        <p class="muted">${busy ? '<span class="spin"></span>' : ''}${esc(phaseText)}${GR.calibrated ? ' · 학생끼리 견주어 점수를 맞췄어요' : ''}</p>
+        ${GR.aiUse && window.SSAM_WIRE && window.SSAM_WIRE.useText(GR.aiUse) ? `<p class="muted" id="grAiUse">${GR.usedNow ? '' : '지난 채점 '}${esc(window.SSAM_WIRE.useText(GR.aiUse))}</p>` : ''}</div>
       ${busy ? `<div class="meter big"><i style="width:${GR.phase === 'grading' ? Math.round(graded / Math.max(1, total) * 100) : GR.phase === 'writing' ? Math.round(done.filter(s => s.text && !s.stale).length / Math.max(1, graded) * 100) : 100}%"></i></div>` : ''}
     </div>
     ${hasLevels ? `<div class="dist">${LV.map(l => `<span class="dchip ${l.cls} ${lvCount[l.k] !== tg[l.k] ? 'off' : ''}"><span class="sw"></span>${l.name} <b class="num">${lvCount[l.k]}</b><small class="num">/ ${tg[l.k]}명</small></span>`).join('')}</div>` : ''}
@@ -3880,11 +4194,12 @@ function renderGRResults() {
         ${GR.phase === 'partial' && done.some(s => s.level && (!s.text || s.stale)) ? `<button class="btn primary" type="button" data-gr="writeRest">남은 평어 쓰기</button>` : ''}
       </div>
     </div>
+    ${GR.rvErr ? RV_FAIL_HTML : ''}${rvBarHTML(act.filter(s => rvOpen(s)).length + act.filter(s => rvOpen(s, 'trv')).length)}
     <ul class="gr-list">${list.map(s => {
       const p0 = GR.pages[s.pages[0]];
       const lvc = s.level ? LV.find(l => l.k === s.level).cls : '';
       const n = s.text ? s.text.length : 0;
-      return `<li class="gr-row ${s.skip ? 'skip' : ''} ${lvc}" data-grrow="${esc(s.id)}">
+      return `<li class="gr-row ${s.skip ? 'skip' : ''} ${lvc}${rvOpen(s) ? ' rv-mark' : ''}" data-grrow="${esc(s.id)}">
         <button class="thumb" type="button" data-grview1="${esc(s.id)}" aria-label="${s.no}번 평가지 크게 보기">${p0 ? `<img src="${p0.thumb || p0.url}" alt="" loading="lazy" decoding="async">${grMaskOverlay(0)}` : `<span class="noimg">${s.no}</span>`}${s.pages.length > 1 ? `<small>${s.pages.length}쪽</small>` : ''}</button>
         <div class="body">
           <div class="head">
@@ -3896,9 +4211,10 @@ function renderGRResults() {
             <span class="grow"></span>
             ${s.d && s.text ? `<span class="chip done">${ICON.check}사용함</span>` : ''}
           </div>
-          ${s.text && !s.skip ? `<div class="gr-text ${s.d ? 'done' : ''} ${s.stale ? 'stale' : ''}" role="button" tabindex="0" data-grcopy="${esc(s.id)}" aria-label="${s.d ? '사용함. ' : ''}${s.no}번 평어 복사">${esc(s.text)}</div>` : ''}
+          ${s.text && !s.skip ? `<div class="gr-text ${s.d ? 'done' : ''} ${s.stale ? 'stale' : ''}${rvOpen(s, 'trv') ? ' rv-mark' : ''}" role="button" tabindex="0" data-grcopy="${esc(s.id)}" aria-label="${s.d ? '사용함. ' : ''}${s.no}번 평어 복사">${esc(s.text)}</div>${rvInline(s, 'gr:' + encodeURIComponent(s.id), `${s.no}번 평어`, 'trv', 'text')}` : ''}
           ${s.stale && s.text && !s.writing ? `<p class="muted warn">수준이 바뀌었어요. 평어를 다시 쓰세요.</p>` : ''}
           ${s.summary && !s.skip ? `<p class="muted gr-sum">${esc(s.summary)}</p>` : ''}
+          ${rvOpen(s) && RV() ? `<div class="rv-inline" data-rv-for="grs:${esc(s.id)}">${RV().opinionHTML({ title: '두 AI의 점수가 10점 넘게 달라요', main: `${s.score}점 · ${s.summary || ''}`, alt: `${s.rv.score}점 · ${s.rv.summary || ''}`, use: 'grs:' + encodeURIComponent(s.id), keep: 'grs:' + encodeURIComponent(s.id), useLabel: '검토 점수 쓰기' })}</div>` : ''}
           ${s.err ? `<p class="muted err">${esc(s.err)}</p>` : ''}
           <div class="acts">
             ${s.text ? `<span class="muted num ${n < lo || n > hi ? 'warn' : ''}">${n}자</span>` : ''}
@@ -4057,7 +4373,7 @@ const neisIsGr = () => !NEIS.src || NEIS.src.key === 'gr';
 function grNew(keepPages) {
   if (neisIsGr()) neisClose();
   grStop();
-  GR.id = null; GR.createdAt = 0; GR.calibrated = false; GR.err = ''; GR._critCache = null;
+  GR.id = null; GR.createdAt = 0; GR.calibrated = false; GR.err = ''; GR._critCache = null; GR.aiUse = null; GR.meter = null; GR.usedNow = false;
   if (!keepPages) { grFreePages(); GR.pages = []; GR.students = []; GR.settings.startNo = 1; }
   else GR.students.forEach(s => Object.assign(s, { status: 'idle', score: null, score0: null, level: null, manual: false, summary: '', evidence: [], strengths: '', improve: '', text: '', d: 0, stale: false, err: '' }));
   GR.phase = 'setup'; GR.showRes = false;
@@ -4066,7 +4382,7 @@ async function grOpenHistory(id) {
   const b = await GRStore.get(id);
   if (!b) { toast('채점 기록을 불러오지 못했어요'); return; }
   grNew(false);
-  GR.id = id; GR.title = b.title || ''; GR.unitId = b.unitId || ''; GR.criteria = b.criteria || ''; GR.critDocs = (b.critDocs || []).map(d => ({ name: String(d.name || ''), text: String(d.text || '') })); GR.createdAt = b.createdAt || 0; GR.calibrated = !!b.calibrated;
+  GR.id = id; GR.title = b.title || ''; GR.unitId = b.unitId || ''; GR.refs = Array.isArray(b.refs) ? b.refs.filter(x => typeof x === 'string') : []; GR.criteria = b.criteria || ''; GR.critDocs = (b.critDocs || []).map(d => ({ name: String(d.name || ''), text: String(d.text || '') })); GR.createdAt = b.createdAt || 0; GR.calibrated = !!b.calibrated;
   if (b.settings) { const { except, ...rest } = b.settings; Object.assign(GR.settings, rest); GR.settings.ratio = { ...GR.settings.ratio, ...(b.settings.ratio || {}) }; }
   let fixed = 0;
   GR.students = (b.students || []).map(s => {
@@ -4084,6 +4400,7 @@ async function grOpenHistory(id) {
     for (let no = Math.min(...nos); no <= hi; no++) if (!have.has(no) && !ex.has(no)) GR.students.push({ id: grId(), no, pages: [], skip: true, status: 'idle', score: null, level: null, text: '', d: 0, stale: false, manual: false });
   }
   GR.students.sort((x, y) => x.no - y.no);
+  GR.aiUse = b.aiUse && typeof b.aiUse === 'object' ? b.aiUse : null;
   GR.phase = grActive().every(s => s.text && !s.stale) ? 'done' : 'partial';
   if (fixed) GRStore.save();
   GR.showRes = true; $('#grView').classList.add('show-pane');
@@ -4097,7 +4414,7 @@ document.addEventListener('click', async e => {
     const a = b.dataset.gr;
     if (a === 'start') grStart();
     else if (a === 'stop') { grStop(); toast('멈췄어요. 채점한 결과는 그대로 있어요.'); }
-    else if (a === 'new') { grNew(false); GR.title = ''; GR.criteria = ''; GR.critImgs = []; GR.critDocs = []; renderGR(); }
+    else if (a === 'new') { grNew(false); GR.title = ''; GR.criteria = ''; GR.critImgs = []; GR.critDocs = []; GR.refs = []; GR.refsAll = false; renderGR(); }
     else if (a === 'mask') openGRMask();
     else if (a === 'noBox') openGRNoBox();
     else if (a === 'reverse') { GR.pages.reverse(); grBuildStudents(); renderGR(); toast('쪽 순서를 거꾸로 바꿨어요'); }
@@ -4141,6 +4458,8 @@ document.addEventListener('click', async e => {
     if (!s.pages.length) { toast('스캔 이미지가 없어서 다시 채점할 수 없어요. 평가지를 다시 올려 주세요.', 4000); return; }
     if (!engineReady()) { openSettings(); return; }
     GR.single = true; GR.phase = 'grading'; GR.queue.push(s.id); s.status = 'queued'; GR._critCache = null;
+    // 다시 채점한 양만 사용량 줄에(지난 채점에 더하지 않음)
+    GR.meter = window.SSAM_WIRE ? window.SSAM_WIRE.newMeter() : null; GR.usedNow = false;
     grPump();
     return;
   }
@@ -4158,6 +4477,17 @@ document.addEventListener('click', async e => {
   }
   const dz = t.closest('#grDrop');
   if (dz && dz.getAttribute('aria-disabled') !== 'true') { const fs = await grPickFiles('.pdf,image/*', true); grAddPages(fs); }
+});
+/* 참고할 단원평가·활동지 체크·더보기 */
+document.addEventListener('change', e => {
+  if (S.mode !== 'gr' || !evalShown() || !e.target.dataset || !e.target.dataset.grRef) return;
+  const k = e.target.dataset.grRef;
+  GR.refs = e.target.checked ? [...new Set([...GR.refs, k])] : GR.refs.filter(x => x !== k);
+  GRStore.save();
+});
+document.addEventListener('click', e => {
+  if (S.mode !== 'gr' || !evalShown() || !e.target.closest || !e.target.closest('[data-gr-ref-more]')) return;
+  GR.refsAll = true; renderGRSetup();
 });
 document.addEventListener('keydown', e => {
   if (S.mode !== 'gr' || !evalShown()) return;
@@ -4252,6 +4582,8 @@ function neisListen() {
 async function neisArm(from) {
   if (NEIS.state === 'running') return;
   neisListen();
+  // 에듀파인 차례로 붙여넣기 창은 닫음(앱은 Ctrl+V를 하나만 맡음 — 준비는 neis_arm이 바꿈)
+  document.dispatchEvent(new CustomEvent('ssam:paste-owner', { detail: 'neis' }));
   clearTimeout(NEIS.rearmT);
   const seq = ++NEIS.seq;
   NEIS.from = Math.max(0, Math.min(NEIS.ids.length - 1, from | 0));
@@ -4274,6 +4606,12 @@ async function neisArm(from) {
   else { NEIS.state = 'armed'; NEIS.job = { gen: r && r.gen, ids, from: start, src }; NEIS.until = Date.now() + ((r && +r.secs) || 300) * 1000; }
   renderNeis();
 }
+// 에듀파인 차례로 붙여넣기를 준비하면 이 창은 닫음(붙여넣는 중이 아니면 — 그때는 앱이 차례로 붙여넣기를 막음)
+document.addEventListener('ssam:paste-owner', e => {
+  if (e.detail === 'neis' || !NEIS.open || NEIS.state === 'running') return;
+  clearTimeout(NEIS.rearmT); NEIS.seq++; NEIS.job = null; NEIS.open = false; NEIS.state = 'idle';
+  renderNeis();
+});
 function neisClose() {
   clearTimeout(NEIS.rearmT);
   if (IN_APP && NEIS.state !== 'idle') neisInvoke('neis_disarm').catch(() => {});
@@ -4443,6 +4781,7 @@ const CHE = {
   areas: { auto: { acts: [ccNewAct()], items: {} }, club: { club: '', acts: [ccNewAct()], items: {} }, career: { acts: [ccNewAct()], items: {} } },
   view: 'auto', len: 'mid', grade: 3,
   queue: [], running: new Map(), err: '', waitT: null, showRes: false, loaded: false,
+  wrote: new Set(), rvCtl: null, // 이번 차례에 쓴 창체 문장(검토는 이것만), 검토 멈추기
   sheets: {}, loading: null // 학습지 스캔 (아래 「학습지 스캔」)
 };
 const ccInfo = k => CC_AREAS.find(a => a.k === k);
@@ -4681,6 +5020,7 @@ function ccPump() {
   renderCCSoon();
 }
 function ccStop() {
+  CHE.wrote.clear(); if (CHE.rvCtl) CHE.rvCtl.abort(); // 멈추면 검토도 하지 않음
   CHE.queue = [];
   CHE.running.forEach(r => r.ctl.abort());
   clearTimeout(CHE.waitT); CHE.waitUntil = 0;
@@ -4716,12 +5056,33 @@ async function ccRun(job) {
     CHE.running.delete(key);
     CCStore.save();
     ccPump();
+    if (!CHE.running.size && !CHE.queue.length) ccReviewAll();
   }
+}
+/* 검토 AI: 이 차례에 쓴 창체 문장(활동마다)을 10개씩. 실패하면 남은 검토는 그만둠 */
+async function ccReviewAll() {
+  if (CHE.reviewing || !CHE.wrote.size || !RV() || !RV().pick('writing', 'review')) { CHE.wrote.clear(); return; }
+  const wrote = CHE.wrote; CHE.wrote = new Set();
+  CHE.reviewing = true;
+  const ctl = new AbortController(); CHE.rvCtl = ctl;
+  renderCCSoon();
+  try {
+    for (const a of CC_AREAS) {
+      const A = ccArea(a.k);
+      for (const act of A.acts) {
+        const items = classNos().map(no => { const it = A.items[no], p = it && it.parts && it.parts[act.id]; return p && wrote.has(p) && !(it && it.d) ? { o: p, f: 't' } : null; }).filter(Boolean);
+        const r = await reviewSentences('cc', `[${a.name}] ${act.name || ''}${act.desc ? ' — ' + act.desc : ''}`, items, ctl.signal);
+        if (ctl.signal.aborted) return;
+        if (r === 'fail') { CHE.rvErr = 1; return; }
+        if (r === 'ok') delete CHE.rvErr;
+      }
+    }
+  } finally { CHE.reviewing = false; CHE.rvCtl = null; CCStore.save(); renderCCSoon(); }
 }
 
 /* 활동 내용만으로 여러 학생 */
 async function ccRunPlain(job, act, sig, others, signal) {
-  const r = await generate(ccPrompt(job.k, act, job.nos.length + 2, others.slice(-40)), { signal, fresh: true });
+  const r = await generate(ccPrompt(job.k, act, job.nos.length + 2, others.slice(-40)), { signal, fresh: true, task: 'writing' });
   const seen = new Set(others.map(t => normKey(t).slice(0, 18)));
   const lines = [];
   for (const raw of String(r.text || '').split('\n')) {
@@ -4735,7 +5096,7 @@ async function ccRunPlain(job, act, sig, others, signal) {
     const t = lines.shift();
     if (!t) { left.push(no); continue; }
     const it = ccItem(job.k, no);
-    it.parts[act.id] = { t, sig };
+    it.parts[act.id] = { t, sig }; CHE.wrote.add(it.parts[act.id]);
     it.d = 0;
   }
   if (left.length && job.tries < 2) CHE.queue.unshift({ ...job, nos: left, tries: job.tries + 1 });
@@ -4746,19 +5107,19 @@ async function ccRunSheet(job, act, sig, others, signal) {
   if (!pages.length) { CHE.queue.unshift({ ...job, kind: ccObs(job.k, no, act.id) ? 'note' : 'plain' }); return; } // 그사이 학습지를 뺐음
   const mask = ccMask(act), imgs = [];
   for (let j = 0; j < pages.length; j++) imgs.push(await pageImage(pages[j], act.maskAll || j === 0 ? mask : null));
-  const r = await generate(ccSheetPrompt(job.k, act, pages.length, others.slice(-30)), { signal, images: imgs, fresh: true, careful: true });
+  const r = await generate(ccSheetPrompt(job.k, act, pages.length, others.slice(-30)), { signal, images: imgs, fresh: true, careful: true, task: 'writing' });
   const j = grJSON(r.text);
   const t = cleanLine(String((j && j.text) || ''));
   if (!t) throw { code: 'bad_json' };
   const it = ccItem(job.k, no);
   (it.obs || (it.obs = {}))[act.id] = { n: String(j.note || '').trim().slice(0, 400), w: key, b: j.blank ? 1 : 0 };
-  it.parts[act.id] = { t, sig, w: key };
+  it.parts[act.id] = { t, sig, w: key }; CHE.wrote.add(it.parts[act.id]);
   it.d = 0;
 }
 /* 읽어 둔 내용으로 여러 학생 */
 async function ccRunNotes(job, act, sig, others, signal) {
   const list = job.nos.map(no => { const o = ccObs(job.k, no, act.id); return { no, note: o && !o.b ? o.n : '' }; });
-  const r = await generate(ccNotePrompt(job.k, act, list, others.slice(-30)), { signal, fresh: true });
+  const r = await generate(ccNotePrompt(job.k, act, list, others.slice(-30)), { signal, fresh: true, task: 'writing' });
   const arr = grJSON(r.text);
   const xs = Array.isArray(arr) ? arr : (arr && Array.isArray(arr.items) ? arr.items : []);
   const left = [];
@@ -4767,7 +5128,7 @@ async function ccRunNotes(job, act, sig, others, signal) {
     const t = x && cleanLine(String(x.text || ''));
     if (!t) { left.push(no); continue; }
     const it = ccItem(job.k, no), o = ccObs(job.k, no, act.id);
-    it.parts[act.id] = o && o.w ? { t, sig, w: o.w } : { t, sig };
+    it.parts[act.id] = o && o.w ? { t, sig, w: o.w } : { t, sig }; CHE.wrote.add(it.parts[act.id]);
     it.d = 0;
   }
   if (left.length === job.nos.length) throw { code: 'bad_json' };
@@ -4812,7 +5173,7 @@ function renderCCSetup() {
       <button class="btn text tiny" type="button" data-ccadd="${k}">${ICON.plus}활동 더하기</button>
     </div>`;
   };
-  box.innerHTML = `
+  box.innerHTML = `<div class="ai-row" data-ai-row="writing"></div>
     <div class="gr-step">
       <div class="gr-h"><span class="sn">1</span><b>학급 명단</b></div>
       ${rosterHTML()}
@@ -4903,7 +5264,7 @@ function renderCCResults() {
       let shot = null;
       for (const a of sheetActs) { const pg = ccSheetPages(a.id, no); if (pg.length) { shot = { p: pg[0], a, n: pg.length }; break; } }
       const obs = acts.map(a => [a, ccObs(k, no, a.id)]).filter(x => x[1]);
-      return `<li class="gr-row cc-row ${it && it.d ? 'used' : ''}">
+      return `<li class="gr-row cc-row ${it && it.d ? 'used' : ''}${it && it.parts && acts.some(a => rvOpen(it.parts[a.id])) ? ' rv-mark' : ''}">
         ${sheetActs.length ? (shot ? `<button class="thumb" type="button" data-ccview1="${no}" aria-label="${no}번 학습지 크게 보기"><img src="${shot.p.thumb || shot.p.url}" alt="" loading="lazy" decoding="async">${maskOverlay(ccMask(shot.a), shot.a.maskAll, 0)}${shot.n > 1 ? `<small>${shot.n}쪽</small>` : ''}</button>` : '<span class="thumb none" title="학습지 없음"><span class="noimg">-</span></span>') : ''}
         <div class="body">
           <div class="head"><span class="badge num">${no}</span>
@@ -4912,6 +5273,7 @@ function renderCCResults() {
             <span class="grow"></span>${it && it.d && t ? `<span class="chip done">${ICON.check}사용함</span>` : ''}</div>
           ${t ? `<div class="gr-text ${it && it.d ? 'done' : ''}" role="button" tabindex="0" data-cccopy="${no}" aria-label="${it && it.d ? '사용함. ' : ''}${no}번 ${info.name} 복사">${esc(t)}</div>` : (running ? '<div class="skel"></div>' : '<p class="muted">아직 쓰지 않았어요</p>')}
           ${obs.filter(x => x[1].n).map(([a, o]) => `<p class="muted gr-sum">${acts.length > 1 ? esc((a.name || '').trim() || '활동') + ' ' : ''}학습지: ${esc(o.n)}</p>`).join('')}
+          ${it && it.parts ? acts.map(a => rvInline(it.parts[a.id], ['cc', k, no, a.id].map(encodeURIComponent).join(':'), `${no}번${acts.length > 1 ? ' ' + ((a.name || '').trim() || '활동') : ''}`)).join('') : ''}
           <div class="acts">${t ? `<span class="muted num">${t.length}자</span>` : ''}
             ${!running && engineReady() ? `<button class="btn text tiny" type="button" data-ccre="${no}">${t ? '다시 쓰기' : '쓰기'}</button>` : ''}
             ${it && it.d && t ? `<button class="btn text tiny" type="button" data-ccundo="${no}">사용 표시 지우기</button>` : ''}</div>
@@ -4924,7 +5286,7 @@ function renderCCResults() {
     <div class="seg cc-tabs" role="tablist">${CC_AREAS.map(tab).join('')}</div>
     ${CHE.err ? `<div class="banner err"><span class="grow">${esc(CHE.err)}</span>${CHE.waitUntil ? '' : '<button class="btn" type="button" data-act="settings">평어 쓰는 방식</button>'}</div>` : ''}
     ${!engineReady() ? `<div class="banner info"><span class="grow">문장을 만들 AI를 먼저 정해 주세요.</span><button class="btn primary" type="button" data-act="settings">API 키 넣기</button></div>` : ''}
-    ${upNote()}
+    ${upNote()}${CHE.rvErr ? RV_FAIL_HTML : ''}${CHE.reviewing ? '<p class="muted rv-busy"><span class="spin"></span> 검토 AI가 문장을 살펴보고 있어요…</p>' : ''}${rvBarHTML(nos.reduce((n, no) => { const it = A.items[no]; return n + (it && it.parts ? acts.filter(a => rvOpen(it.parts[a.id])).length : 0); }, 0))}
     ${stale && !busy ? `<div class="banner warn"><span class="grow">활동 내용이 바뀐 학생이 ${stale}명 있어요. 「만들기」를 누르면 새 활동으로 고쳐 써요. 사용함으로 표시한 학생은 그대로 둬요.</span></div>` : ''}
     ${sheetN && !busy ? `<div class="banner info"><span class="grow">학습지를 넣은 학생 ${sheetN}명은 아직 학습지 내용이 글에 들어가지 않았어요. 「남은 학생 쓰기」를 누르면 학습지를 읽고 고쳐 써요.</span></div>` : ''}
     ${nos.length && acts.length ? `<div class="tools"><div class="left">${k === 'club' && (A.club || '').trim() ? `<span class="muted">문장 앞에 <b>(${esc(A.club.trim())})</b>를 붙여요</span>` : ''}</div>
@@ -5011,15 +5373,16 @@ function openCCSheetView(k, no) {
 const ccDropZone = t => t && t.closest && t.closest('[data-ccsheetbox]');
 // 파일을 학습지 칸 밖에 놓으면 창에 그 파일이 열려 앱 화면이 사라지므로 막음
 const hasFiles = e => !!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'));
+// 창체 화면이 보일 때만(모드는 남아 있어도 단원평가·활동지 탭·다른 메뉴의 끌어 놓기를 막지 않게)
 ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => {
-  if (S.mode !== 'cc' || !hasFiles(e)) return;
+  if (S.mode !== 'cc' || !evalShown() || !hasFiles(e)) return;
   e.preventDefault();
   const dz = ccDropZone(e.target);
   if (dz) dz.classList.add('on'); else e.dataTransfer.dropEffect = 'none';
 }));
 document.addEventListener('dragleave', e => { const dz = ccDropZone(e.target); if (dz && !dz.contains(e.relatedTarget)) dz.classList.remove('on'); });
 document.addEventListener('drop', e => {
-  if (S.mode !== 'cc' || !hasFiles(e)) return;
+  if (S.mode !== 'cc' || !evalShown() || !hasFiles(e)) return;
   e.preventDefault();
   const dz = ccDropZone(e.target); if (!dz) return;
   dz.classList.remove('on');
@@ -5170,7 +5533,7 @@ async function pronCollect() {
             if (cur ? (S.planId !== p.id || S.sets !== sets) : S.planId === p.id) return false;
             if (it.d || it.t !== orig || !set.items.includes(it)) return false;
             const c = cleanLine(t); if (!c) return false;
-            it.t = c;
+            it.t = c; delete it.rv;
             dirty.set('s:' + p.id + ':' + k, () => Store.saveSet(p.id, k, set, sets));
             return true;
           }
@@ -5193,7 +5556,7 @@ async function pronCollect() {
           if (open ? GR.id !== h.id : GR.id === h.id) return false;
           if (s.d || s.text !== orig || s.writing) return false;
           const c = cleanLine(t); if (!c) return false;
-          s.text = c;
+          s.text = c; delete s.trv;
           dirty.set('g:' + h.id, open ? () => GRStore.save() : () => {
             if (Store.mode === 'db') writeDoc(Store.base() + '/g_' + h.id, b);
             else if (Store.mode === 'local') Store.lsSet('ssam:gr:' + h.id, b);
@@ -5246,7 +5609,7 @@ function pronPrompt(kind, texts) {
 async function pronBatch(kind, batch, signal) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const r = await generate(pronPrompt(kind, batch.map(j => j.text)), { signal, fresh: true });
+      const r = await generate(pronPrompt(kind, batch.map(j => j.text)), { signal, fresh: true, task: 'writing' });
       const arr = grJSON(r.text);
       if (!Array.isArray(arr) || arr.length !== batch.length) throw { code: 'bad_json' };
       return arr.map(x => (typeof x === 'string' ? x : (x && (x.text || x.t)) || ''));
@@ -5365,8 +5728,12 @@ window.SSAM = {
     grBusy: () => GR.running.size > 0 || ['grading', 'ranking', 'writing'].includes(GR.phase)
   },
   setMode, getMode: () => S.mode,
+  // 평가지 채점 한꺼번에 넣기(gr-bundle.js)
+  gr: { putBundle: b => grPutBundle(b), refresh: () => { if (S.mode === 'gr') renderGRSetup(); }, mask: () => (GR.settings.maskOn ? GR.settings.mask : []) },
+  // 평가 영역 이음(활동지·단원평가 → 평가지 채점): 지금 평가계획의 영역 [{ id, subject, label }]
+  planUnits: () => allUnits().map(u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') })),
   onModeChange: fn => { modeHooks.push(fn); },
-  ai: { generate, engineReady, engineName, providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
+  ai: { generate, engineReady, engineName, testKey: () => ({ on: TEST.on, until: TEST.until, daily: TEST.daily, untilText: untilText(), using: usingTest(), own: !!(E.keys.upstage || '').trim() }), providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
   rosterHTML, toast, openSheet, closeSheet, esc, copyText,
   // 단원평가: 이름 칸 가리기 편집기 { shots: [{ url, label }], mask, all, what, save(mask, all) }
   openMaskEditor,

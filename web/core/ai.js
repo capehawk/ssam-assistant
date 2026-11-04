@@ -1,20 +1,28 @@
 /* AI 부르기: 새 메뉴(품의·계획 등)는 이 파일만 씀.
    실제 호출·키·모델은 평가 메뉴(window.SSAM.ai)가 맡음 — Claude·Gemini·GPT·업스테이지 */
+import * as wire from './ai-wire.js';
+import './write-style.js'; // 글쓰기 원칙(window.SSAM_STYLE) — 평가 메뉴의 AI 부르기에서 씀
 const A = () => (window.SSAM && window.SSAM.ai) || null;
+// 평가 메뉴(옛 IIFE)의 AI 부르기가 요청 모양·사용량 읽기에 씀
+if (typeof window !== 'undefined') window.SSAM_WIRE = wire;
 
 /* 지금 AI가 쓰는 중인 요청 수 (학년도를 옮기기 전에 봄) */
 let inflight = 0;
 export const busyCount = () => inflight;
 
-/* images: [{ mime, b64, blob }] → { text, truncated }. 실패하면 { code, message }를 던짐 */
-export function generate(prompt, { signal, images, careful } = {}) {
+/* images: [{ mime, b64, blob }] → { text, truncated, usage }. 실패하면 { code, message }를 던짐.
+   task: 업무(grade·writing·plan·notes)면 그 업무에 정한 AI로, role: 'main'|'review', use: { engine, model } 이 AI로
+   shared: { text, images } 학생마다 같은 공통 부분(앞에 두어 캐시), meter: 사용량을 모을 곳(ai-wire newMeter) */
+export function generate(prompt, { signal, images, careful, task, role, use, shared, meter } = {}) {
   const a = A();
   if (!a) return Promise.reject({ code: 'no_engine' });
   inflight++;
-  return Promise.resolve(a.generate(prompt, { signal, images, careful, fresh: true })).finally(() => { inflight--; });
+  return Promise.resolve(a.generate(prompt, { signal, images, careful, fresh: true, task, role, use, shared, meter })).finally(() => { inflight--; });
 }
 
 export const ready = () => !!(A() && A().engineReady());
+/* Claude 계정(claude.ai 안)으로 쓰는 중인지 — 동시 채점 수를 2로 */
+export const isAccount = () => !!(A() && A().current && A().current().engine === 'account');
 export const providerName = () => (A() && A().providerName()) || '';
 export const errorMessage = (code, e) => (A() ? A().errMsg(code, e) : 'AI를 부르지 못했어요.');
 

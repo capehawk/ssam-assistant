@@ -3,6 +3,7 @@
 import { get, set } from '../../core/store.js';
 import { isDate } from '../../core/calendar.js';
 import { personalColumn } from '../../core/survey.js';
+import { normRv } from './plan-rv.js';
 
 const LIST_KEY = 'events', CUR_KEY = 'event:current';
 
@@ -22,7 +23,7 @@ export function newEvent() {
     id: 'ev' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     kind: 'sports', name: '', purpose: '', grades: '', date: '', place: '', outdoor: false, budget: '',
     staff: [], lastSurvey: '', options: null, picked: null,
-    docs: { plan: '', safety: '', letter: '', rain: '', roles: [], done: false },
+    docs: { plan: '', safety: '', letter: '', rain: '', roles: [], done: false }, rv: [],
     refs: [], refNotes: { options: [], docs: [] },
     survey: null, status: 'draft', step: 1, maxStep: 1, updatedAt: 0
   };
@@ -128,6 +129,7 @@ function normEvent(v) {
   e.picked = Number.isInteger(v.picked) && e.options && v.picked >= 0 && v.picked < e.options.length ? v.picked : null;
   const d = isObj(v.docs) ? v.docs : {};
   e.docs = { plan: str(d.plan), safety: str(d.safety), letter: str(d.letter), rain: str(d.rain), roles: normRoles(d.roles, []), done: d.done === true };
+  e.rv = normRv(v.rv).filter(x => ['plan', 'safety', 'letter', 'rain'].includes(x.section));
   e.refs = normRefs(v.refs);
   const rn = isObj(v.refNotes) ? v.refNotes : {};
   // stale: 반영한 것을 쓴 뒤에 참고 자료를 바꿈 (다시 만들어야 새 자료가 반영됨)

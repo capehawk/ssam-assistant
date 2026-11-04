@@ -208,6 +208,21 @@ await run('event-plan', [
     assert(w[0] <= w[1], '넘침: ' + w);
     await page.setViewportSize({ width: 1280, height: 860 });
   }],
+  ['가정통신문 [학교 양식으로] → 기타 › 가정통신문에 제목·본문(AI 안 부름), 회신서 끔', async () => {
+    const n0 = prompts.length;
+    await page.click(`${V} #evList [data-ev]:has-text("가을 운동회")`);
+    await page.click(`${V} ol.steps [data-step="3"]`);
+    await page.click(`${V} [data-doc="letter"]`);
+    await page.click(`${V} [data-e="toLetter"]`);
+    const L = 'section[data-menu="etc"] .lf-box';
+    await page.waitForSelector(`${L} [data-lo="title"]`, { timeout: 5000 });
+    assert((await page.inputValue(`${L} [data-lo="title"]`)) === '가을 운동회 안내', await page.inputValue(`${L} [data-lo="title"]`));
+    assert((await page.inputValue(`${L} [data-lo="body"]`)).includes('문의: 교무실 000-0000'), '본문');
+    assert(!(await page.isChecked(`${L} #lfReplyOn`)), '회신서가 켜짐');
+    assert(prompts.length === n0, 'AI를 부름');
+    await page.click('nav.app-side [data-menu-go="plan"]');
+    await page.click('#menuTabs [data-tab="event"]');
+  }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
 await t.close();

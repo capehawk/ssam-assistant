@@ -1,0 +1,500 @@
+/* 학교 양식(.hwpx) 그대로 채우기 (스펙 2026-11-03 가정통신문 3장): 양식의 줄을 읽어 제목·본문·날짜·학교장·회신서 자리를 찾고,
+   머리(표어·「가정통신문」 상자·교장·담당·주소·로고)·학교장 줄은 그대로 두고 제목·본문·날짜만 바꿔 새 .hwpx를 만든다.
+   한글이 만든 XML을 통째로 다시 쓰지 않고, 바꿀 문단만 잘라 바꿈(작은 XML 읽개로 요소 위치만 앎). 화면 없이 돌아감(시험) */
+import { unzip, zipStore } from './zip.js';
+import { parseTableLines } from './body-table.js';
+
+/* ---------- 작은 XML 읽개 ---------- */
+/* 요소마다 { name, s(<), oe(여는 태그 끝 다음), cs(닫는 태그 <), e(끝 다음), self, kids, up } */
+function tagEnd(xml, i) {
+  let q = '';
+  for (let k = i + 1; k < xml.length; k++) {
+    const c = xml[k];
+    if (q) { if (c === q) q = ''; } else if (c === '"' || c === "'") q = c; else if (c === '>') return k;
+  }
+  throw new Error('XML');
+}
+export function scanXml(xml, { strict = false } = {}) {
+  const root = { name: '#root', s: 0, oe: 0, cs: xml.length, e: xml.length, kids: [], self: false, up: null };
+  const stack = [root];
+  let i = 0;
+  for (;;) {
+    const lt = xml.indexOf('<', i);
+    if (lt < 0) break;
+    if (xml.startsWith('<!--', lt)) { const k = xml.indexOf('-->', lt); if (k < 0) throw new Error('XML'); i = k + 3; continue; }
+    if (xml.startsWith('<![CDATA[', lt)) { const k = xml.indexOf(']]>', lt); if (k < 0) throw new Error('XML'); i = k + 3; continue; }
+    if (xml.startsWith('<?', lt)) { const k = xml.indexOf('?>', lt); if (k < 0) throw new Error('XML'); i = k + 2; continue; }
+    if (xml.startsWith('<!', lt)) { i = tagEnd(xml, lt) + 1; continue; }
+    const gt = tagEnd(xml, lt);
+    if (xml[lt + 1] === '/') {
+      const name = xml.slice(lt + 2, gt).trim();
+      const n = stack.pop();
+      if (!n || n === root || (strict && n.name !== name)) throw new Error('XML');
+      n.cs = lt; n.e = gt + 1;
+      i = gt + 1; continue;
+    }
+    const self = xml[gt - 1] === '/';
+    const name = /^<([^\s/>]+)/.exec(xml.slice(lt, gt + 1))[1];
+    const up = stack[stack.length - 1];
+    const n = { name, s: lt, oe: gt + 1, cs: self ? gt + 1 : -1, e: self ? gt + 1 : -1, self, kids: [], up };
+    up.kids.push(n);
+    if (!self) stack.push(n);
+    i = gt + 1;
+  }
+  if (strict && stack.length !== 1) throw new Error('XML');
+  return root;
+}
+/* 잘 짜인 XML인지(여닫는 태그 이름·짝) — 아니면 Error('XML') */
+export function checkXml(xml) { scanXml(xml, { strict: true }); return true; }
+
+const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const unesc = s => s.replace(/&(amp|lt|gt|quot|apos);/g, (m, k) => ENT[k]).replace(/&#(x[0-9a-f]+|\d+);/gi, (m, n) => String.fromCodePoint(n[0] === 'x' ? parseInt(n.slice(1), 16) : +n));
+export const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+const local = n => n.name.replace(/^.*:/, '');
+const kidsNamed = (n, nm) => n.kids.filter(k => local(k) === nm);
+function* walk(n) { for (const k of n.kids) { yield k; yield* walk(k); } }
+const has = (n, names) => { for (const k of walk(n)) if (names.includes(local(k))) return true; return false; };
+/* hp:t 글: 탭·줄바꿈·빈칸 요소는 글자로, 그 밖의 요소는 뺌 */
+const tText = (xml, t) => (t.self ? '' : unesc(xml.slice(t.oe, t.cs)
+  .replace(/<hp:tab\b[^>]*\/>/g, '\t').replace(/<hp:lineBreak\b[^>]*\/>/g, '\n').replace(/<hp:(fwSpace|nbSpace)\b[^>]*\/>/g, ' ').replace(/<[^>]+>/g, '')));
+function paraText(xml, p) {
+  let s = '';
+  for (const k of walk(p)) if (local(k) === 't' && !inNested(k, p)) s += tText(xml, k);
+  return s;
+}
+/* p 안의 다른 문단(표 칸) 속인지 */
+function inNested(k, p) { for (let u = k.up; u && u !== p; u = u.up) if (local(u) === 'p') return true; return false; }
+
+/* ---------- 양식 읽기 ---------- */
+/* 줄 = 표를 품지 않은 문단. 표를 품은 문단은 그 표 칸 안 문단들을 그 자리에 줄로 */
+function linesOf(xml, container, sec, out, inBox, top = null) {
+  for (const p of kidsNamed(container, 'p')) {
+    const tp = top || p;
+    const tables = [...walk(p)].filter(k => local(k) === 'tbl' && !inNested(k, p));
+    if (tables.length) {
+      for (const tb of tables) for (const tr of kidsNamed(tb, 'tr')) for (const tc of kidsNamed(tr, 'tc')) for (const sl of kidsNamed(tc, 'subList')) linesOf(xml, sl, sec, out, true, tp);
+      continue;
+    }
+    out.push({ sec, node: p, box: container, top: tp, inBox, text: paraText(xml, p), obj: has(p, ['pic', 'rect', 'ellipse', 'line', 'container', 'ole', 'equation']) });
+  }
+}
+
+/* u8 → { entries: [{ name, data }](차례 그대로), secs: [{ name, xml, root }], lines: [{ sec, text, inBox, obj, ... }] } */
+export async function readForm(u8) {
+  const files = await unzip(u8);
+  const entries = [...files].map(([name, data]) => ({ name, data }));
+  const names = entries.map(e => e.name).filter(n => /^Contents\/section\d+\.xml$/i.test(n)).sort((a, b) => +a.match(/(\d+)\.xml$/i)[1] - +b.match(/(\d+)\.xml$/i)[1]);
+  if (!names.length) throw new Error('HWPX_EMPTY');
+  const dec = new TextDecoder();
+  const secs = [], lines = [];
+  names.forEach((name, si) => {
+    const xml = dec.decode(files.get(name)), root = scanXml(xml);
+    const top = root.kids.find(k => local(k) === 'sec');
+    if (!top) return;
+    secs.push({ name, xml, root, top });
+    linesOf(xml, top, si, lines, false);
+  });
+  return { entries, secs, lines };
+}
+
+/* ---------- 자리 찾기 ---------- */
+const squash = s => String(s || '').replace(/\s+/g, '');
+const DATE = /(\d{4})(\s*)(\.|년)(\s*)(\d{1,2})(\s*)(\.|월)(\s*)(\d{1,2})?(\s*)(\.|일)?/;
+/* 학교장 줄: 끝의 「[직인생략]」·「(직인 생략)」·「(인)」은 떼고 「…학교장」·「…학교」·「…학교 교장」 */
+const isSign = t => { const q = squash(t).replace(/[[(（【]?직인생략[\])）】]?$/, '').replace(/[(（](인|印)[)）]$/, ''); return q.length <= 40 && /(학교장|학교|학교교장)$/.test(q) && /(초|중|고|학)/.test(q); };
+const WEEKDAY = /^(\s*)(?:\(([월화수목금토일])\)|([월화수목금토일])요일)/;
+const isDateLine = t => { const m = DATE.exec(t); return !!m && squash(t.replace(m[0], '')).length <= 30; };
+/* 인사: 줄 머리의 「안녕하십니까·존경하는·사랑하는」, 「학부모님, 안녕하…」 (제목 「학부모님께 드리는 글」은 인사가 아님) */
+const isGreet = t => /^\s*(안녕하(십니까|세요|신지요)|존경하는|사랑하는)|^\s*(학부모|보호자)님[,，]?\s*안녕/.test(t);
+const MARK = { title: '{제목}', body: '{본문}', date: '{날짜}', reply: '{회신서}' };
+
+/* lines → { title, bodyStart, bodyEnd, date, sign, reply } (줄 번호, 없으면 -1) */
+export function findRoles(lines) {
+  const at = mk => lines.findIndex(l => l.text.includes(mk));
+  const r = { title: -1, bodyStart: -1, bodyEnd: -1, date: -1, sign: -1, reply: -1 };
+  const filled = i => String(lines[i] && lines[i].text || '').trim();
+  if ([MARK.title, MARK.body, MARK.date].some(m => at(m) >= 0)) {
+    r.title = at(MARK.title); r.bodyStart = r.bodyEnd = at(MARK.body); r.date = at(MARK.date); r.reply = at(MARK.reply);
+    r.sign = lines.findIndex((l, i) => i > Math.max(r.date, r.bodyEnd) && isSign(l.text));
+    // {회신서} 표시가 없으면 학교장 줄 아래 옛 회신서를 찾음(남거나 둘이 되지 않게)
+    if (r.reply < 0 && r.sign >= 0) for (let k = r.sign + 1; k < lines.length; k++) if (filled(k) || lines[k].obj) { r.reply = k; break; }
+    return r;
+  }
+  // 머리 표: 맨 앞 줄이 표 안이면 그 표(같은 맨 위 문단)의 줄은 제목·본문으로 고르지 않음 — 날짜·학교장까지 한 표면 머리로 보지 않음
+  let headEnd = -1;
+  if (lines[0] && lines[0].inBox && lines[0].top) {
+    let k = 0; while (k + 1 < lines.length && lines[k + 1].top === lines[0].top) k++;
+    if (!lines.slice(0, k + 1).some(l => isSign(l.text) || isDateLine(l.text))) headEnd = k;
+  }
+  // 학교장 줄: 뒤에서부터, 날짜가 같은 줄이거나 바로 위(빈 줄 건너)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!isSign(lines[i].text) && !(isDateLine(lines[i].text) && isSign(lines[i].text.replace(DATE, '')))) continue;
+    let d = isDateLine(lines[i].text) ? i : -1;
+    for (let k = i - 1; d < 0 && k >= 0 && i - k <= 3; k--) { if (!filled(k)) continue; if (isDateLine(lines[k].text)) d = k; break; }
+    if (d < 0 && !/학교장$/.test(squash(lines[i].text))) continue;
+    r.sign = i; r.date = d; break;
+  }
+  const end = r.date >= 0 ? r.date : r.sign >= 0 ? r.sign : lines.length;
+  const greet = lines.findIndex((l, i) => i > headEnd && i < end && isGreet(l.text));
+  const CONTACT = /교장|교감|담당|☎|전화|주소|우\)|http|누리집|www|발행/;
+  if (greet >= 0) {
+    for (let k = greet - 1; k > headEnd; k--) if (filled(k)) { r.title = k; break; }
+    r.bodyStart = greet;
+  } else {
+    // 인사가 없으면: 머리(표·「가정통신문」 줄) 다음의 첫 줄이 제목, 그다음부터 본문. 못 찾으면 -1(양식 맞추기)
+    const head = Math.max(headEnd, lines.findIndex(l => /가정통신문|가\s*정\s*통\s*신\s*문/.test(l.text)));
+    for (let k = head + 1; k < end; k++) if (filled(k) && !CONTACT.test(lines[k].text) && !(head < 0 && lines[k].inBox)) { r.title = k; break; }
+    for (let k = r.title + 1; r.title >= 0 && k < end; k++) if (filled(k)) { r.bodyStart = k; break; }
+  }
+  if (r.bodyStart >= 0) {
+    for (let k = end - 1; k >= r.bodyStart; k--) if (filled(k) && lines[k].box === lines[r.bodyStart].box) { r.bodyEnd = k; break; }
+    if (r.bodyEnd < 0) r.bodyEnd = r.bodyStart;
+  }
+  if (r.sign >= 0) for (let k = r.sign + 1; k < lines.length; k++) if (filled(k) || lines[k].obj) { r.reply = k; break; }
+  return r;
+}
+
+export { DATE, isSign, isDateLine };
+
+/* 자리 순서: 제목 < 본문 시작 ≤ 본문 끝 < 날짜 ≤ 학교장 < 회신서 (학교장·회신서는 없어도 됨) */
+/* date: false — 결과 보고서처럼 날짜 자리가 없어도 됨(있으면 본문 아래) */
+export function rolesValid(r, { date = true } = {}) {
+  if (!r || r.title < 0 || r.bodyStart <= r.title || r.bodyEnd < r.bodyStart) return false;
+  if (!date && r.date < 0) return !(r.reply >= 0 && r.reply <= Math.max(r.bodyEnd, r.sign));
+  if (r.date <= r.bodyEnd) return false;
+  if (r.sign >= 0 && r.sign < r.date) return false;
+  if (r.reply >= 0 && r.reply <= Math.max(r.date, r.sign)) return false;
+  return true;
+}
+
+/* ---------- 날짜 ---------- */
+/* 양식 줄의 날짜를 발행일(iso)로 — 꼴(「2026 . 3 . 3 .」·「2025년 12월 12일」·「2026. 3. 3.」)과 같은 줄의 다른 글은 그대로. {날짜}는 「YYYY. M. D.」 */
+export function swapDate(text, iso) {
+  const m0 = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m0) return String(text || '');
+  const [y, mo, d] = [+m0[1], +m0[2], +m0[3]];
+  const t = String(text || '');
+  if (t.includes(MARK.date)) return t.replace(MARK.date, `${y}. ${mo}. ${d}.`);
+  const m = DATE.exec(t);
+  if (!m) return `${y}. ${mo}. ${d}.`;
+  const [, , s1, p1, s2, , s3, p2, s4, , s5, p3] = m;
+  const tail = p3 ? s5 + p3 : p1 === '년' ? '일' : '.';
+  let rest = t.slice(m.index + m[0].length);
+  // 뒤에 요일(「(화)」·「화요일」)이 있으면 새 날짜의 요일로
+  const w = WEEKDAY.exec(rest), wd = '일월화수목금토'[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  if (w) rest = w[1] + (w[2] ? `(${wd})` : `${wd}요일`) + rest.slice(w[0].length);
+  return t.slice(0, m.index) + `${y}${s1}${p1}${s2}${mo}${s3}${p2}${s4}${d}${tail}` + rest;
+}
+
+/* 날짜 문단: 글자 조각 안의 날짜 글자만 바꿈(다른 조각·글자 모양·탭·줄바꿈은 그대로), 줄 배치 기억은 지움 */
+function swapDateInPara(xml, p, iso) {
+  const segs = [];
+  for (const k of walk(p)) {
+    if (local(k) !== 't' || k.self || inNested(k, p)) continue;
+    let pos = k.oe;
+    for (const c of [...k.kids, null]) { const end = c ? c.s : k.cs; if (end > pos) segs.push({ s: pos, e: end, text: unesc(xml.slice(pos, end)) }); if (c) pos = c.e; }
+  }
+  const joined = segs.map(g => g.text).join('');
+  if (!joined.includes(MARK.date) && !DATE.exec(joined)) return setText(xml, p, swapDate(joined, iso));
+  const swapped = swapDate(joined, iso);
+  let a = 0; while (a < joined.length && a < swapped.length && joined[a] === swapped[a]) a++;
+  let b = 0; while (b < joined.length - a && b < swapped.length - a && joined[joined.length - 1 - b] === swapped[swapped.length - 1 - b]) b++;
+  const ms = a, me = joined.length - b, rep = swapped.slice(a, swapped.length - b);
+  const edits = [];
+  let off = 0, placed = false;
+  for (const g of segs) {
+    const s0 = off, len = g.text.length; off += len;
+    const cl = v => Math.max(0, Math.min(len, v));
+    const hit = !placed && ms >= s0 && (ms < s0 + len || (ms === s0 + len && me === ms));
+    if (!hit && (s0 + len <= ms || s0 >= me)) continue;
+    const nt = g.text.slice(0, cl(ms - s0)) + (hit ? rep : '') + g.text.slice(cl(me - s0));
+    if (hit) placed = true;
+    edits.push({ s: g.s, e: g.e, text: esc(nt) });
+  }
+  for (const k of p.kids) if (local(k) === 'linesegarray') edits.push({ s: k.s, e: k.e, text: '' });
+  let out = xml.slice(p.s, p.e);
+  for (const ed of edits.sort((x, y) => y.s - x.s)) out = out.slice(0, ed.s - p.s) + ed.text + out.slice(ed.e - p.s);
+  return out;
+}
+
+/* ---------- 문단 만들기 ---------- */
+const attr = (tag, a) => { const m = new RegExp(`\\b${a}="([^"]*)"`).exec(tag); return m ? m[1] : ''; };
+const openTag = (xml, p) => (p.self ? xml.slice(p.s, p.e).replace(/\s*\/>$/, '>') : xml.slice(p.s, p.oe));
+const pureText = run => run.kids.every(c => local(c) === 't');
+function charPrOf(xml, p) {
+  const runs = kidsNamed(p, 'run');
+  const tr = runs.find(r => r.kids.some(c => local(c) === 't' && !c.self && c.cs > c.oe)) || runs.find(pureText) || runs[0];
+  return tr ? attr(xml.slice(tr.s, tr.oe), 'charPrIDRef') || '0' : '0';
+}
+const textRun = (charPr, text) => `<hp:run charPrIDRef="${charPr}"><hp:t>${esc(text)}</hp:t></hp:run>`;
+/* 개체 조각(구역 설정·표·그림)에서 글자만 뺌(빈 <hp:t/>는 남김) */
+function stripT(xml, run) {
+  let s = xml.slice(run.s, run.e);
+  for (const t of [...run.kids].reverse()) if (local(t) === 't' && !t.self) s = s.slice(0, t.s - run.s) + s.slice(t.e - run.s);
+  return s;
+}
+/* 문단의 글만 바꿈: 첫 글 조각 자리에 새 글(그 글자 모양), 개체 조각은 그대로, 줄 배치 기억은 지움 */
+function setText(xml, p, text) {
+  let out = openTag(xml, p), placed = false;
+  const cp = charPrOf(xml, p);
+  for (const k of p.kids) {
+    const n = local(k);
+    if (n === 'linesegarray') continue;
+    if (n !== 'run') { out += xml.slice(k.s, k.e); continue; }
+    if (pureText(k)) { if (!placed) { out += textRun(cp, text); placed = true; } continue; } // 글이 든 조각의 글자 모양(앞의 빈 조각 말고)
+    out += stripT(xml, k);
+  }
+  if (!placed) out += textRun(cp, text);
+  return out + '</hp:p>';
+}
+/* 본문 줄 단계: 0 보통 · 1 「1.」 · 2 「가.」 · 3 「1)」 · 4 「가)」·「①」 · 5 「-·○·□·※」 */
+export function levelOf(text) {
+  const t = String(text || '').trim();
+  if (/^\d{1,2}\.(\s|$)/.test(t)) return 1;
+  if (/^[가-하]\.(\s|$)/.test(t)) return 2;
+  if (/^\d{1,2}\)(\s|$)/.test(t)) return 3;
+  if (/^([가-하]\)|[①-⑳])/.test(t)) return 4;
+  if (/^[-·∙•○◦□■※▶▷*]/.test(t)) return 5;
+  return 0;
+}
+const FALL = { 0: [0], 1: [1, 0], 2: [2, 1, 0], 3: [3, 2, 1, 0], 4: [4, 3, 2, 1, 0], 5: [5, 0] };
+/* 옛 본문 문단 → 단계마다 본(문단 여는 태그·글자 모양·앞 공백) */
+function protosOf(xml, paras) {
+  const by = {};
+  for (const p of paras) {
+    const t = paraText(xml, p);
+    if (!t.trim() && by[0]) continue;
+    const lv = t.trim() ? levelOf(t) : 0;
+    if (!by[lv]) by[lv] = { open: openTag(xml, p), charPr: charPrOf(xml, p), lead: (/^[ 　]*/.exec(t) || [''])[0] };
+  }
+  if (!by[0]) by[0] = Object.values(by)[0] || { open: '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">', charPr: '0', lead: '' };
+  return by;
+}
+const noBreak = open => open.replace(/pageBreak="1"/, 'pageBreak="0"').replace(/columnBreak="1"/, 'columnBreak="0"');
+/* lead: 앞 공백(없으면 본의 앞 공백, keepLead가 거짓이면 없음) */
+function paraFrom(proto, text, id, { keepLead = true, lead = null } = {}) {
+  const open = noBreak(proto.open.replace(/\bid="[^"]*"/, `id="${id}"`));
+  const body = String(text || '').trim();
+  return `${open}${textRun(proto.charPr, body ? (lead != null ? lead : keepLead ? proto.lead : '') + body : '')}</hp:p>`;
+}
+const pick = (protos, lv) => protos[FALL[lv].find(k => protos[k])];
+/* 본문 한 줄 → 문단: 양식에 그 단계가 있으면 그 모양·앞 공백, 없으면 가까운 단계 모양에 선생님이 쓴 앞 공백 */
+const bodyPara = (protos, t, id) => { const lv = levelOf(t); return paraFrom(pick(protos, lv), t, id, protos[lv] ? {} : { lead: (/^[ 　]*/.exec(String(t || '')) || [''])[0] }); };
+/* 지우는 문단에 걸린 조절자(머리말·꼬리말·쪽 번호 등)와 떠 있는 개체(글자처럼 취급 아님)는 글만 빼고 옮겨 남김 */
+const OBJ = ['pic', 'rect', 'ellipse', 'line', 'container', 'ole', 'arc', 'polygon', 'curve', 'connectLine', 'textart', 'tbl', 'equation'];
+function anchorsOf(xml, paras) {
+  let out = '';
+  for (const p of paras) for (const run of kidsNamed(p, 'run')) {
+    if (pureText(run)) continue;
+    const kids = run.kids.map(local);
+    if (kids.includes('secPr')) continue;
+    const floating = run.kids.some(k => OBJ.includes(local(k)) && kidsNamed(k, 'pos').some(ps => attr(xml.slice(ps.s, ps.oe), 'treatAsChar') === '0'));
+    if (kids.includes('ctrl') || floating) out += stripT(xml, run);
+  }
+  return out;
+}
+const withRuns = (paraXml, runs) => (runs ? paraXml.replace(/^(<hp:p\b[^>]*>)/, `$1${runs}`) : paraXml);
+
+/* ---------- 회신서 ---------- */
+const solidFill = id => `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0"><hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/>`
+  + ['leftBorder', 'rightBorder', 'topBorder', 'bottomBorder'].map(s => `<hh:${s} type="SOLID" width="0.12 mm" color="#000000"/>`).join('')
+  + '<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/></hh:borderFill>';
+/* header.xml에 실선 테두리 하나를 더하고 그 번호를 돌려줌 */
+function addBorder(header) {
+  const ids = [...header.matchAll(/<hh:borderFill id="(\d+)"/g)].map(m => +m[1]);
+  const id = (ids.length ? Math.max(...ids) : 0) + 1;
+  const m = /<hh:borderFills itemCnt="(\d+)">/.exec(header);
+  if (!m || header.indexOf('</hh:borderFills>') < 0) return null;
+  return { id, xml: header.replace(m[0], `<hh:borderFills itemCnt="${+m[1] + 1}">`).replace('</hh:borderFills>', solidFill(id) + '</hh:borderFills>') };
+}
+function textWidth(secXml) {
+  const pw = /<hp:pagePr\b[^>]*\bwidth="(\d+)"/.exec(secXml), mg = /<hp:margin\b[^>]*\bleft="(\d+)"[^>]*\bright="(\d+)"/.exec(secXml);
+  const w = pw ? +pw[1] - (mg ? +mg[1] + +mg[2] : 11338) : 48190;
+  return w > 5000 ? w : 48190;
+}
+/* 표 문단 하나: rows([[칸 글]]), 칸 너비 colW(없으면 같게), 칸 문단은 보통 모양 */
+function tableXml(rows, { normal, border, width, nid, colW = null, rowH = 1800 }) {
+  const n = Math.max(1, ...rows.map(r => r.length)), w = colW || Array.from({ length: n }, (_, i) => Math.floor(width / n) + (i === n - 1 ? width % n : 0));
+  const cell = (txt, ci, ri) => `<hp:tc name="" header="${ri === 0 ? 1 : 0}" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="${border}">`
+    + '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+    + paraFrom(normal, txt, nid(), { keepLead: false }) + '</hp:subList>'
+    + `<hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${w[ci]}" height="${rowH}"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
+  const tbl = `<hp:tbl id="${nid()}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="${rows.length}" colCnt="${n}" cellSpacing="0" borderFillIDRef="${border}" noAdjust="0">`
+    + `<hp:sz width="${w.reduce((a, b) => a + b, 0)}" widthRelTo="ABSOLUTE" height="${rowH * rows.length}" heightRelTo="ABSOLUTE" protect="0"/>`
+    + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+    + '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+    + rows.map((r, ri) => `<hp:tr>${Array.from({ length: n }, (_, ci) => cell(r[ci] || '', ci, ri)).join('')}</hp:tr>`).join('') + '</hp:tbl>';
+  return noBreak(normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
+}
+/* 사진 표(2열): 칸마다 사진(글자처럼)과 설명. photos [{ id(BinData 항목), w, h(픽셀), caption }] */
+function photoTableXml(photos, { normal, center, border, width, nid }) {
+  const w = Math.floor(width / 2), maxW = w - 1020 - 400, maxH = 17000, rows = [];
+  for (let i = 0; i < photos.length; i += 2) rows.push(photos.slice(i, i + 2));
+  const fit = p => { const W = Math.max(1, +p.w || 4), H = Math.max(1, +p.h || 3), k = Math.min(maxW / W, maxH / H); return [Math.round(W * k), Math.round(H * k)]; };
+  const pic = (p, [W, H]) => {
+    const id = nid(), ow = Math.max(1, Math.round((+p.w || 4) * 75)), oh = Math.max(1, Math.round((+p.h || 3) * 75)), m = 'e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"';
+    return `<hp:pic id="${id}" zOrder="${id % 100000}" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="${id}" reverse="0">`
+      + `<hp:offset x="0" y="0"/><hp:orgSz width="${W}" height="${H}"/><hp:curSz width="${W}" height="${H}"/><hp:flip horizontal="0" vertical="0"/>`
+      + `<hp:rotationInfo angle="0" centerX="${Math.round(W / 2)}" centerY="${Math.round(H / 2)}" rotateimage="1"/>`
+      + `<hp:renderingInfo><hc:transMatrix ${m}/><hc:scaMatrix ${m}/><hc:rotMatrix ${m}/></hp:renderingInfo>`
+      + `<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="${W}" y="0"/><hc:pt2 x="${W}" y="${H}"/><hc:pt3 x="0" y="${H}"/></hp:imgRect>`
+      + `<hp:imgClip left="0" right="${ow}" top="0" bottom="${oh}"/><hp:inMargin left="0" right="0" top="0" bottom="0"/><hp:imgDim dimwidth="${ow}" dimheight="${oh}"/>`
+      + `<hc:img binaryItemIDRef="${p.id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:effects/>`
+      + `<hp:sz width="${W}" widthRelTo="ABSOLUTE" height="${H}" heightRelTo="ABSOLUTE" protect="0"/>`
+      + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+      + '<hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:pic>';
+  };
+  const sized = rows.map(r => r.map(p => ({ p, sz: fit(p) })));
+  const rowH = sized.map(r => Math.max(...r.map(x => x.sz[1])) + 2600);
+  const picPara = x => noBreak(center.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${center.charPr}">${pic(x.p, x.sz)}<hp:t/></hp:run></hp:p>`;
+  // 표 테두리를 더할 수 없는 양식: 사진마다 문단(그림 + 설명)
+  if (!border) return sized.flat().map(x => picPara(x) + paraFrom(center, x.p.caption || '', nid(), { keepLead: false })).join('');
+  const cell = (x, ri, ci) => `<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="${border}">`
+    + '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+    + (x ? picPara(x) + paraFrom(center, x.p.caption || '', nid(), { keepLead: false }) : paraFrom(normal, '', nid())) + '</hp:subList>'
+    + `<hp:cellAddr colAddr="${ci}" rowAddr="${ri}"/><hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="${w}" height="${rowH[ri]}"/><hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>`;
+  const tbl = `<hp:tbl id="${nid()}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="2" cellSpacing="0" borderFillIDRef="${border}" noAdjust="0">`
+    + `<hp:sz width="${w * 2}" widthRelTo="ABSOLUTE" height="${rowH.reduce((a, b) => a + b, 0)}" heightRelTo="ABSOLUTE" protect="0"/>`
+    + '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+    + '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+    + sized.map((r, ri) => '<hp:tr>' + [0, 1].map(ci => cell(r[ci], ri, ci)).join('') + '</hp:tr>').join('') + '</hp:tbl>';
+  return noBreak(normal.open.replace(/\bid="[^"]*"/, `id="${nid()}"`)) + `<hp:run charPrIDRef="${normal.charPr}">${tbl}<hp:t/></hp:run></hp:p>`;
+}
+/* 본문이 든 곳의 글 폭: 표 칸이면 칸 너비 - 칸 여백, 아니면 쪽 글 폭 */
+function boxWidth(xml, box) {
+  const tc = box && local(box) === 'subList' ? box.up : null;
+  if (tc && local(tc) === 'tc') {
+    const sz = kidsNamed(tc, 'cellSz')[0], mg = kidsNamed(tc, 'cellMargin')[0];
+    const tag = n => xml.slice(n.s, n.self ? n.e : n.oe);
+    const w = sz ? +attr(tag(sz), 'width') || 0 : 0, m = mg ? (+attr(tag(mg), 'left') || 0) + (+attr(tag(mg), 'right') || 0) : 1020;
+    if (w - m > 3000) return w - m;
+  }
+  return textWidth(xml);
+}
+function replyXml(reply, { normal, center, head, border, width, nid, year }) {
+  const fields = (reply.fields || []).map(f => String(f || '').trim()).filter(Boolean);
+  const rows = [['학년 반 번호', '      학년        반        번'], ['학생 이름', ''], ...fields.map(f => { const i = f.indexOf(':'); return i > 0 ? [f.slice(0, i).trim(), f.slice(i + 1).trim()] : [f, '']; })];
+  const tblPara = tableXml(rows, { normal, border, width, nid, colW: [Math.round(width * 0.3), width - Math.round(width * 0.3)] });
+  return [paraFrom(normal, '', nid()), paraFrom(center, '✂ - - - - - - - - - - - 자 르 는 선 - - - - - - - - - - -', nid(), { keepLead: false }),
+    paraFrom(head, reply.title || '회신서', nid(), { keepLead: false }), tblPara,
+    ...(String(reply.due || '').trim() ? [paraFrom(normal, reply.due, nid(), { keepLead: false })] : []),
+    paraFrom(center, `${year} .     .     .          보호자 :                (서명)`, nid(), { keepLead: false })].join('');
+}
+
+/* ---------- 채우기 ---------- */
+/* form(readForm 결과, 바꾸지 않음) + roles + letter { title, date(YYYY-MM-DD), body: [줄], reply: null | { title, fields, due } } → { bytes, warn } */
+export async function fillForm(form, roles, letter) {
+  const L = form.lines, warn = [], x = letter || {};
+  const secXml = form.secs.map(s => s.xml);
+  const edits = form.secs.map(() => []);
+  const add = (si, s, e, text) => edits[si].push({ s, e, text });
+  let maxId = 0;
+  for (const xml of secXml) for (const m of xml.matchAll(/<hp:p id="(\d+)"/g)) maxId = Math.max(maxId, +m[1]);
+  let next = Math.min(maxId, 2000000000) + 1;
+  const nid = () => next++;
+  const line = i => (i >= 0 && i < L.length ? L[i] : null);
+  const topOf = (l, n = l.node) => { const top = form.secs[l.sec].top; let u = n; while (u.up && u.up !== top) u = u.up; return u; };
+
+  const tl = line(roles.title), dl = line(roles.date), b0 = line(roles.bodyStart);
+  // 표 테두리: header.xml에 실선 테두리를 처음 쓸 때 한 번만 더함(못 더하면 0)
+  const headerName = form.entries.find(e => /^Contents\/header\.xml$/i.test(e.name));
+  let header = null, borderId = -1, bins = [];
+  const border = () => {
+    if (borderId < 0) { const a = headerName && addBorder(new TextDecoder().decode(headerName.data)); if (a) { header = a.xml; borderId = a.id; } else borderId = 0; }
+    return borderId;
+  };
+  const noBorder = () => { if (!warn.includes('no-border')) warn.push('no-border'); };
+  if (tl) add(tl.sec, tl.node.s, tl.node.e, setText(secXml[tl.sec], tl.node, x.title || ''));
+  if (dl) add(dl.sec, dl.node.s, dl.node.e, swapDateInPara(secXml[dl.sec], dl.node, x.date));
+  let protos = null;
+  if (b0) {
+    const xml = secXml[b0.sec], box = b0.box, ps = kidsNamed(box, 'p');
+    let last = b0;
+    for (let k = roles.bodyStart; k <= Math.max(roles.bodyStart, roles.bodyEnd); k++) if (L[k] && L[k].box === box) last = L[k];
+    const i0 = ps.indexOf(b0.node), i1 = ps.indexOf(last.node);
+    const range = ps.slice(i0, i1 + 1);
+    protos = protosOf(xml, range.filter(p => L.some(l => l.node === p)));
+    const keep = range.filter(p => has(p, ['secPr'])).map(p => setText(xml, p, ''));
+    const carry = anchorsOf(xml, range.filter(p => !has(p, ['secPr'])));
+    const width = boxWidth(xml, box);
+    const parts = parseTableLines(x.body && x.body.length ? x.body : ['']);
+    const paras = (parts.length ? parts : [{ type: 'line', text: '' }]).map(pt => {
+      if (pt.type === 'line') return bodyPara(protos, pt.text, nid());
+      const b = border();
+      if (!b) { noBorder(); return pt.rows.map(r => bodyPara(protos, r.join(' | '), nid())).join(''); } // 테두리를 못 더하면 글 그대로
+      return tableXml(pt.rows, { normal: protos[0], border: b, width, nid });
+    });
+    // 사진(결과 보고서): 본문 끝에 2열 사진 표. BinData 이름은 양식에 있는 것과 겹치지 않게
+    const ph = (x.photos || []).filter(p => p && p.bytes && p.bytes.length);
+    if (ph.length) {
+      const b = border();
+      if (!b) noBorder();
+      {
+        const hpf = form.entries.find(e => /content\.hpf$/i.test(e.name));
+        const used = new Set(hpf ? [...new TextDecoder().decode(hpf.data).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]) : []);
+        for (const e of form.entries) used.add(e.name.replace(/^BinData\//, '').replace(/\.[^.]+$/, ''));
+        let k = 1;
+        const items = ph.map(p => { while (used.has(`ssamimg${k}`)) k++; const id = `ssamimg${k++}`; return { ...p, id }; });
+        bins = items;
+        const center = dl ? { open: openTag(secXml[dl.sec], dl.node), charPr: charPrOf(secXml[dl.sec], dl.node), lead: '' } : protos[0];
+        paras.push(photoTableXml(items, { normal: protos[0], center, border: b, width, nid }));
+      }
+    }
+    paras[0] = withRuns(paras[0], carry);
+    add(b0.sec, ps[i0].s, ps[i1].e, keep.join('') + paras.join(''));
+  }
+  // 회신서: 옛 회신서(시작 줄이 든 구역 맨 위 문단부터 구역 끝까지)를 지우고, 켰으면 새로
+  const rl = line(roles.reply), sl = line(roles.sign);
+  const inBox = rl && ((sl && topOf(rl) === topOf(sl)) || (b0 && topOf(rl) === topOf(b0)));
+  if (inBox) warn.push('reply-in-box');
+  let at = null; // 새 회신서를 넣을 { sec, s, e, keep(남길 구역 설정 문단·옮길 조절자) }
+  if (rl && !inBox) {
+    const tops = kidsNamed(form.secs[rl.sec].top, 'p'), from = tops.indexOf(topOf(rl)), gone = tops.slice(from), xml = secXml[rl.sec];
+    // 구역 설정 문단(구역의 첫 문단)은 글만 지우고 남김 — 구역이 문단 없이 비지 않게
+    const kept = gone.filter(p => has(p, ['secPr'])).map(p => setText(xml, p, ''));
+    const carry = anchorsOf(xml, gone.filter(p => !has(p, ['secPr'])));
+    at = { sec: rl.sec, s: tops[from].s, e: tops[tops.length - 1].e, keep: kept.join('') + (carry ? withRuns(paraFrom(protosOf(xml, [])[0], '', nid()), carry) : '') };
+  } else if (!inBox) {
+    const si = sl ? sl.sec : form.secs.length - 1, top = form.secs[si].top;
+    at = { sec: si, s: top.cs, e: top.cs };
+  }
+  if (at) {
+    let text = '';
+    if (x.reply) {
+      const bid = border();
+      if (bid) {
+        const pr = protos || protosOf(secXml[at.sec], []);
+        const center = dl ? { open: openTag(secXml[dl.sec], dl.node), charPr: charPrOf(secXml[dl.sec], dl.node), lead: '' } : pr[0];
+        const head = tl ? { open: openTag(secXml[tl.sec], tl.node), charPr: charPrOf(secXml[tl.sec], tl.node), lead: '' } : pr[0];
+        text = replyXml(x.reply, { normal: pr[0], center, head, border: bid, width: textWidth(secXml[at.sec]), nid, year: String(x.date || '').slice(0, 4) || String(new Date().getFullYear()) });
+      } else noBorder();
+    }
+    text = (at.keep || '') + text;
+    if (text || at.s !== at.e) add(at.sec, at.s, at.e, text);
+  }
+  // 바꾸기(뒤에서부터). 다른 바꿀 곳 안에 든 것은 건너뜀
+  const outXml = secXml.map((xml, si) => {
+    const list = edits[si].sort((a, b) => a.s - b.s || a.e - b.e);
+    const ok = [];
+    for (const ed of list) { const prev = ok[ok.length - 1]; if (prev && ed.s < prev.e) { warn.push('overlap'); continue; } ok.push(ed); }
+    let out = xml;
+    for (const ed of ok.reverse()) out = out.slice(0, ed.s) + ed.text + out.slice(ed.e);
+    return out;
+  });
+  const prv = [x.title || '', ...(x.body || []), swapDate(dl ? dl.text : '', x.date)].join('\r\n');
+  const files = form.entries.map(e => {
+    const si = form.secs.findIndex(s => s.name === e.name);
+    if (si >= 0) return { name: e.name, data: outXml[si] };
+    if (header && headerName && e.name === headerName.name) return { name: e.name, data: header };
+    if (/^Preview\/PrvText\.txt$/i.test(e.name)) return { name: e.name, data: prv };
+    if (/content\.hpf$/i.test(e.name)) {
+      let h = new TextDecoder().decode(e.data).replace(/<opf:title\s*\/>|<opf:title>[\s\S]*?<\/opf:title>/, `<opf:title>${esc(x.title || '')}</opf:title>`);
+      if (bins.length) h = h.replace('</opf:manifest>', bins.map(p => `<opf:item id="${p.id}" href="BinData/${p.id}.jpg" media-type="image/jpg" isEmbeded="1"/>`).join('') + '</opf:manifest>');
+      return { name: e.name, data: h };
+    }
+    return { name: e.name, data: e.data };
+  });
+  for (const p of bins) files.push({ name: `BinData/${p.id}.jpg`, data: p.bytes });
+  return { bytes: zipStore(files), warn };
+}
+export const _test = { paraText, local, setText };

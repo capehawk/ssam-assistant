@@ -142,7 +142,8 @@ await run('unit-grade', [
     await page.waitForSelector(`${V} [data-un="stop"]`);
     await page.click(`${V} [data-un="stop"]`);
     await page.waitForTimeout(1300); slow = 0;
-    assert(grades().length - n === 2, `불린 수 ${grades().length - n}`);
+    // 첫 학생은 혼자 보냄(공통 부분 캐시를 한 번만 쓰게) → 멈추면 그 한 명만 불림
+    assert(grades().length - n === 1, `불린 수 ${grades().length - n}`);
     assert((await T(A)).students.every(s => s.status === 'done'), JSON.stringify((await T(A)).students.map(s => s.status)));
     assert(await page.locator(`${V} [data-un="grade"]`).count() === 1, '채점 시작 단추가 없음');
   }],
@@ -219,10 +220,11 @@ await run('unit-grade', [
     const n = grades().length;
     await page.click(`${V} [data-un="grade"]`);
     await page.click('#sheetRoot #unRegradeOk');
-    await until(() => grades().length >= n + 2);
+    // 첫 학생 혼자 → 저장이 안 되면 바로 멈춤(나머지는 부르지 않음)
+    await until(() => grades().length >= n + 1);
     await page.waitForTimeout(1500); slow = 0;
     await page.evaluate(() => { Storage.prototype.setItem = window.__set; });
-    assert(grades().length === n + 2, `불린 수 ${grades().length - n}`);
+    assert(grades().length === n + 1, `불린 수 ${grades().length - n}`);
   }],
   ['다듬기: 채점한 뒤 쪽 수를 바꾸면 알려 줌', async () => {
     await page.click(`${V} .steps [data-step="2"]`);
@@ -294,7 +296,7 @@ await run('unit-grade', [
     await page.waitForTimeout(1500);
     await page.unroute('https://api.anthropic.com/**', deny);
     for (let k = errors.length - 1; k >= 0; k--) if (errors[k].includes('401')) errors.splice(k, 1); // 일부러 낸 401
-    assert(calls === 2, `부른 수 ${calls}`);
+    assert(calls === 1, `부른 수 ${calls}`); // 첫 학생 혼자 보내다 키 오류 → 나머지는 부르지 않음
     assert((await page.textContent('#toast')).includes('채점을 멈췄어요'), await page.textContent('#toast'));
     await page.click(`${V} [data-un="back"]`);
   }],

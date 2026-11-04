@@ -4,12 +4,14 @@ import { onFlush } from '../../core/store.js';
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
+import { aiRowHTML } from '../../core/ai-roles.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { getSchool } from '../../core/settings.js';
 import { toast, copyText } from '../../core/ui.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { listEvents, setEvents, removeEvents, dayIssues, suggestDates, weekday } from '../../core/calendar.js';
 import { stepsHTML } from '../../core/steps.js';
+import { rvBoxHTML, runPlanReview, onRvClick, markDone, dropOpen, hasOpen, clearState } from './plan-review.js';
 import { SECTIONS, TEXT_SECTIONS, newPlan, listPlans, getPlan, savePlan, deletePlan, currentId, setCurrent, normReview, normGuide, normDraft, overlap, guideStatus, insertSentence, planDoc, planText } from './year-model.js';
 
 const STEPS = ['자료 넣기', '작년 평가', '지침 점검', '초안', '일정'];
@@ -108,6 +110,7 @@ function renderMain() {
   const step = plan.step;
   const body = step === 1 ? step1() : step === 2 ? step2() : step === 3 ? step3() : step === 4 ? step4() : step5();
   main.innerHTML = stepsHTML(STEPS, step, plan.maxStep)
+    + (step >= 2 && step <= 4 ? aiRowHTML('plan') : '')
     + (errs[plan.id] ? `<div class="banner err" role="alert"><span class="grow">${esc(errs[plan.id])}</span></div>` : '')
     + body
     + `<div class="row yp-nav">${step > 1 ? '<button class="btn" type="button" data-y="prev">이전</button>' : ''}<span class="grow"></span>${step < 5 ? '<button class="btn primary" type="button" data-y="next">다음</button>' : ''}</div>`
@@ -211,9 +214,9 @@ function step4() {
         <td><button class="icon-btn" type="button" data-budel="${j}" aria-label="이 항목 빼기">×</button></td></tr>`).join('')}</tbody>
         <tfoot><tr><td>합계</td><td class="num" id="ypBudSum">${won(sum)}</td><td colspan="2"></td></tr></tfoot></table></div>
         <div class="row"><button class="btn text" type="button" data-y="budAdd">+ 항목 더하기</button></div></section>`;
-    return `<section class="yp-sec">${h}<textarea class="field" data-sec="${k}" rows="${k === 'details' ? 8 : 4}" aria-label="${label}">${esc(d[k])}</textarea></section>`;
+    return `<section class="yp-sec">${h}<textarea class="field${hasOpen(plan, k) ? ' rv-mark' : ''}" data-sec="${k}" rows="${k === 'details' ? 8 : 4}" aria-label="${label}">${esc(d[k])}</textarea></section>`;
   };
-  return `<div id="ypOverlapBox">${overlapHTML()}</div>
+  return `<div id="ypOverlapBox">${overlapHTML()}</div><div id="ypRvBox">${rvBox()}</div>
     <div class="yp-card" id="ypDraft">${SECTIONS.map(sec).join('')}
       <div class="row"><button class="btn text" type="button" data-y="draft">다시 만들기 (고친 내용은 사라져요)</button></div></div>`;
 }
@@ -323,7 +326,7 @@ async function runReview() {
   busy[id] = 'review'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(reviewPrompt(plan), { valid: x => x && !Array.isArray(x) && (Array.isArray(x.good) || Array.isArray(x.bad)) });
+    const v = await ai.generateJSON(reviewPrompt(plan), { task: 'plan', valid: x => x && !Array.isArray(x) && (Array.isArray(x.good) || Array.isArray(x.bad)) });
     const r = normReview(v);
     apply(id, p => { p.review = { ...r, picked: [] }; });
   } catch (e) {
@@ -347,7 +350,7 @@ async function runGuide() {
   busy[id] = 'guide'; delete errs[id];
   renderMain();
   try {
-    const v = await ai.generateJSON(guidePrompt(plan), { valid: x => Array.isArray(x) && normGuide(x).length > 0 });
+    const v = await ai.generateJSON(guidePrompt(plan), { task: 'plan', valid: x => Array.isArray(x) && normGuide(x).length > 0 });
     apply(id, p => { p.guide = normGuide(v); });
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 'guide');
@@ -383,10 +386,35 @@ async function runDraft() {
   try {
     // 섹션이 몇 개 빠져도 받음 (빠진 섹션은 빈 글)
     const ok = x => { const d = normDraft(x); return !!d && (TEXT_SECTIONS.some(k => d[k].trim()) || d.schedule.length > 0); };
-    const v = await ai.generateJSON(draftPrompt(plan), { valid: ok });
-    apply(id, p => { p.draft = normDraft(v); if (p.status === 'final') p.status = 'draft'; });
+    const v = await ai.generateJSON(draftPrompt(plan), { task: 'plan', valid: ok });
+    apply(id, p => { p.draft = normDraft(v); p.rv = []; if (p.status === 'final') p.status = 'draft'; });
+    clearState(id);
+    finish(id, 'draft');
+    reviewDraft(id);
+    return;
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 'draft');
+}
+/* 검토 AI: 초안 칸(목적·방침·세부 추진 계획·평가 계획)을 한 번 봄 */
+const SEC_LABEL = Object.fromEntries(SECTIONS);
+function reviewDraft(id) {
+  const p = getPlan(id);
+  if (!p || !p.draft) return;
+  runPlanReview(id, {
+    title: `${p.year}학년도 ${p.name || '업무'} 연간계획`,
+    sections: TEXT_SECTIONS.map(k => ({ key: k, label: SEC_LABEL[k], text: p.draft[k] })),
+    guide: (p.guide || []).map(g => `- ${g.item}: ${g.sentence}`).join('\n'),
+    current: () => { flushSave(); const q = getPlan(id); return q && q.draft; },
+    save: items => apply(id, q => { q.rv = items; }),
+    update: () => updateRv(id)
+  });
+}
+const rvBox = () => rvBoxHTML(plan, { text: k => (plan.draft && plan.draft[k]) || '', label: k => SEC_LABEL[k] || k });
+function updateRv(id) {
+  if (!visible() || plan.id !== id || plan.step !== 4) return;
+  const b = box.querySelector('#ypRvBox');
+  if (b) b.innerHTML = rvBox();
+  box.querySelectorAll('textarea[data-sec]').forEach(t => t.classList.toggle('rv-mark', hasOpen(plan, t.dataset.sec)));
 }
 
 /* 초안을 고칠 때 작년 비교만 다시 그림 */
@@ -456,7 +484,11 @@ document.addEventListener('input', e => {
     plan.sources[el.dataset.src] = el.value;
     const n = box.querySelector(`[data-cap="${el.dataset.src}"]`); if (n) n.hidden = el.value.length < MAX_SRC;
   }
-  else if (el.dataset.sec && plan.draft) { plan.draft = { ...plan.draft, [el.dataset.sec]: el.value }; refreshOverlap(); }
+  else if (el.dataset.sec && plan.draft) {
+    plan.draft = { ...plan.draft, [el.dataset.sec]: el.value }; refreshOverlap();
+    // 손으로 고친 칸의 검토 의견은 사라짐
+    if (hasOpen(plan, el.dataset.sec)) { plan.rv = dropOpen(plan.rv, el.dataset.sec); updateRv(plan.id); }
+  }
   else if (el.dataset.title != null) { setSchedule(+el.dataset.title, { title: el.value }); return; }
   else if (el.dataset.bud != null && plan.draft) {
     const b = plan.draft.budget[+el.dataset.bud];
@@ -483,6 +515,16 @@ document.addEventListener('change', e => {
 document.addEventListener('click', e => {
   if (!box || !box.contains(e.target) || curTab !== 'year') return;
   flushSave();
+  if (onRvClick(e, box, {
+    use: sec => {
+      const r = (plan.rv || []).find(x => x.section === sec && !x.done);
+      if (!r || !plan.draft) return;
+      plan.draft = { ...plan.draft, [sec]: r.fix }; plan.rv = markDone(plan.rv, sec, 'review');
+      if (plan.status === 'final') plan.status = 'draft';
+      persist(); renderMain();
+    },
+    keep: sec => { plan.rv = markDone(plan.rv, sec, 'main'); persist(); renderMain(); }
+  })) return;
   const item = e.target.closest('[data-yp]');
   if (item) { const p = getPlan(item.dataset.yp); if (p) { plan = p; saved = true; setCurrent(p.id); render(); } return; }
   const st = e.target.closest('[data-step]');

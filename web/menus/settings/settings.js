@@ -1,7 +1,7 @@
 /* 설정 메뉴: 학급 명단 · AI · 화면 · 학교 정보 · 학년도 · 품의 기준 */
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { THEMES, getTheme, setTheme } from '../../core/theme.js';
-import { getSchool, setSchool, getPurchaseLimit, setPurchaseLimit } from '../../core/settings.js';
+import { getSchool, setSchool, getPurchaseLimit, setPurchaseLimit, getMeetCap, setMeetCap, getPurchaseFlow, setPurchaseFlow } from '../../core/settings.js';
 import * as ai from '../../core/ai.js';
 import { readTable } from '../../core/sheet.js';
 import { parseRoster } from '../../core/roster.js';
@@ -10,6 +10,7 @@ import { getYears, snapshot, carryOver, makeBackup, parseBackup, prepYear } from
 import { switchYear, switchError, getArchive, safeLS } from '../../core/year-switch.js';
 import { FULL_MSG, usage, get as sget, set as sset } from '../../core/store.js';
 import { getInboxSettings, setInboxSettings, registerInbox } from '../../core/inbox.js';
+import { TASKS, getRoles, setDefaultReview, resetRoles, rowText, aiOptions, aiValue, aiFromValue, providerEnv } from '../../core/ai-roles.js';
 
 const SSAM = () => window.SSAM || {};
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -17,6 +18,12 @@ const toast = (m, ms) => SSAM().toast && SSAM().toast(m, ms);
 const FULL = FULL_MSG;
 /* 웹판 주소(*.github.io)는 같은 계정의 다른 GitHub Pages 페이지와 저장소를 함께 씀 (Windows 앱은 따로) */
 const sharedHost = () => (!window.__TAURI__ && /\.github\.io$/i.test(location.hostname) ? location.hostname : '');
+/* 시험용 업스테이지(Windows 앱): 내 키가 없으면 빌드에 넣은 키로, 기한까지 */
+function testKeyNote() {
+  const t = SSAM().ai && SSAM().ai.testKey ? SSAM().ai.testKey() : null;
+  if (!t || !t.on) return '';
+  return `<p class="banner info" style="margin:0 0 8px"><span class="grow">${t.using ? '지금은 <b>시험용 업스테이지 AI</b>를 쓰고 있어요' : '이 앱에는 <b>시험용 업스테이지 AI</b>가 들어 있어요'}(${esc(t.untilText)}까지, 하루 ${Number(t.daily) || 400}번). 써 보시라고 넣어 둔 것이라 기한이 지나면 쓸 수 없어요. 내 AI 키를 넣으면 그 키로 써요.</span></p>`;
+}
 const sharedNote = () => (sharedHost() ? `<p class="banner warn" style="margin:0 0 8px">웹판은 ${esc(sharedHost())} 주소를 같은 계정의 다른 웹페이지와 함께 써요. AI 키를 기억하게 하면 그 페이지들도 이 키를 읽을 수 있어요. 함께 쓰는 PC에서는 Windows 앱을 쓰거나 [AI 바꾸기]에서 「키 기억하기」를 꺼 주세요.</p>` : '');
 const won = n => Number(n).toLocaleString('ko-KR');
 
@@ -29,7 +36,7 @@ const PREVIEW = {
   rail: ['#eef3f2', '#ffffff', '#ffffff', '#0f766e', '#dde5e3']
 };
 
-let box = null, school = null, msg = '', aiMsg = null; // aiMsg: { ok, text } | { busy }
+let box = null, school = null, msg = '', capMsg = '', aiMsg = null; // aiMsg: { ok, text } | { busy }
 let yrList = null; // 보관한 학년도 [{ year, savedAt, size }] (null = 불러오는 중)
 const kb = n => `${Math.max(1, Math.round(n / 1024)).toLocaleString('ko-KR')}KB`;
 const ymd = t => { const d = new Date(t); return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}.`; };
@@ -40,6 +47,18 @@ function page(title, desc, body) {
   return `<div class="m-page set-page"><div class="m-head"><h2>${title}</h2>${desc ? `<p class="muted">${desc}</p>` : ''}</div>${body}</div>`;
 }
 const card = (title, body) => `<section class="set-card"><h3>${title}</h3>${body}</section>`;
+/* 기본 검토 AI와 업무별 설정 한눈에 (업무마다 정하는 곳은 각 메뉴의 AI 줄) */
+function rolesCards() {
+  const env = providerEnv();
+  if (env.engine === 'account') return card('업무별 AI', '<p class="muted" style="margin:0">Claude 계정을 쓰는 동안에는 AI 하나로 모든 업무를 해요. 업무별 AI와 검토 AI는 API 키를 넣으면 쓸 수 있어요.</p>');
+  const r = getRoles(), cur = r.review && env.keys[r.review.engine] ? aiValue(r.review) : '';
+  const opts = aiOptions(env).map(o => `<option value="${esc(o.value)}"${o.value === cur ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+  return card('기본 검토 AI', `<p class="muted" style="margin-top:0">업무 메뉴의 AI 줄에서 「검토 AI로 한 번 더 보기」를 켜면, 따로 고르지 않은 업무는 이 AI가 검토해요. 키를 넣은 회사만 고를 수 있어요.</p>
+      <label class="set-f"><span class="lab">기본 검토 AI</span><select class="field" id="setReviewAi"><option value="">검토 안 함</option>${opts}</select></label>`)
+    + card('업무별 설정 한눈에', `<ul class="set-roles" id="setRoleList">${TASKS.map(([t, name]) => `<li><b>${esc(name)}</b><span class="muted">${esc(rowText(t, env))}</span></li>`).join('')}</ul>
+      <p class="muted">업무마다 바꾸는 곳은 각 메뉴 위쪽의 AI 줄 [바꾸기]예요.</p>
+      <div class="row"><button class="btn" type="button" data-set="resetRoles">기본으로 되돌리기</button></div>`);
+}
 /* 떠 있는 버튼: 아무 파일이나 넣으면 쌤비서가 알아서 */
 function inboxCard() {
   const s = getInboxSettings();
@@ -62,10 +81,10 @@ const VIEWS = {
   ai: () => {
     const ready = SSAM().ai && SSAM().ai.engineReady();
     return page('AI', 'Claude·Gemini·GPT·업스테이지 중 하나의 키를 넣어 써요. 키는 이 컴퓨터에만 저장돼요.',
-      card('지금 쓰는 AI', `${sharedNote()}<p class="set-big">${esc(ready ? SSAM().ai.engineName() : '아직 정하지 않았어요')}</p>
+      card('지금 쓰는 AI', `${sharedNote()}${testKeyNote()}<p class="set-big">${esc(ready ? SSAM().ai.engineName() : '아직 정하지 않았어요')}</p>
         <div class="row"><button class="btn primary" type="button" data-set="openAi">AI 바꾸기</button>
           <button class="btn" type="button" data-set="testAi" ${ready && !(aiMsg && aiMsg.busy) ? '' : 'disabled'}>연결 확인</button></div>
-        ${aiMsg ? `<p class="set-msg ${aiMsg.busy ? '' : aiMsg.ok ? 'ok' : 'err'}" role="status">${aiMsg.busy ? '확인하는 중…' : esc(aiMsg.text)}</p>` : ''}`));
+        ${aiMsg ? `<p class="set-msg ${aiMsg.busy ? '' : aiMsg.ok ? 'ok' : 'err'}" role="status">${aiMsg.busy ? '확인하는 중…' : esc(aiMsg.text)}</p>` : ''}`) + rolesCards());
   },
   screen: () => {
     const cur = getTheme();
@@ -114,16 +133,24 @@ const VIEWS = {
         <div class="row"><button class="btn" type="button" data-set="newYear">${(yrList || []).some(x => x.year === cur + 1) ? `${cur + 1}학년도 자료가 이미 있어요 · 그 학년도로 가기` : `${cur + 1}학년도 시작하기`}</button></div>`));
   },
   purchase: () => page('품의 기준', '',
-    card('계약 기준 금액', `<label class="set-f"><span class="lab">원 (합계가 이 금액을 넘으면 「별도 계약 절차 확인 필요」라고 알려요)</span>
+    card('넣는 방식', `<div class="set-radios" role="radiogroup" aria-label="품의 넣는 방식">
+        <label class="switch"><input type="radio" name="pcFlow" value="oneshot"${getPurchaseFlow() === 'oneshot' ? ' checked' : ''}>바로 초안 (기본) <span class="muted">넣기 칸에 넣고 [초안 만들기]를 누르면 빈 칸은 AI가 채워 바로 초안을 써요</span></label>
+        <label class="switch"><input type="radio" name="pcFlow" value="ask"${getPurchaseFlow() === 'ask' ? ' checked' : ''}>빠진 것만 물어보기 <span class="muted">목적·품목이 없으면 초안 전에 그것만 물어봐요</span></label></div>`)
+    + card('계약 기준 금액', `<label class="set-f"><span class="lab">원 (합계가 이 금액을 넘으면 「별도 계약 절차 확인 필요」라고 알려요)</span>
         <input class="field" id="limitWon" type="number" min="1" step="10000" value="${getPurchaseLimit()}"></label>
       <p class="muted">지금: ${won(getPurchaseLimit())}원 · 학교마다 다를 수 있어요. 행정실에 확인해 주세요.</p>
       ${msg ? `<p class="set-msg err" role="alert">${esc(msg)}</p>` : ''}
-      <div class="row"><button class="btn primary" type="button" data-set="saveLimit">저장</button></div>`))
+      <div class="row"><button class="btn primary" type="button" data-set="saveLimit">저장</button></div>`)
+    + card('협의회 1인 상한', `<label class="set-f"><span class="lab">원 (협의회 품의에서 1인 단가가 이보다 크면 확인 목록에 알려요)</span>
+        <input class="field" id="meetCap" type="number" min="1" step="1000" value="${getMeetCap()}"></label>
+      <p class="muted">지금: ${won(getMeetCap())}원 · 교육청·학교마다 달라요(대체로 3만~4만 원). 행정실에 확인해 주세요.</p>
+      ${capMsg ? `<p class="set-msg err" role="alert">${esc(capMsg)}</p>` : ''}
+      <div class="row"><button class="btn primary" type="button" data-set="saveMeetCap">저장</button></div>`))
 };
 
 let curTab = 'roster';
 function render(tab, section) {
-  if (tab !== curTab) { msg = ''; school = null; aiMsg = null; }
+  if (tab !== curTab) { msg = ''; capMsg = ''; school = null; aiMsg = null; }
   const entering = tab === 'years' && (curTab !== 'years' || yrList === null);
   curTab = tab;
   if (entering) loadYears();
@@ -302,6 +329,7 @@ document.addEventListener('click', e => {
     const a = b.dataset.set;
     if (a === 'openAi') { aiMsg = null; SSAM().ai.openSettings(); }
     else if (a === 'testAi') testAi();
+    else if (a === 'resetRoles') { resetRoles(); again(); toast('업무별 AI를 기본으로 되돌렸어요'); }
     else if (a === 'rosterFile') box.querySelector('#rosterFile').click();
     else if (a === 'backup') makeBackupFile();
     else if (a === 'restore') box.querySelector('#backupFile').click();
@@ -319,6 +347,11 @@ document.addEventListener('click', e => {
       const saved = setSchool(s);
       if (!saved) { msg = FULL; school = s; again(); return; }
       msg = ''; school = saved; again(); toast('학교 정보를 저장했어요');
+    } else if (a === 'saveMeetCap') {
+      const r = setMeetCap(box.querySelector('#meetCap').value);
+      if (r === 'full') { capMsg = FULL; again(); return; }
+      if (!r) { capMsg = '1인 상한은 1원 이상으로 넣어 주세요.'; again(); return; }
+      capMsg = ''; again(); toast(`협의회 1인 상한을 ${won(getMeetCap())}원으로 정했어요`);
     } else if (a === 'saveLimit') {
       const v = box.querySelector('#limitWon').value;
       const r = setPurchaseLimit(v);
@@ -338,6 +371,8 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   const ib = e.target.dataset && e.target.dataset.ibSet;
   if (ib && box && box.contains(e.target)) { setInboxSettings({ [ib]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }); toast('떠 있는 버튼 설정을 바꿨어요'); return; }
+  if (box && e.target.name === 'pcFlow' && box.contains(e.target)) { setPurchaseFlow(e.target.value); toast('품의 넣는 방식을 바꿨어요'); return; }
+  if (box && e.target.id === 'setReviewAi' && box.contains(e.target)) { setDefaultReview(aiFromValue(e.target.value)); again(); toast('기본 검토 AI를 저장했어요'); return; }
   if (!box || !box.contains(e.target) || !['rosterFile', 'backupFile'].includes(e.target.id)) return;
   const f = e.target.files[0], id = e.target.id; e.target.value = '';
   if (f) (id === 'rosterFile' ? importRoster : restoreFile)(f);

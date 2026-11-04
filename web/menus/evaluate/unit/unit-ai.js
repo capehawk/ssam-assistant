@@ -9,12 +9,13 @@ const listOf = (v, k) => (Array.isArray(v) ? v : (v && Array.isArray(v[k]) ? v[k
 // 수, 또는 「4점」처럼 앞에 수가 있는 글 → 수. 아니면 d
 const numOr = (v, d = null) => { const m = /^\s*(-?\d+(?:\.\d+)?)/.exec(String(v == null ? '' : v)); return m ? Number(m[1]) : d; };
 
-export function gradePrompt(test, no) {
+/* 학생마다 같은 공통(shared, 앞에 두어 캐시)과 학생 글(own). 그림은 그 사이(공통 글 → 학생 그림 → 학생 글) */
+export function gradeParts(test, no) {
   const key = test.key.items.map(i => `${i.no} | ${TYPE_NAME[i.type] || '단답'} | ${i.answer} | ${i.points} | ${i.criteria || ''}`);
   const paper = String((test.paper && test.paper.text) || '').slice(0, 12000);
-  return [
+  const shared = [
     '[단원평가 채점]',
-    '당신은 초등학교 단원평가를 채점하는 담임교사를 돕습니다. 첨부한 이미지는 한 학생이 답을 쓴 평가지입니다. 이름 칸은 가려져 있을 수 있습니다.',
+    '당신은 초등학교 단원평가를 채점하는 담임교사를 돕습니다. 이 글 뒤에 오는 그림은 한 학생이 답을 쓴 평가지입니다. 이름 칸은 가려져 있을 수 있습니다.',
     `[평가] ${makeTitle(test.meta)}`,
     '', '[정답표] 번호 | 유형 | 정답 | 배점 | 채점 기준', ...key,
     ...(paper ? ['', '[평가지 글]', paper] : []),
@@ -26,10 +27,11 @@ export function gradePrompt(test, no) {
     '5. why에는 단답·서술형을 그렇게 판단한 까닭을 40자 안팎으로 씁니다.',
     '6. 가려진 부분은 무시하고, 학생 이름을 추측하거나 적지 않습니다.',
     '', '[출력] 모든 문항을 담은 JSON 하나만 출력합니다.',
-    '{"items":[{"no":1,"read":"학생이 쓴 답","points":0,"sure":true,"why":"판단 까닭"}]}',
-    '', `[학생] ${no}번` // 학생마다 다른 줄은 맨 끝 (앞부분이 같으면 AI 회사가 앞글을 캐시해 값이 줄어듦)
+    '{"items":[{"no":1,"read":"학생이 쓴 답","points":0,"sure":true,"why":"판단 까닭"}]}'
   ].join('\n');
+  return { shared, own: `[학생] ${no}번 — 바로 위 그림이 이 학생의 평가지예요.` };
 }
+export function gradePrompt(test, no) { const p = gradeParts(test, no); return `${p.shared}\n\n${p.own}`; }
 
 export const validGrade = v => Array.isArray(v) || !!(v && Array.isArray(v.items));
 export function normGrade(v, items) {

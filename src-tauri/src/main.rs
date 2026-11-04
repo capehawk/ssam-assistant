@@ -7,6 +7,8 @@ mod training;
 mod bubble;
 mod files;
 mod neis;
+#[cfg(windows)]
+mod shell_win;
 mod updater;
 
 use serde::Serialize;
@@ -338,9 +340,16 @@ fn main() {
             install_update,
             neis::neis_arm,
             neis::neis_disarm,
+            neis::queue_arm,
+            neis::queue_goto,
             ai_proxy::ai_proxy,
             training::training_request,
             files::save_download,
+            files::note_save_attachments,
+            files::note_copy_files,
+            files::note_drag_files,
+            files::note_open_dir,
+            files::open_downloads,
             bubble::bubble_config,
             bubble::inbox_take,
             bubble::inbox_read,

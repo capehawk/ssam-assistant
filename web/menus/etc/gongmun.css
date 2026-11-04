@@ -1,0 +1,19 @@
+.gm-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.75rem}
+.gm-doc{border:1px solid var(--line,#ddd);border-radius:10px;padding:.75rem;display:flex;flex-direction:column;gap:.4rem}
+.gm-doc.done{opacity:.65}
+.gm-top{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.gm-title{font-size:1.02rem}
+.gm-meta,.gm-sum{margin:0}
+.gm-dd{display:inline-block;min-width:3.2rem;text-align:center;font-weight:700;font-size:.82rem;border-radius:999px;padding:.1rem .5rem;background:var(--chip,#eef1f5)}
+.gm-dd.over,.gm-dd.hot{background:#fde2e1;color:#b42318}
+.gm-dd.warm{background:#fff1d6;color:#9a5b00}
+.gm-dd.none{font-weight:400;color:var(--muted,#667)}
+.gm-tasks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.2rem}
+.gm-tasks li{display:flex;gap:.5rem;align-items:center}
+.gm-tasks li label{display:flex;gap:.4rem;align-items:center;flex:1;min-width:0}
+.gm-tasks li.done span{text-decoration:line-through;color:var(--muted,#667)}
+.gm-go{flex-wrap:wrap}
+.gm-due .yp-f{max-width:16rem}
+.gm-done-box summary{cursor:pointer;margin:.5rem 0}
+.gm-band{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:0 0 .75rem}
+.gm-band button{display:inline-flex;gap:.4rem;align-items:center}

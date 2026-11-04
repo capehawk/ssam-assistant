@@ -11,7 +11,7 @@ await page.addInitScript(() => {
 const sent = [];
 await page.route('https://api.anthropic.com/**', async route => {
   const c = JSON.parse(route.request().postData()).messages[0].content;
-  const prompt = c.find(x => x.type === 'text').text;
+  const prompt = c.filter(x => x.type === 'text').map(x => x.text).join('\n');
   sent.push({ prompt, images: c.filter(x => x.type === 'image').map(x => x.source.data) });
   const out = JSON.stringify({ items: SAMPLE_ITEMS.map((it, i) => ({ no: i + 1, read: '', points: 0, sure: true, why: '' })) });
   const ev = [{ type: 'content_block_delta', delta: { type: 'text_delta', text: out } }, { type: 'message_delta', delta: { stop_reason: 'end_turn' } }];

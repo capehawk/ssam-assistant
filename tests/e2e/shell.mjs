@@ -23,7 +23,7 @@ await run('shell', [
     assert(await current('nav.app-side') === '평가', '세로 메뉴 현재: ' + await current('nav.app-side'));
     assert(await title() === '평가', '제목: ' + await title());
     const ts = await tabs();
-    assert(ts.join('|') === '교과 평어|창의적 체험활동|행동특성|평가지 채점|단원평가', '가로 메뉴: ' + ts.join('|'));
+    assert(ts.join('|') === '교과 평어|창의적 체험활동|행동특성|평가지 채점|단원평가|활동지', '가로 메뉴: ' + ts.join('|'));
     assert(await current('header.app-top nav.app-tabs') === '교과 평어', '가로 메뉴 현재');
   }],
   ['로고 칸과 헤더 높이가 76px', async () => {

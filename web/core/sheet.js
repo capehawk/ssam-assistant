@@ -90,6 +90,7 @@ export async function readTable(name, u8) {
 const HEAD = {
   name: /^(품명|품목|품목명|물품명|상품명|제품명|내역|항목)$/,
   spec: /^(규격|사양|모델|모델명|규격\/사양)$/,
+  unit: /^(단위)$/,
   qty: /^(수량|개수)$/,
   price: /^(단가|개당가격|가격)$/,
   amount: /^(금액|공급가액|합계금액)$/
@@ -112,7 +113,7 @@ export function findItems(rows) {
       const q = toNumber(cell('qty'));
       const qty = q > 0 ? q : 1;
       const price = cell('price') !== '' ? toNumber(cell('price')) : Math.round(toNumber(cell('amount')) / qty);
-      out.push({ name, spec: cell('spec'), qty, price });
+      out.push({ name, spec: cell('spec'), ...(cols.unit != null ? { unit: cell('unit') } : {}), qty, price });
     }
     return out;
   }

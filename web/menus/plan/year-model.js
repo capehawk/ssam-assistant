@@ -3,6 +3,7 @@
 import { get, set } from '../../core/store.js';
 import { isDate } from '../../core/calendar.js';
 import { getSchool } from '../../core/settings.js';
+import { normRv } from './plan-rv.js';
 
 const LIST_KEY = 'yearplans', CUR_KEY = 'yearplan:current';
 
@@ -24,7 +25,7 @@ export function newPlan() {
     id: 'yp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     name: '', year: getSchool().year, goal: '', owner: '', budget: '',
     sources: { lastPlan: '', lastResult: '', guide: '' }, sourceNames: { lastPlan: [], lastResult: [], guide: [] },
-    review: null, guide: null, draft: null, status: 'draft', step: 1, maxStep: 1, updatedAt: 0
+    review: null, guide: null, draft: null, rv: [], status: 'draft', step: 1, maxStep: 1, updatedAt: 0
   };
 }
 
@@ -41,6 +42,7 @@ function normPlan(v) {
   p.review = normReview(v.review);
   p.guide = v.guide == null ? null : normGuide(v.guide);
   p.draft = normDraft(v.draft);
+  p.rv = p.draft ? normRv(v.rv) : [];
   p.status = v.status === 'final' ? 'final' : 'draft';
   // 화면 단계(1~5)와 가 본 가장 먼 단계
   const st = n => (Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1);

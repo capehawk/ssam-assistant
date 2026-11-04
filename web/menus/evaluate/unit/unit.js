@@ -9,9 +9,11 @@ import { readText, fileMessage } from '../../../core/files.js';
 import { stepsHTML } from '../../../core/steps.js';
 import { parseKey, parsePaper, keyTotal, splitCombined } from './unit-key.js';
 import { ITEM_TYPES, rescoreItem } from './unit-grade.js';
-import { listTests, getTest, saveTest, removeTest, newTest, makeTitle, graded } from './unit-model.js';
+import { listTests, getTest, saveTest, removeTest, newTest, makeTitle, graded, maskOf } from './unit-model.js';
 import { keyPrompt, normKeyAI } from './unit-ai.js';
 import { sampleTests } from './unit-sample.js';
+import { readBundle, openBundleCard, needsCard, bundleBoxHTML, onBundle } from '../../../core/bundle.js';
+import { linkHTML, openLinkSheet } from '../../../core/eval-link.js';
 
 export const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const SS = () => window.SSAM || {};
@@ -106,12 +108,13 @@ function keyHTML(t) {
   return `<div class="yp-card">
       <h3>정답지·평가지</h3>
       <p class="muted cls-note">「문항 이원 분류 및 모범 답안」 한글 파일은 AI 없이 바로 읽어요. 사진이나 스캔 PDF는 AI가 읽어요.</p>
+      ${bundleBoxHTML('unit', '정답지·문제지·학생 답안 스캔을 한꺼번에 넣으면 알아서 나눠요(답안은 2단계로)')}
       <div class="row"><button class="btn primary" type="button" data-un="keyFile">정답지 넣기</button><span class="muted" id="unKeyMsg">${esc(m.key)}</span></div>
       <div class="row"><button class="btn" type="button" data-un="paperFile">평가지 넣기 (선택)</button><span class="muted" id="unPaperMsg">${esc(m.paper)}</span></div>
       <input type="file" id="unKeyFile" accept=".hwp,.hwpx,.pdf,.txt,.png,.jpg,.jpeg,.webp" hidden>
       <input type="file" id="unPaperFile" accept=".hwp,.hwpx,.pdf,.txt" hidden>
     </div>
-    <div class="yp-card"><h3>평가 정보</h3>${metaHTML(t.meta)}</div>
+    <div class="yp-card"><h3>평가 정보</h3>${metaHTML(t.meta)}${linkHTML(t.link || null, t.meta.subject, 'data-un')}</div>
     ${keyTableHTML(t)}
     <div class="row un-next"><button class="btn primary" type="button" data-un="next"${t.key.items.length ? '' : ' disabled'}>다음: 답안 올리기</button></div>`;
 }
@@ -177,6 +180,10 @@ async function loadKey(file) {
       return;
     }
   }
+  useKey(id, t0, k, text, file.name);
+}
+/* 읽은 정답지를 평가에 넣음(정답지 넣기·한꺼번에 넣기) */
+function useKey(id, t0, k, text, name) {
   const t = testOf(id, t0);
   if (!t) return;
   t.key = { domains: k.domains, items: k.items };
@@ -187,8 +194,8 @@ async function loadKey(file) {
   const sp = text ? splitCombined(text) : { paper: '' };
   const withPaper = !!(sp.paper && !(t.paper && t.paper.text));
   if (withPaper) { t.paper = { text: sp.paper.slice(0, 12000) }; fill(t.meta, parsePaper(sp.paper).meta, ['subject', 'grade', 'term', 'unitNo', 'unitName', 'round']); }
-  U.msg = { ...U.msg, id, key: `「${file.name}」에서 ${k.items.length}문항을 읽었어요${withPaper ? '. 평가지도 함께 넣었어요' : ''}${k.pointsGuessed ? '. 배점이 없어 100점을 문항 수로 나눠 넣었어요(고칠 수 있어요)' : ''}` };
-  if (withPaper) U.msg.paper = `「${file.name}」 · ${Object.keys(parsePaper(sp.paper).questions).length}문항`;
+  U.msg = { ...U.msg, id, key: `「${name}」에서 ${k.items.length}문항을 읽었어요${withPaper ? '. 평가지도 함께 넣었어요' : ''}${k.pointsGuessed ? '. 배점이 없어 100점을 문항 수로 나눠 넣었어요(고칠 수 있어요)' : ''}` };
+  if (withPaper) U.msg.paper = `「${name}」 · ${Object.keys(parsePaper(sp.paper).questions).length}문항`;
   commit(t);
   refresh(id);
 }
@@ -198,14 +205,52 @@ async function loadPaper(file) {
   let text;
   try { text = await readText(file, { columns: true }); } catch (e) { setMsg(id, 'paper', fileMessage(e && e.code)); return; }
   text = splitCombined(text).paper || text; // 정답이 붙은 문제지면 정답 앞까지만
+  usePaper(id, t0, text, file.name);
+}
+function usePaper(id, t0, text, name) {
   const p = parsePaper(text), t = testOf(id, t0);
   if (!t) return;
   t.paper = { text: text.slice(0, 12000) };
   fill(t.meta, p.meta, ['subject', 'grade', 'term', 'unitNo', 'unitName', 'round']);
-  U.msg = { ...U.msg, id, paper: `「${file.name}」 · ${Object.keys(p.questions).length}문항` };
+  U.msg = { ...U.msg, id, paper: `「${name}」 · ${Object.keys(p.questions).length}문항` };
   commit(t);
   refresh(id);
 }
+
+/* ---------- 한꺼번에 넣기 (정답지·문제지·답안 스캔) ---------- */
+async function putBundle(files) {
+  const t0 = cur(), id = t0.id;
+  setMsg(id, 'key', '읽는 중…');
+  let b;
+  try { b = await readBundle(files, { say: m => setMsg(id, 'key', m), mask: (maskOf(t0) || {}).mask || [] }); }
+  catch (e) { setMsg(id, 'key', e && e.message === 'PDFJS' ? 'PDF를 읽는 도구를 불러오지 못했어요. 인터넷 연결을 확인하거나 사진으로 넣어 주세요.' : '파일을 읽지 못했어요.'); return; }
+  setMsg(id, 'key', '');
+  if (needsCard(b)) { const r = await openBundleCard(b, { what: '단원평가' }); if (!r) { SS().files.freePages(b.pages); return; } b = r; }
+  const name = (b.doc.names && b.doc.names[0]) || '한꺼번에 넣은 파일';
+  let keyText = b.doc.teacher, paperText = b.doc.student;
+  if (!keyText && paperText && parseKey(paperText)) { keyText = paperText; paperText = ''; } // 정답지만 넣음
+  const crit = b.pages.filter((p, i) => b.roles[i] !== 'student'), stu = b.pages.filter((p, i) => b.roles[i] === 'student');
+  if (keyText || crit.length) {
+    let k = keyText ? parseKey(keyText) : null;
+    if (!k && ai.ready()) {
+      setMsg(id, 'key', 'AI가 정답지를 읽는 중…');
+      try {
+        const images = keyText ? undefined : await Promise.all(crit.slice(0, 4).map(p => SS().files.pageImage(p, null)));
+        k = normKeyAI(await ai.generateJSON(keyPrompt(keyText || ''), { images, valid: v => !!normKeyAI(v) }));
+      } catch (e) { k = null; }
+    }
+    if (k) useKey(id, t0, k, '', name); else setMsg(id, 'key', '정답지를 읽지 못했어요. [정답지 넣기]로 다시 넣거나 문항을 직접 넣어 주세요.');
+  }
+  if (crit.length) SS().files.freePages(crit);
+  if (paperText) usePaper(id, t0, paperText, name);
+  if (stu.length) {
+    const t = testOf(id, t0);
+    U.pending = { id: t ? t.id : id, pages: stu };
+    if (t && t.key.items.length) goStep(2);
+    else setMsg(id, 'paper', `답안 ${stu.length}쪽은 정답지를 넣으면 2단계에서 바로 나눠요`);
+  }
+}
+onBundle('unit', files => { if (visible() && U.view === 'test' && U.step === 1) putBundle(files); });
 const META_IDS = { unSubject: ['subject', 's'], unGrade: ['grade', 'n'], unUnitNo: ['unitNo', 'n'], unUnitName: ['unitName', 's'], unRound: ['round', 'n'], unDate: ['date', 's'] };
 function editMeta(el) {
   const [k, kind] = META_IDS[el.id], t = cur();
@@ -266,12 +311,18 @@ document.addEventListener('click', e => {
     for (const st of t.students) if (st.items) delete st.items[no];
     commit(t); render();
   } else if (a === 'next') goStep(2);
+  else if (a === 'linkEdit') openLinkSheet({ subject: t.meta.subject, link: t.link, save: l => { const t2 = cur(); t2.link = l; commit(t2); render(); } });
 });
 document.addEventListener('change', e => {
   if (!inStep(1) || !box.contains(e.target)) return;
   const el = e.target;
   if (el.id === 'unKeyFile' && el.files[0]) { const f = el.files[0]; el.value = ''; loadKey(f); }
   else if (el.id === 'unPaperFile' && el.files[0]) { const f = el.files[0]; el.value = ''; loadPaper(f); }
+  else if (el.dataset.un === 'link') {
+    const t = cur();
+    if (!el.checked) { t.link = null; commit(t); render(); }
+    else openLinkSheet({ subject: t.meta.subject, link: t.link, save: l => { const t2 = cur(); t2.link = l; commit(t2); render(); }, cancel: () => render() });
+  }
   else if (META_IDS[el.id]) editMeta(el);
   else if (el.dataset.k) editItem(el);
 });

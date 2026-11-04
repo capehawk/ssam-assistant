@@ -5,7 +5,10 @@ on:
     branches: [feature/training-hackathon]
     paths:
       - '.github/workflows/training-windows-build.yml'
-      - 'web/menus/training/**'
+      - 'web/**'
+      - 'src-tauri/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
 
 # 설치 파일 보관만 수행합니다. 릴리즈·태그를 만들 권한은 부여하지 않습니다.

@@ -4,19 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="학교 업무 AI 비서: 평가·연수·계획·학급·품의 업무를 한곳에서, AI가 초안을 쓰고 교사는 확인·수정만">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"%3E%3Cdefs%3E%3ClinearGradient id="f-bg" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0" stop-color="#4C8DFF"/%3E%3Cstop offset="1" stop-color="#3B3FD8"/%3E%3C/linearGradient%3E%3ClinearGradient id="f-hi" x1="0" y1="0" x2="0" y2="1"%3E%3Cstop offset="0" stop-color="#fff" stop-opacity=".22"/%3E%3Cstop offset=".5" stop-color="#fff" stop-opacity="0"/%3E%3C/linearGradient%3E%3ClinearGradient id="f-star" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0" stop-color="#FFE27A"/%3E%3Cstop offset="1" stop-color="#FFB020"/%3E%3C/linearGradient%3E%3Cfilter id="f-sh" x="-20%25" y="-20%25" width="140%25" height="140%25"%3E%3CfeDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1B1F8F" flood-opacity=".35"/%3E%3C/filter%3E%3C/defs%3E%3Crect x="64" y="64" width="896" height="896" rx="208" fill="url%28#f-bg%29"/%3E%3Crect x="64" y="64" width="896" height="896" rx="208" fill="url%28#f-hi%29"/%3E%3Cg filter="url%28#f-sh%29"%3E%3Crect x="282" y="226" width="420" height="560" rx="64" fill="#fff"/%3E%3C/g%3E%3Crect x="352" y="356" width="280" height="40" rx="20" fill="#C9D8FF"/%3E%3Crect x="352" y="446" width="280" height="40" rx="20" fill="#C9D8FF"/%3E%3Crect x="352" y="536" width="190" height="40" rx="20" fill="#C9D8FF"/%3E%3Crect x="352" y="626" width="120" height="40" rx="20" fill="#4C6FFF"/%3E%3Cpath d="M742 214 C752 290 770 308 846 318 C770 328 752 346 742 422 C732 346 714 328 638 318 C714 308 732 290 742 214Z" fill="url%28#f-star%29" stroke="#fff" stroke-width="18" stroke-linejoin="round"/%3E%3Cpath d="M832 430 C836 462 844 470 876 474 C844 478 836 486 832 518 C828 486 820 478 788 474 C820 470 828 462 832 430Z" fill="#fff"/%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0.75 -0.7 46 46'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23928cef'/%3E%3Cstop offset='1' stop-color='%234f46e5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url%28%23g%29' d='M12 4h22a10 10 0 0 1 10 10v13a10 10 0 0 1-10 10H21.5l-7.6 6.2c-1.1.9-2.7.1-2.7-1.3V36.9A10 10 0 0 1 2 27V14A10 10 0 0 1 12 4z'/%3E%3Cpath fill='none' stroke='%23fff' stroke-opacity='.35' stroke-width='2' stroke-linecap='round' d='M9 13.5A6.5 6.5 0 0 1 15.5 7H27'/%3E%3Cpath fill='%23fff' d='M17.66 29.01V22.94H30.21V29.01ZM20.19 26.95H27.69V25H20.19ZM24.55 22.17V12.34H26.74V16.23H27.85V12.2H30.21V22.34H27.85V18.49H26.74V22.17ZM14.53 21.01Q16.41 18.06 16.41 14.66V12.94H18.78V14.01Q18.78 15.31 19.04 16.81Q19.29 18.3 19.66 18.92Q20.05 18.27 20.28 16.89Q20.52 15.52 20.52 13.99V12.94H22.89V14.49Q22.89 16.02 23.38 17.77Q23.86 19.53 24.65 20.87L23.02 22.03Q22.61 21.52 22.2 20.62Q21.79 19.73 21.59 18.99Q21.33 19.83 20.79 20.69Q20.24 21.55 19.66 21.98Q19.06 21.55 18.52 20.72Q17.97 19.88 17.71 18.99Q17.52 19.78 17.09 20.69Q16.67 21.61 16.23 22.19Z'/%3E%3Cpath fill='%23fbbf24' stroke='%23fff' stroke-width='1.2' stroke-linejoin='round' paint-order='stroke' d='M40.5 1.5l1.25 3.25L45 6l-3.25 1.25L40.5 10.5l-1.25-3.25L36 6l3.25-1.25z'/%3E%3C/svg%3E">
 <title>쌤비서</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="menus/evaluate/evaluate.css">
 <link rel="stylesheet" href="core/shell.css">
+<link rel="stylesheet" href="core/bundle.css">
+<link rel="stylesheet" href="menus/evaluate/activity/activity.css">
 <link rel="stylesheet" href="core/theme.css">
 <link rel="stylesheet" href="core/inbox.css">
 <link rel="stylesheet" href="menus/settings/settings.css">
 <link rel="stylesheet" href="menus/purchase/purchase.css">
+<link rel="stylesheet" href="menus/etc/message.css">
+<link rel="stylesheet" href="menus/etc/letter.css">
+<link rel="stylesheet" href="menus/etc/gongmun.css">
 <link rel="stylesheet" href="menus/plan/plan.css">
 <link rel="stylesheet" href="menus/plan/event.css">
 <link rel="stylesheet" href="menus/plan/classplan.css">
+<link rel="stylesheet" href="menus/plan/report.css">
 <link rel="stylesheet" href="menus/class/class.css">
 <link rel="stylesheet" href="menus/evaluate/unit/unit.css">
 <script>/* 테마를 먼저 정해 깜빡임을 막고, 그 테마 글꼴만 화면을 막지 않게 부름 (core/theme.js의 THEMES·fontUrl과 같은 규칙) */try{var t=JSON.parse(localStorage.getItem('ssam:theme'))}catch(e){}t=['dark-nav','mono','soft','paper','rail'].indexOf(t)>=0?t:'dark-nav';document.documentElement.dataset.theme=t;(function(){var F={'dark-nav':'Gothic+A1:wght@400;500;600;700;800','mono':'IBM+Plex+Sans+KR:wght@400;500;600;700','soft':'Noto+Sans+KR:wght@400;500;700','paper':'Noto+Serif+KR:wght@600;700&family=Noto+Sans+KR:wght@400;500;700','rail':'Noto+Sans+KR:wght@400;500;700'};var l=document.createElement('link');l.rel='stylesheet';l.media='print';l.onload=function(){l.media='all'};l.dataset.font=t;l.href='https://fonts.googleapis.com/css2?family='+F[t]+'&family=Roboto+Mono:wght@400;500&display=swap';document.head.appendChild(l)})();</script>
@@ -26,7 +32,16 @@
 
 <div class="app-shell">
   <nav class="app-side" aria-label="주 메뉴">
-    <div class="app-logo"><span class="logo-mark" aria-hidden="true">쌤</span><span class="logo-name">쌤비서</span></div>
+    <div class="app-logo" aria-label="쌤비서 — 학교 업무 AI 비서">
+      <span class="logo-mark" aria-hidden="true"><svg viewBox="0 0 48 48" width="44" height="44" focusable="false">
+        <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" class="lm-g0"/><stop offset="1" class="lm-g1"/></linearGradient></defs>
+        <path class="lm-bubble" d="M12 4h22a10 10 0 0 1 10 10v13a10 10 0 0 1-10 10H21.5l-7.6 6.2c-1.1.9-2.7.1-2.7-1.3V36.9A10 10 0 0 1 2 27V14A10 10 0 0 1 12 4z"/>
+        <path class="lm-shine" d="M9 13.5A6.5 6.5 0 0 1 15.5 7H27" />
+        <text class="lm-t" x="23" y="27.6" text-anchor="middle">쌤</text>
+        <path class="lm-spark" d="M40.5 1.5l1.25 3.25L45 6l-3.25 1.25L40.5 10.5l-1.25-3.25L36 6l3.25-1.25z"/>
+      </svg></span>
+      <span class="logo-text"><span class="logo-name">쌤비서</span><span class="logo-sub">학교 업무 AI 비서</span></span>
+    </div>
     <div class="side-menus" id="sideMenus"></div>
     <div class="side-foot">
       <button class="side-year" id="sideYear" type="button" aria-label="학년도 (설정 › 학년도로 가기)"></button>
@@ -46,6 +61,7 @@
       <span class="meter"><i id="genMeter"></i></span>
       <button class="btn" id="genBtn" type="button">멈추기</button>
     </div>
+    <button class="btn primary upd-top" id="updTop" type="button" hidden title="새 버전 설치 창 열기"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span id="updTopText">업데이트</span></button>
     <button class="icon-btn" id="menuBtn" type="button" aria-label="메뉴" aria-haspopup="true">
       <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
     </button>
@@ -154,6 +170,7 @@
       <section data-menu="plan" hidden></section>
       <section data-menu="class" hidden></section>
       <section data-menu="purchase" hidden></section>
+      <section data-menu="etc" hidden></section>
       <section data-menu="settings" hidden>
         <footer class="credit">만든이: 도구리 <span aria-hidden="true">·</span> 연락처: <a href="mailto:raccoon@ai.cne.go.kr">raccoon@ai.cne.go.kr</a></footer>
       </section>
@@ -169,11 +186,17 @@
 <link rel="stylesheet" href="menus/training/training.css">
 <script type="module" src="menus/training/training.js"></script>
 <script type="module" src="core/inbox.js"></script>
+<script type="module" src="core/ai-roles.js"></script>
+<script type="module" src="core/ai-review.js"></script>
 <script type="module" src="menus/settings/settings.js"></script>
 <script type="module" src="menus/purchase/purchase.js"></script>
+<script type="module" src="menus/etc/message.js"></script>
+<script type="module" src="menus/etc/letter.js"></script>
+<script type="module" src="menus/etc/gongmun.js"></script>
 <script type="module" src="menus/plan/year.js"></script>
 <script type="module" src="menus/plan/event.js"></script>
 <script type="module" src="menus/plan/classplan.js"></script>
+<script type="module" src="menus/plan/report.js"></script>
 <script type="module" src="menus/plan/plan-inbox.js"></script>
 <script type="module" src="menus/class/progress.js"></script>
 <script type="module" src="menus/class/setup.js"></script>
@@ -183,6 +206,10 @@
 <script type="module" src="menus/evaluate/unit/unit-grading.js"></script>
 <script type="module" src="menus/evaluate/unit/unit-feedback.js"></script>
 <script type="module" src="menus/evaluate/unit/unit-results.js"></script>
+<script type="module" src="menus/evaluate/activity/activity.js"></script>
+<script type="module" src="menus/evaluate/activity/activity-grading.js"></script>
+<script type="module" src="menus/evaluate/activity/activity-results.js"></script>
+<script type="module" src="menus/evaluate/gr-bundle.js"></script>
 <script type="module" src="menus/evaluate/inbox-legacy.js"></script>
 </body>
 </html>

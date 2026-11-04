@@ -52,3 +52,19 @@ export function setPurchaseLimit(won) {
   if (!Number.isFinite(v) || v < 1) return false;
   return set('purchaseLimit', Math.floor(v)) || 'full';
 }
+
+/* 협의회 1인 상한(원, 참고용). 교육청·학교마다 달라서 선생님이 정함. 기본 40,000원 */
+const MEET_CAP_DEFAULT = 40000;
+export function getMeetCap() {
+  const v = get('purchaseMeetCap', MEET_CAP_DEFAULT);
+  return Number.isFinite(v) && v > 0 ? v : MEET_CAP_DEFAULT;
+}
+export function setMeetCap(won) {
+  const v = Number(won);
+  if (!Number.isFinite(v) || v < 1) return false;
+  return set('purchaseMeetCap', Math.floor(v)) || 'full';
+}
+
+/* 품의 넣는 방식: 'oneshot'(넣기 칸 → 바로 초안, 기본) · 'ask'(빠진 것만 물어보고 초안). 학년도와 상관없이 */
+export const getPurchaseFlow = () => (get('purchase:flow', 'oneshot') === 'ask' ? 'ask' : 'oneshot');
+export const setPurchaseFlow = v => set('purchase:flow', v === 'ask' ? 'ask' : 'oneshot');

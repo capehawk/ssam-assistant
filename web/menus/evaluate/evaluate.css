@@ -238,6 +238,7 @@ details.info[open] summary svg{transform:rotate(90deg)}
 
 .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:70;display:grid;place-items:center;padding:16px}
 .sheet{background:var(--surface);border-radius:var(--r-l);box-shadow:var(--shadow2);width:min(520px,100%);max-height:calc(100% - 32px);overflow:auto;padding:22px;display:grid;gap:16px}
+.sheet>*{min-width:0} /* 안의 넓은 칸이 창을 옆으로 밀지 않게 */
 .sheet h3{margin:0;font:800 18px/1.35 var(--f-display)}
 .opt{display:grid;gap:8px}
 .lab{font-size:12.5px;font-weight:700;color:var(--ink3)}
@@ -531,4 +532,15 @@ i.mk.edit button svg{width:14px;height:14px}
 .no-check li.warn{background:#fff4c2;border-color:#e0b400;color:#5c4700}
 .no-check img{height:40px;max-width:220px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:4px}
 .no-check .field.num{width:64px}
+.no-check .no-zoom{padding:0;border:0;background:none;cursor:zoom-in;border-radius:4px;line-height:0}
+.no-check .no-zoom:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.no-check .no-zoom[aria-expanded="true"] img{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.no-check .no-view{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;padding:8px 0 2px;color:var(--ink)}
+.no-check .no-view[hidden]{display:none}
+.no-check .no-view figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%}
+.no-check .no-view figcaption{font-size:12px}
+.no-check .no-view .no-view-crop img{height:auto;max-height:120px;max-width:min(100%,520px);width:auto}
+.no-check .no-view-stage{position:relative;display:inline-block;max-width:100%;line-height:0}
+.no-check .no-view .no-view-page img{height:auto;max-height:44vh;max-width:100%;width:auto}
+.no-check .no-view-box{position:absolute;border:3px solid #e5484d;border-radius:3px;box-shadow:0 0 0 2px rgba(255,255,255,.8);pointer-events:none}
 .no-why{font-size:13px;font-weight:600}

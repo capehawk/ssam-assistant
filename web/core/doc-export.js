@@ -1,10 +1,10 @@
 /* 문서 내보내기: 같은 문서 꼴(core/hwpx.js의 { title, blocks })을 한글(hwpx)·워드(docx)·PDF(인쇄 창의 「PDF로 저장」)로.
    고른 형식은 기억해(학년도와 상관없이) 모든 메뉴의 [○○로 내려받기] 단추가 같이 씀. ▾로 형식을 바꾸면 바로 그 형식으로 내려받음.
    메뉴는 exportButton(속성)으로 단추를 그리고, 그 단추를 누르면 exportDoc(doc, 파일 이름)을 부르면 됨 */
-import { makeHwpx } from './hwpx.js';
+import { makeHwpx, photoList, fitBox } from './hwpx.js';
 import { zipStore } from './zip.js';
 import { get, set } from './store.js';
-import { saveFile } from './ui.js';
+import { saveFile, toast } from './ui.js';
 
 export const FORMATS = [['hwpx', '한글'], ['docx', '워드'], ['pdf', 'PDF']];
 const KEY = 'export';
@@ -32,13 +32,24 @@ const rowsOf = b => (b.rows || []).filter(Array.isArray);
 
 /* ---------- 워드(docx) ---------- */
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+// 사진(그림)을 쓰는 본문에만 더 붙이는 이름공간
+const W_PIC = ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"';
 const XH = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 // A4(11906×16838 twip), 여백 20mm(1134 twip) → 글 너비 9638
 const TEXT_W = 11906 - 1134 * 2;
 
-function docxBody(doc) {
-  let out = '', brk = false;
-  const para = (text, { style, bold, pb, keep } = {}) => `<w:p><w:pPr>${style ? `<w:pStyle w:val="${style}"/>` : ''}${keep ? '<w:keepNext/>' : ''}${pb ? '<w:pageBreakBefore/>' : ''}</w:pPr>`
+/* 사진 하나: 글 속 그림(wp:inline). n은 imageN의 번호, 크기는 EMU */
+function docxPic(n, cx, cy) {
+  return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${n}" name="사진 ${n}"/>`
+    + '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+    + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="${n}" name="image${n}.jpeg"/><pic:cNvPicPr/></pic:nvPicPr>`
+    + `<pic:blipFill><a:blip r:embed="rIdImg${n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`
+    + `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+}
+
+function docxBody(doc, photos = photoList(doc)) {
+  let out = '', brk = false, ph = 0;
+  const para = (text, { style, bold, pb, keep, center } = {}) => `<w:p><w:pPr>${style ? `<w:pStyle w:val="${style}"/>` : ''}${keep ? '<w:keepNext/>' : ''}${pb ? '<w:pageBreakBefore/>' : ''}${center ? '<w:jc w:val="center"/>' : ''}</w:pPr>`
     + `<w:r>${bold ? '<w:rPr><w:b/></w:rPr>' : ''}<w:t xml:space="preserve">${xesc(text)}</w:t></w:r></w:p>`;
   const lines = (text, opt) => linesOf(text).map((l, i) => para(l, { ...opt, pb: opt.pb && !i })).join('');
   out += para(doc.title || '', { style: 'Title' });
@@ -47,6 +58,7 @@ function docxBody(doc) {
     if (b.type === 'break') { brk = true; continue; }
     const pb = brk; brk = false;
     if (b.type === 'h') out += lines(b.text, { style: 'Heading1', pb, keep: true });
+    else if (b.type === 'c') out += lines(b.text, { pb, center: true, bold: !!b.bold });
     else if (b.type === 'table') {
       const rows = rowsOf(b);
       if (!rows.length) { brk = pb; continue; }
@@ -60,6 +72,19 @@ function docxBody(doc) {
             `<w:tc><w:tcPr><w:tcW w:w="${cw}" w:type="dxa"/>${head ? '<w:shd w:val="clear" w:color="auto" w:fill="E6E6E6"/>' : ''}</w:tcPr>`
             + linesOf(r[ci]).map(l => para(l, { bold: head })).join('') + '</w:tc>').join('') + '</w:tr>';
         }).join('') + '</w:tbl><w:p/>';
+    } else if (b.type === 'photos') {
+      // 2열 표, 칸마다 가운데 사진 + 설명 (칸 너비 안, 높이 6cm쯤까지)
+      const list = (b.items || []).filter(it => it && it.bytes && it.bytes.length).map(() => photos[ph++]).filter(Boolean);
+      if (!list.length) { brk = pb; continue; }
+      const cw = Math.floor(TEXT_W / 2), maxW = (cw - 340) * 635, maxH = 2160000;
+      const center = inner => `<w:p><w:pPr><w:jc w:val="center"/></w:pPr>${inner}</w:p>`;
+      const cell = p => `<w:tc><w:tcPr><w:tcW w:w="${cw}" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>`
+        + (p ? center(docxPic(+p.id.slice(5), ...fitBox(p.w, p.h, maxW, maxH))) + linesOf(p.caption || '').map(l => center(`<w:r><w:t xml:space="preserve">${xesc(l)}</w:t></w:r>`)).join('') : '<w:p/>') + '</w:tc>';
+      if (pb) out += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+      out += '<w:tbl><w:tblPr><w:tblStyle w:val="Grid"/><w:tblW w:w="5000" w:type="pct"/><w:tblLayout w:type="fixed"/></w:tblPr>'
+        + `<w:tblGrid><w:gridCol w:w="${cw}"/><w:gridCol w:w="${cw}"/></w:tblGrid>`;
+      for (let i = 0; i < list.length; i += 2) out += `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cell(list[i])}${cell(list[i + 1])}</w:tr>`;
+      out += '</w:tbl><w:p/>';
     } else out += lines(b.text, { pb });
   }
   return out;
@@ -79,16 +104,18 @@ function stylesXml() {
 }
 
 export function makeDocx(doc) {
-  const d = doc || {};
+  const d = doc || {}, photos = photoList(d);
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const imgRels = photos.map(p => `<Relationship Id="rIdImg${p.id.slice(5)}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${p.id}.jpeg"/>`).join('');
   return zipStore([
-    { name: '[Content_Types].xml', data: `${XH}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>` },
+    { name: '[Content_Types].xml', data: `${XH}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${photos.length ? '<Default Extension="jpeg" ContentType="image/jpeg"/>' : ''}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>` },
     { name: '_rels/.rels', data: `${XH}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>` },
     { name: 'docProps/core.xml', data: `${XH}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xesc(d.title || '')}</dc:title><dc:creator>쌤비서</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created></cp:coreProperties>` },
     { name: 'docProps/app.xml', data: `${XH}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>쌤비서</Application></Properties>` },
-    { name: 'word/_rels/document.xml.rels', data: `${XH}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { name: 'word/_rels/document.xml.rels', data: `${XH}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>${imgRels}</Relationships>` },
     { name: 'word/styles.xml', data: stylesXml() },
-    { name: 'word/document.xml', data: `${XH}<w:document ${W}><w:body>${docxBody(d)}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>` }
+    ...photos.map(p => ({ name: `word/media/${p.id}.jpeg`, data: p.bytes })),
+    { name: 'word/document.xml', data: `${XH}<w:document ${W}${photos.length ? W_PIC : ''}><w:body>${docxBody(d, photos)}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr></w:body></w:document>` }
   ]);
 }
 
@@ -101,6 +128,7 @@ export function docHtml(doc) {
     if (!b) continue;
     if (b.type === 'break') { out += '<div class="pd-break"></div>'; continue; }
     if (b.type === 'h') out += linesOf(b.text).map(l => `<h2>${hesc(l)}</h2>`).join('');
+    else if (b.type === 'c') out += linesOf(b.text).map(l => `<p class="c">${b.bold ? `<b>${hesc(l)}</b>` : hesc(l)}</p>`).join('');
     else if (b.type === 'table') {
       const rows = rowsOf(b);
       if (!rows.length) continue;
@@ -111,9 +139,22 @@ export function docHtml(doc) {
         const tag = b.head && ri === 0 ? 'th' : 'td';
         return `<${tag}${short[ci] ? ' class="nw"' : ''}>${linesOf(r[ci]).map(hesc).join('<br>')}</${tag}>`;
       }).join('') + '</tr>').join('') + '</table>';
+    } else if (b.type === 'photos') {
+      const list = (b.items || []).filter(it => it && it.bytes && it.bytes.length);
+      if (!list.length) continue;
+      const cell = p => (p ? `<td><img src="data:image/jpeg;base64,${b64(p.bytes)}" alt="${hesc(p.caption || '사진')}">${linesOf(p.caption || '').map(l => `<p>${hesc(l)}</p>`).join('')}</td>` : '<td></td>');
+      out += '<table class="pd-photos">';
+      for (let i = 0; i < list.length; i += 2) out += `<tr>${cell(list[i])}${cell(list[i + 1])}</tr>`;
+      out += '</table>';
     } else out += linesOf(b.text).map(l => `<p>${hesc(l)}</p>`).join('');
   }
   return out;
+}
+/* 바이트 → base64 (브라우저·Node 모두, 큰 사진도 나눠서) */
+function b64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 const PRINT_CSS = `#printDoc{display:none}
 @media print{
@@ -130,6 +171,10 @@ const PRINT_CSS = `#printDoc{display:none}
   #printDoc tr{break-inside:avoid}
   #printDoc .nw{white-space:nowrap}
   #printDoc .pd-break{break-before:page}
+  #printDoc p.c{text-align:center}
+  #printDoc .pd-photos td{width:50%;text-align:center;vertical-align:middle}
+  #printDoc .pd-photos img{display:block;margin:0 auto 3pt;max-width:100%;max-height:60mm;object-fit:contain}
+  #printDoc .pd-photos p{text-align:center}
 }`;
 let printUntil = 0, savedTitle = null;
 // 인쇄가 끝나면(또는 브라우저가 인쇄 창을 무시해 이벤트가 없었어도 다음 다른 인쇄 전에) 문서 칸·창 제목을 되돌림
@@ -173,6 +218,14 @@ export function exportButton(attrs, { disabled = false, cls = '', prefix = '' } 
   return `<span class="exp-split"><button class="btn${cls ? ' ' + cls : ''}" type="button" ${attrs} data-exp-main${pre}${disabled ? ' disabled' : ''}>${hesc(prefix)}${buttonLabel()}</button>`
     + `<button class="btn${cls ? ' ' + cls : ''} exp-more" type="button" data-exp-menu aria-haspopup="menu" aria-label="파일 형식 고르기" title="파일 형식 고르기"${disabled ? ' disabled' : ''}>▾</button></span>`;
 }
+/* ---------- [다운로드 폴더] (Windows 앱): 내려받은 파일이 쌓이는 다운로드 폴더를 탐색기로 엶. 웹판은 폴더를 열 수 없어 그리지 않음 ---------- */
+const FOLDER_SVG = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10.5v5.5M9.5 13.5 12 16l2.5-2.5"/></svg>';
+export const canOpenDownloads = () => !!(typeof window !== 'undefined' && window.__TAURI__ && window.__TAURI__.core);
+export const downloadsButton = () => (canOpenDownloads()
+  ? `<button class="btn text dl-folder" type="button" data-open-downloads title="내려받은 파일이 있는 다운로드 폴더 열기">${FOLDER_SVG}<span>다운로드 폴더</span></button>` : '');
+export async function openDownloads() {
+  try { await window.__TAURI__.core.invoke('open_downloads'); } catch (e) { toast('다운로드 폴더를 열지 못했어요. 파일 탐색기에서 「다운로드」를 열어 주세요.', 6000); }
+}
 function syncButtons() { document.querySelectorAll('[data-exp-main]').forEach(b => { b.textContent = (b.dataset.expPrefix || '') + buttonLabel(); }); }
 function closeMenu() { const m = document.getElementById('expMenu'); if (m) m.remove(); }
 function openMenu(more) {
@@ -206,10 +259,12 @@ if (typeof document !== 'undefined') {
     + '.exp-menu{position:fixed;z-index:80;width:220px;display:flex;flex-direction:column;padding:6px;border-radius:12px;background:var(--surface,#fff);border:1px solid var(--line,#e4e6eb);box-shadow:0 12px 32px rgba(0,0,0,.18)}'
     + '.exp-menu button{all:unset;cursor:pointer;padding:9px 12px;border-radius:8px;font:inherit;color:var(--ink,#16181d)}'
     + '.exp-menu button:hover,.exp-menu button:focus-visible{background:var(--accent-soft,#eef0ff)}'
-    + '.exp-menu button[aria-checked="true"]{font-weight:700;color:var(--accent-ink,#3730a3)}' }));
+    + '.exp-menu button[aria-checked="true"]{font-weight:700;color:var(--accent-ink,#3730a3)}'
+    + '.dl-folder{display:inline-flex;align-items:center;gap:6px}.dl-folder svg{flex:none}' }));
   document.addEventListener('click', e => {
     const more = e.target.closest && e.target.closest('[data-exp-menu]');
     if (more) { e.preventDefault(); e.stopPropagation(); openMenu(more); return; }
+    if (e.target.closest && e.target.closest('[data-open-downloads]')) { e.preventDefault(); openDownloads(); return; }
     if (!e.target.closest || !e.target.closest('#expMenu')) closeMenu();
   }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });

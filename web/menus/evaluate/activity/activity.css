@@ -1,0 +1,37 @@
+/* 평가 › 활동지 */
+.act-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.act-card{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;cursor:pointer}
+.act-card .act-c-t{flex:1 1 100%;font-size:15.5px}
+.act-card .grow{flex:1}
+.act-meta{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px 12px}
+.act-text pre{white-space:pre-wrap;font:inherit;font-size:13px;max-height:260px;overflow:auto;background:var(--surface-2,#f5f6f8);border-radius:8px;padding:8px}
+.act-items-wrap{overflow-x:auto}
+.act-items{width:100%;border-collapse:collapse;font-size:13px}
+.act-items th,.act-items td{border-bottom:1px solid var(--line,#e4e6eb);padding:4px;vertical-align:top;text-align:left}
+.act-items td.no{width:32px;text-align:center;font-weight:600}
+.act-items textarea{min-width:120px;resize:vertical}
+.act-items .chip{white-space:nowrap}
+.chip.src-ai{background:#eef3fd}.chip.src-teacher,.chip.src-answer{background:#e9f7ef}.chip.src-edit{background:#fff4c2}
+.act-warn{color:var(--warn,#8c4a00);margin:4px 0 0}
+.act-next{justify-content:flex-end}
+.act-set{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.ac-stus{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}
+.ac-grid-wrap{overflow-x:auto}
+.ac-grid{border-collapse:collapse;font-size:13px;min-width:100%}
+.ac-grid th,.ac-grid td{border-bottom:1px solid var(--line,#e4e6eb);padding:3px 4px;text-align:center;vertical-align:middle}
+.ac-grid td input.field{min-width:150px}
+.ac-no{white-space:nowrap;text-align:left !important}
+.ac-cell{min-width:32px;height:30px;border-radius:6px;border:1px solid var(--line,#d9dde3);background:var(--surface,#fff);font-size:15px;cursor:pointer}
+.ac-cell.mark-o{color:#1d7a46}.ac-cell.mark-t{color:#9a6a00}.ac-cell.mark-x{color:#c0392b}.ac-cell.mark-n{color:#888;font-size:11px}
+.ac-cell.chk{background:#fff4c2;border-color:#e0b400}
+.ac-cell.rv{box-shadow:0 0 0 2px #e0b400 inset}
+.ac-cell.manual{border-style:dashed}
+.chip.ac-stale{background:#fff4c2}
+.ac-marks button{min-width:56px}
+.ac-cell-sheet{display:flex;flex-direction:column;gap:8px}
+.ac-stats{margin:4px 0 0;padding-left:18px;font-size:13.5px;display:flex;flex-direction:column;gap:2px}
+.ac-good{text-align:left !important;min-width:160px}
+.el-box{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.el-sheet{display:flex;flex-direction:column;gap:8px}
+.gr-refs{display:flex;flex-direction:column;gap:4px;margin:6px 0;padding:8px 10px;border:1px solid var(--line,#e4e6eb);border-radius:8px}
+.gr-refs-none{margin:6px 0;font-size:12.5px}

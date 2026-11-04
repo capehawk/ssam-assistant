@@ -9,8 +9,17 @@ body{background:var(--page)}
 .app-shell{flex:1;min-height:0;display:flex}
 .app-side{flex:none;width:var(--side-w);display:flex;flex-direction:column;background:var(--frame);border-right:1px solid var(--frame-line);color:var(--frame-ink)}
 .app-side .app-logo{flex:none;height:var(--top-h);box-sizing:border-box;padding:0 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--frame-line)}
-.logo-mark{width:42px;height:42px;border-radius:12px;background:var(--logo);color:var(--on-logo);display:grid;place-items:center;font:800 19px/1 var(--f-display)}
-.logo-name{font:800 22px/1 var(--f-display);letter-spacing:-.5px;color:var(--frame-strong)}
+.logo-mark{width:44px;height:44px;flex:none;display:block;filter:drop-shadow(0 6px 12px color-mix(in srgb,var(--logo) 38%,transparent))}
+.logo-mark svg{display:block;width:100%;height:100%;overflow:visible}
+.logo-mark .lm-g0{stop-color:color-mix(in srgb,var(--logo) 62%,#ffffff)}
+.logo-mark .lm-g1{stop-color:var(--logo)}
+.logo-mark .lm-bubble{fill:url(#logoGrad)}
+.logo-mark .lm-shine{fill:none;stroke:#ffffff;stroke-opacity:.35;stroke-width:2;stroke-linecap:round}
+.logo-mark .lm-t{fill:var(--on-logo);font:800 18px var(--f-display);letter-spacing:-.5px}
+.logo-mark .lm-spark{fill:#fbbf24;stroke:var(--frame);stroke-width:1;paint-order:stroke}
+.logo-text{display:flex;flex-direction:column;gap:5px;min-width:0}
+.logo-name{font:800 22px/1 var(--f-display);letter-spacing:-.6px;color:var(--frame-strong)}
+.logo-sub{font:600 11px/1 var(--f-body);letter-spacing:.1px;color:var(--frame-ink2);white-space:nowrap}
 .side-menus{display:flex;flex-direction:column;gap:2px;padding:16px 12px 0}
 .side-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding:16px 12px}
 .side-btn{display:flex;align-items:center;gap:12px;width:100%;min-height:46px;padding:0 14px;border:0;border-radius:10px;background:transparent;color:var(--frame-ink);font:500 15px/1.2 var(--f-body);text-align:left}
@@ -47,8 +56,8 @@ section[data-menu="evaluate"][hidden]{display:none}
   /* 좁으면 메뉴 버튼이 다음 줄로 넘어감 (가려져서 못 누르는 버튼이 없게) */
   .app-side{width:auto;flex-direction:row;flex-wrap:wrap;align-items:center;border-right:0;border-bottom:1px solid var(--frame-line)}
   .app-side .app-logo{height:56px;padding:0 12px;border-bottom:0}
-  .logo-mark{width:34px;height:34px;font-size:16px;border-radius:10px}
-  .logo-name{display:none}
+  .logo-mark{width:36px;height:36px}
+  .logo-text{display:none}
   .side-menus,.side-foot{flex-direction:row;flex-wrap:wrap;padding:0 6px;margin:0;gap:2px}
   .side-ai,.side-year{display:none}
   .side-btn{flex:none;width:auto;min-height:44px;padding:0 10px;gap:6px;font-size:14px;white-space:nowrap}
@@ -66,3 +75,18 @@ section[data-menu="evaluate"][hidden]{display:none}
   .side-menus,.side-foot{padding:0 2px}
   .side-btn{flex-direction:column;justify-content:center;gap:2px;min-width:44px;padding:4px 6px;font-size:12px}
 }
+/* 에듀파인에 차례로 붙여넣기 패널 (core/queue-paste.js) — 나이스 패널(.neis)과 같은 자리·모양 */
+.qp-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.qp-list button { all: unset; box-sizing: border-box; width: 100%; display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.qp-list button:disabled { cursor: default; }
+.qp-list button:not(:disabled):hover, .qp-list button:focus-visible { background: var(--accent-soft, #eef0ff); }
+.qp-list b { flex: none; }
+.qp-list .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.qp-list .qp-next button { background: var(--accent-soft, #eef0ff); outline: 1.5px solid var(--accent, #4f46e5); }
+.qp-list .qp-done b { color: var(--ok, #15803d); }
+.qp-list .qp-empty { opacity: .55; }
+.upd-top{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;min-height:32px;font-size:.88rem;white-space:nowrap}.upd-top[hidden]{display:none}
+/* 머리 한 줄: 왼쪽 제목·설명, 오른쪽 AI 줄·[새 …] (기타 메뉴) */
+.m-head.m-head-row{flex-direction:row;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px 16px}
+.m-head-act{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto;min-width:0}
+.m-head-act .ai-row{display:flex;align-items:center;gap:4px;font-size:.88rem;color:var(--muted);min-width:0}

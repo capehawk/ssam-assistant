@@ -3502,7 +3502,7 @@ dependencies = [
 
 [[package]]
 name = "ssam"
-version = "0.9.0"
+version = "0.18.2"
 dependencies = [
  "arboard",
  "reqwest",
@@ -3515,6 +3515,8 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "windows",
+ "windows-core",
  "windows-sys 0.61.2",
 ]
 

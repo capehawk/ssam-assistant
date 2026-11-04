@@ -5,10 +5,12 @@ import { onFlush, get } from '../../core/store.js';
 import { onEnter, go as goMenu } from '../../core/shell.js';
 import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
+import { aiRowHTML } from '../../core/ai-roles.js';
 import { readText, fileMessage } from '../../core/files.js';
 import { toast } from '../../core/ui.js';
 import { exportButton, exportDoc } from '../../core/doc-export.js';
 import { stepsHTML } from '../../core/steps.js';
+import { rvBoxHTML, runPlanReview, onRvClick, markDone, dropOpen, hasOpen, clearState } from './plan-review.js';
 import { stripNames } from '../../core/privacy.js';
 import {
   STANDARD, MAX_SRC, KIND_NAME, parseOutline, withRoles, leaves, sectionBodies, attachKind, newId, newPlan, listPlans, getPlan, savePlan, deletePlan, currentId, setCurrent,
@@ -105,6 +107,7 @@ function renderMain() {
   const step = plan.step;
   const body = step === 1 ? step1() : step === 2 ? step2() : step === 3 ? step3() : step4();
   main.innerHTML = stepsHTML(STEPS, step, plan.maxStep)
+    + (step === 3 || step === 4 ? aiRowHTML('plan') : '')
     + (errs[plan.id] ? `<div class="banner err" role="alert"><span class="grow">${esc(errs[plan.id])}</span></div>` : '')
     + (notes[plan.id] && step === 3 ? `<div class="banner warn" role="status"><span class="grow">${esc(notes[plan.id])}</span></div>` : '')
     + body
@@ -319,13 +322,13 @@ function step3() {
     else n++;
     const head = x.level === 1 ? `${ROMAN[a - 1] || a}. ${x.title}` : `${n}. ${x.title}`;
     // 한글 파일에 들어가는 글은 모두 보이고 고칠 수 있게: 글 쓰는 칸, 글이 남은 상위 칸
-    const ta = `<textarea class="field" data-sec="${esc(x.id)}" rows="4" aria-label="${esc(x.title)}">${esc(d[x.id] || '')}</textarea>`;
+    const ta = `<textarea class="field${hasOpen(plan, x.id) ? ' rv-mark' : ''}" data-sec="${esc(x.id)}" rows="4" aria-label="${esc(x.title)}">${esc(d[x.id] || '')}</textarea>`;
     if (!leafIds.has(x.id)) return `<h3 class="cp-sec-l1">${esc(head)}</h3>${String(d[x.id] || '').trim() ? ta : ''}`;
     return `<section class="yp-sec cp-sec"><h4>${esc(head)}</h4>${ta}
       ${x.role === 'monthly' ? monthlyHTML() : ''}
       ${HINT[x.role] ? `<p class="muted">${HINT[x.role]}</p>` : ''}</section>`;
   }).join('');
-  return `<div id="cpOverlapBox">${overlapHTML()}</div>${guideHTML()}
+  return `<div id="cpOverlapBox">${overlapHTML()}</div>${guideHTML()}<div id="cpRvBox">${rvBox()}</div>
     <div class="yp-card" id="cpDraft">${secs}
       <div class="row"><button class="btn text" type="button" data-c="draft">AI로 다시 쓰기 (고친 내용은 사라져요)</button></div></div>`;
 }
@@ -350,7 +353,7 @@ async function runDraft() {
     if (plan.sources.guide.trim() && !plan.guide) {
       busy[id] = 'guide'; renderMain();
       try {
-        const v = await ai.generateJSON(guidePrompt(plan), { valid: x => Array.isArray(x) });
+        const v = await ai.generateJSON(guidePrompt(plan), { task: 'plan', valid: x => Array.isArray(x) });
         apply(id, p => { p.guide = normGuide(v, p.outline); });
       } catch (e) { notes[id] = `올해 지침에서 항목을 찾지 못해 지침 점검 없이 초안을 썼어요(${ai.errorMessage(e && e.code, e)}). [AI로 다시 쓰기]를 누르면 지침부터 다시 찾아요.`; }
     }
@@ -358,15 +361,40 @@ async function runDraft() {
     if (!target) { errs[id] = SAVE_FAIL; finish(id, 3); return; }
     busy[id] = 'draft'; if (visible() && plan.id === id) renderMain();
     const prompt = draftPrompt(target, { bodies: sectionBodies(target.sources.lastPlan, target.outline), hours: hoursRows(target.attach), evalCount: target.evalRows.length });
-    const v = await ai.generateJSON(prompt, { valid: x => Object.keys(normSections(x, target.outline)).length > 0 });
+    const v = await ai.generateJSON(prompt, { task: 'plan', valid: x => Object.keys(normSections(x, target.outline)).length > 0 });
     apply(id, p => {
-      p.draft = normSections(v, p.outline);
+      p.draft = normSections(v, p.outline); p.rv = [];
       const m = normMonthly(v);
       if (m.length) p.monthly = m;
       if (p.status === 'final') p.status = 'draft';
     });
+    clearState(id);
+    finish(id, 3);
+    reviewDraft(id);
+    return;
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 3);
+}
+/* 검토 AI: 글이 있는 목차 칸 모두를 한 번 봄 (올해 지침 항목과 함께) */
+const secLabel = (p, id) => { const x = (p.outline || []).find(o => o.id === id); return x ? x.title : id; };
+function reviewDraft(id) {
+  const p = getPlan(id);
+  if (!p || !p.draft) return;
+  runPlanReview(id, {
+    title: planTitle(p),
+    sections: p.outline.map(x => ({ key: x.id, label: x.title, text: p.draft[x.id] || '' })),
+    guide: (p.guide || []).map(g => `- ${g.item}: ${g.sentence}`).join('\n'),
+    current: () => { flushSave(); const q = getPlan(id); return q && q.draft; },
+    save: items => apply(id, q => { q.rv = items; }),
+    update: () => updateRv(id)
+  });
+}
+const rvBox = () => rvBoxHTML(plan, { text: k => (plan.draft && plan.draft[k]) || '', label: k => secLabel(plan, k) });
+function updateRv(id) {
+  if (!visible() || plan.id !== id || plan.step !== 3) return;
+  const b = box.querySelector('#cpRvBox');
+  if (b) b.innerHTML = rvBox();
+  box.querySelectorAll('textarea[data-sec]').forEach(t => t.classList.toggle('rv-mark', hasOpen(plan, t.dataset.sec)));
 }
 let ovT = null;
 function refreshOverlap() {
@@ -425,7 +453,7 @@ async function runEval() {
   delete errs[id];
   busy[id] = 'eval'; renderMain();
   try {
-    const v = await ai.generateJSON(evalPrompt(text), { valid: x => normEvalRows(x).length > 0 });
+    const v = await ai.generateJSON(evalPrompt(text), { task: 'plan', valid: x => normEvalRows(x).length > 0 });
     apply(id, p => { p.evalRows = normEvalRows(v); if (p.status === 'final') p.status = 'draft'; });
   } catch (e) { errs[id] = ai.errorMessage(e && e.code, e); }
   finish(id, 4);
@@ -510,8 +538,11 @@ document.addEventListener('input', e => {
     plan.sources[el.dataset.src] = el.value;
     // 지침을 고치면 지침 항목을 다시 뽑음
     if (el.dataset.src === 'guide') plan.guide = null;
-  } else if (el.dataset.sec && plan.draft) { plan.draft = { ...plan.draft, [el.dataset.sec]: el.value }; refreshOverlap(); }
-  else if (el.dataset.mon != null) {
+  } else if (el.dataset.sec && plan.draft) {
+    plan.draft = { ...plan.draft, [el.dataset.sec]: el.value }; refreshOverlap();
+    // 손으로 고친 칸의 검토 의견은 사라짐
+    if (hasOpen(plan, el.dataset.sec)) { plan.rv = dropOpen(plan.rv, el.dataset.sec); updateRv(plan.id); }
+  } else if (el.dataset.mon != null) {
     const m = monthRows(), x = m.find(r => r.month === +el.dataset.mon);
     if (!x) return;
     x.text = el.value; plan.monthly = m;
@@ -554,6 +585,15 @@ const move = (a, i, j) => { if (j < 0 || j >= a.length) return a; const b = a.sl
 document.addEventListener('click', e => {
   if (!box || !box.contains(e.target) || !visible()) return;
   flushSave();
+  if (onRvClick(e, box, {
+    use: sec => {
+      const r = (plan.rv || []).find(x => x.section === sec && !x.done);
+      if (!r || !plan.draft) return;
+      plan.draft = { ...plan.draft, [sec]: r.fix }; plan.rv = markDone(plan.rv, sec, 'review'); unfinal(plan);
+      persist(); renderMain();
+    },
+    keep: sec => { plan.rv = markDone(plan.rv, sec, 'main'); persist(); renderMain(); }
+  })) return;
   const item = e.target.closest('[data-cp]');
   if (item) { const p = getPlan(item.dataset.cp); if (p) { plan = p; saved = true; outlineNote = ''; setCurrent(p.id); render(); } return; }
   const st = e.target.closest('[data-step]');

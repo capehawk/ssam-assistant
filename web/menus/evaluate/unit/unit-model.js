@@ -198,3 +198,10 @@ export function feedbackText(test, st) {
   if (st.cheer) out.push(`한마디: ${st.cheer}`);
   return out.join('\n');
 }
+
+/* 평가 영역에 이어 둔 단원평가(활동지 스펙 4.8): unitId가 같거나, 교과·영역 이름이 같은 것. 날짜 늦은 것 먼저 */
+export function unitLinkedTo({ unitId = '', subject = '', label = '', known = [] } = {}) {
+  return listTests().map(s => getTest(s.id)).filter(t => t && t.link && ((unitId && t.link.unitId === unitId) || (label && !known.includes(t.link.unitId) && t.link.subject === subject && t.link.label === label)))
+    .map(t => ({ kind: 'unit', id: t.id, title: makeTitle(t.meta), date: t.meta.date || '' }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}

@@ -2,7 +2,8 @@
    채점을 마친 평가만 모음 */
 import { toast, copyText, saveFile } from '../../../core/ui.js';
 import * as ai from '../../../core/ai.js';
-import { exportButton, exportDoc } from '../../../core/doc-export.js';
+import { aiRowHTML } from '../../../core/ai-roles.js';
+import { exportButton, exportDoc, downloadsButton } from '../../../core/doc-export.js';
 import { studentTotal } from './unit-grade.js';
 import {
   listTests, loadTests, graded, makeTitle, filterTests, summaryTable, studentHistory, itemStats, domainStats, reteach,
@@ -34,7 +35,7 @@ function tableHTML(tests) {
   const tb = summaryTable(tests);
   const cell = v => (v == null ? '<td class="muted">-</td>' : `<td class="num">${v}</td>`);
   return `<div class="yp-card">
-    <div class="row"><b>성적 일람표</b><span class="muted">100점으로 바꾼 점수</span><span class="grow"></span><button class="btn" type="button" data-un="csv">엑셀(CSV)</button>${exportButton('data-un="tableHwpx"')}</div>
+    <div class="row"><b>성적 일람표</b><span class="muted">100점으로 바꾼 점수</span><span class="grow"></span><button class="btn" type="button" data-un="csv">엑셀(CSV)</button>${exportButton('data-un="tableHwpx"')}${downloadsButton()}</div>
     <div class="un-grid-wrap"><table class="un-sumt"><thead><tr><th>번호</th>${tb.cols.map(c => `<th data-col="${esc(c.id)}" title="${esc(c.title)}">${esc(c.title)}</th>`).join('')}<th>평균</th></tr></thead>
     <tbody>${tb.rows.map(r => `<tr data-no="${r.no}"><th>${r.no}번</th>${tb.cols.map(c => cell(r.cells[c.id])).join('')}${cell(r.avg)}</tr>`).join('')}
     <tr class="avg"><th>반 평균</th>${tb.cols.map(c => cell(tb.colAvg[c.id])).join('')}<td></td></tr></tbody></table></div></div>`;
@@ -109,6 +110,7 @@ function pyHTML(all) {
       <label class="cls-inline">최상 <input class="field num" type="number" id="unCutTop" min="0" max="100" value="${c.top}"></label>
       <label class="cls-inline">상 <input class="field num" type="number" id="unCutHigh" min="0" max="100" value="${c.high}"></label>
       <label class="cls-inline">중 <input class="field num" type="number" id="unCutMid" min="0" max="100" value="${c.mid}"></label><span class="muted">이상</span></div>
+    ${aiRowHTML('writing')}
     <div class="row"><button class="btn primary" type="button" data-un="pyAI"${R.pyRun ? ' disabled' : ''}>${R.pyRun ? '<span class="spin"></span>쓰는 중…' : '평어 쓰기'}</button><button class="btn" type="button" data-un="pyCopyAll">모두 복사</button>
       <span class="muted">AI에는 번호·수준·평가 내용만 보내요. 점수와 이름은 보내지 않아요.</span></div>
     <ul class="un-pys">${st.students.map(s => `<li class="un-py"><div class="row"><b>${s.no}번</b><span class="muted">평균 ${s.avg}점</span>${lvSel(s)}<span class="grow"></span><button class="btn text" type="button" data-un="pyCopy" data-no="${s.no}">복사</button></div>
@@ -142,7 +144,7 @@ async function writePyeongeo() {
         const rates = contentRates(st.chosen, s.no);
         return { no: s.no, level: s.level, good: rates.filter(r => r.rate >= 0.8).sort((a, b) => b.rate - a.rate).slice(0, 3).map(r => r.content), weak: rates.filter(r => r.rate < 0.6).sort((a, b) => a.rate - b.rate).slice(0, 3).map(r => r.content) };
       });
-      const res = normPyeongeo(await ai.generateJSON(pyeongeoPrompt(subject, chunk), { valid: v => Object.keys(normPyeongeo(v)).length > 0 }));
+      const res = normPyeongeo(await ai.generateJSON(pyeongeoPrompt(subject, chunk), { task: 'writing', valid: v => Object.keys(normPyeongeo(v)).length > 0 }));
       const cur = getPyeongeo(subject), now = pyStateFor(subject);
       for (const s of now.students) if (res[s.no] && !s.text) s.text = res[s.no];
       savePyeongeo(subject, { off: now.mine.map(t => t.id).filter(id => !now.ids.includes(id)), cuts: cur.cuts, students: Object.fromEntries(now.students.map(s => [s.no, { level: s.level, text: s.text, manual: s.manual }])) });

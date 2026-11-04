@@ -15,12 +15,13 @@ export function quotePrompt() {
 export function normQuoteItems(v) {
   const list = Array.isArray(v) ? v : v && Array.isArray(v.items) ? v.items : [];
   return list.filter(x => x && String(x.name || '').trim() && !TOTAL.test(String(x.name)))
-    .map(x => ({ name: String(x.name).trim(), spec: String(x.spec || '').trim(), qty: num(x.qty) || 1, price: num(x.price) }));
+    .map(x => ({ name: String(x.name).trim(), spec: String(x.spec || '').trim(), ...(String(x.unit || '').trim() ? { unit: String(x.unit).trim().slice(0, 10) } : {}), qty: num(x.qty) || 1, price: num(x.price) }));
 }
 const fromRows = rows => normQuoteItems(findItems(rows));
 const rowsOf = text => String(text || '').split('\n').map(l => l.split(/\t|\s*\|\s*/));
 
-export async function readQuote(file) {
+/* aiRead(images): 사진·글 없는 PDF를 다른 프롬프트로 읽고 싶을 때(아무거나 넣기) */
+export async function readQuote(file, { aiRead } = {}) {
   const name = String(file.name || '');
   if (/\.(xlsx|csv)$/i.test(name)) return { items: fromRows(await readTable(name, new Uint8Array(await file.arrayBuffer()))), by: 'table' };
   if (/\.(hwpx?|txt|pdf)$/i.test(name)) {
@@ -32,6 +33,7 @@ export async function readQuote(file) {
   // 사진·글 없는 PDF: AI가 읽음 (키가 없으면 NO_AI)
   if (!ai.ready()) throw { code: 'NO_AI' };
   const images = await window.SSAM.files.toImages(file);
-  const v = await ai.generateJSON(quotePrompt(), { images, valid: x => normQuoteItems(x).length > 0 });
+  if (aiRead) return aiRead(images);
+  const v = await ai.generateJSON(quotePrompt(), { images, task: 'purchase', valid: x => normQuoteItems(x).length > 0 });
   return { items: normQuoteItems(v), by: 'ai' };
 }
