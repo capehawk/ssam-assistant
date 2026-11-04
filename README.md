@@ -7,7 +7,7 @@
 
 ## 써 보기
 
-- **연수 제출 시연 (이 브랜치)**: [개인 Google 계정 서버 배포·시연 안내](services/training-submission/README.md)와 [검증 상태](services/training-submission/VERIFICATION.md)를 참고하세요. Windows 설치판용 연결이며 실제 GAS 배포 검증이 필요합니다.
+- **연수 제출 시연 (이 브랜치)**: [내 계정에 시연 서버 만들기](services/training-submission/SELF_HOSTING.md), [서버 구조·개발 안내](services/training-submission/README.md), [검증 상태](services/training-submission/VERIFICATION.md). 테스트 설치 파일 묶음의 `연수-시연서버.zip`에도 구축 안내와 배포 파일이 포함됩니다. 앱 설치와 서버 구축은 별도이며, 기존 서버 주소·인증값을 받았다면 직접 구축할 필요는 없습니다.
 
 - **웹판(설치 없이)**: https://doguri25.github.io/ssam-assistant/
 - **Windows 앱**: [릴리즈](https://github.com/doguri25/ssam-assistant/releases)에서 `ssam-<버전>-setup.exe`(설치) 또는 `ssam-<버전>-portable.exe`(설치 없이 실행). 앱이 새 버전을 스스로 확인해요.

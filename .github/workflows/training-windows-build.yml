@@ -9,6 +9,7 @@ on:
       - 'src-tauri/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'services/training-submission/**'
   workflow_dispatch:
 
 # 설치 파일 보관만 수행합니다. 릴리즈·태그를 만들 권한은 부여하지 않습니다.
@@ -60,6 +61,13 @@ jobs:
           Get-ChildItem out/*.exe | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           } | Set-Content out/SHA256SUMS.txt -Encoding ascii
+          $serverPackage = Join-Path $env:RUNNER_TEMP 'training-server-package'
+          New-Item -ItemType Directory -Force "$serverPackage/dist", "$serverPackage/tools" | Out-Null
+          Copy-Item services/training-submission/dist/* "$serverPackage/dist/"
+          Copy-Item services/training-submission/tools/create-credentials.mjs "$serverPackage/tools/"
+          Copy-Item services/training-submission/SELF_HOSTING.md "$serverPackage/"
+          Copy-Item services/training-submission/demo-certificate.pdf "$serverPackage/"
+          Compress-Archive -Path "$serverPackage/*" -DestinationPath out/연수-시연서버.zip -Force
           @"
           연수 기능 테스트용 쌤비서
           버전: $version / 커밋: $env:GITHUB_SHA
@@ -68,6 +76,8 @@ jobs:
           setup.exe는 설치 프로그램, portable.exe는 설치 없이 실행하는 파일입니다.
           앱 이름은 쌤비서 연수 테스트이며 기존 쌤비서와 앱 식별자·저장 공간이 분리됩니다.
           연수 → 내 필수연수에서 배포한 서버 /exec 주소와 교사 시연 인증값을 입력하세요.
+          기존 서버를 안내받지 않았다면 연수-시연서버.zip을 풀고 SELF_HOSTING.md를 따라 자기 Google 계정에 구축하세요.
+          서버 배포 파일·인증값 생성 도구·합성 이수증이 포함됩니다. 앱 설치만으로 서버가 만들어지지는 않습니다.
           실제 교직원 자료 대신 합성 PDF를 사용하세요. 인증값은 이 파일에 포함하지 않습니다.
           테스트판에서는 공식 자동 업데이트 조회와 설치가 차단됩니다.
           이 결과물은 공식 릴리즈가 아니며 PR 정식 리뷰·병합과 무관합니다.
