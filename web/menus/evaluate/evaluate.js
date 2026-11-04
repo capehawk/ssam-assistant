@@ -875,7 +875,8 @@ function settleEngine() {
   if (E.engine === 'account' && cap.sample) return;
   if (E.engine && PROVIDERS[E.engine] && keyOf(E.engine)) return;
   if (cap.sample) { E.engine = 'account'; return; }
-  const withKey = Object.keys(PROVIDERS).find(p => (E.keys[p] || '').trim()) || (TEST.on ? 'upstage' : null);
+  // 시험용 업스테이지는 아직 AI를 고르지 않았거나 업스테이지를 골랐을 때만(다른 AI를 골라 둔 선생님은 바꾸지 않음)
+  const withKey = Object.keys(PROVIDERS).find(p => (E.keys[p] || '').trim()) || (TEST.on && (!E.engine || E.engine === 'upstage') ? 'upstage' : null);
   E.engine = withKey || (E.engine && PROVIDERS[E.engine] ? E.engine : null);
 }
 
@@ -973,7 +974,8 @@ async function upFetch(url, init, keepAlive) {
         onAbort = () => no(abortError());
         sig.addEventListener('abort', onAbort, { once: true });
       }
-      call.then(ok, no);
+      // 시험용 키의 하루 횟수·기한 오류는 그 까닭을 그대로(quota로 멈춤)
+      call.then(ok, er => no(viaTest && /시험용/.test(String(er)) ? { code: 'quota', test: true, message: String(er) } : er));
     });
     return new Response(r.body, { status: r.status, headers: { 'content-type': r.contentType || 'application/json' } });
   } finally {
@@ -1003,6 +1005,7 @@ async function ocrOne(im, i, signal) {
   let res;
   try { res = await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
   catch (e) {
+    if (e && e.test) throw e;
     if (e && e.name === 'AbortError') throw { code: 'cancelled' };
     throw { code: 'blocked', message: String(e && e.message || e) };
   }
@@ -1073,6 +1076,7 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
       });
     }
   } catch (e) {
+    if (e && e.test) throw e;
     const er = wd.signal.aborted ? wd.signal.reason : e;
     if (er && er.name === 'TimeoutError') throw { code: 'upstream_error', message: er.message || '응답이 너무 오래 걸려서 멈췄어요' };
     if (e && e.name === 'AbortError') throw { code: 'cancelled' };
@@ -1569,7 +1573,7 @@ function errMsg(code, e) {
   const nm = (e && e.provider && PROVIDERS[e.provider] ? PROVIDERS[e.provider].label : engineName()) || 'AI';
   const m = {
     auth: `${nm} 키가 맞지 않아요(또는 권한이 없어요). 왼쪽 아래 AI 버튼에서 API 키를 다시 확인해 주세요.`,
-    quota: e && /^하루/.test(e.message || '') ? `${nm}의 하루 사용 한도를 다 썼어요. 내일 이어서 하거나 결제 설정을 확인해 주세요.` : `${nm} 사용 한도(크레딧·결제)가 부족해요. 결제나 한도를 확인한 뒤 이어서 만들기를 눌러 주세요.`,
+    quota: e && e.test ? e.message : e && /^하루/.test(e.message || '') ? `${nm}의 하루 사용 한도를 다 썼어요. 내일 이어서 하거나 결제 설정을 확인해 주세요.` : `${nm} 사용 한도(크레딧·결제)가 부족해요. 결제나 한도를 확인한 뒤 이어서 만들기를 눌러 주세요.`,
     bad_model: `${nm}에서 이 모델을 쓸 수 없어요. 평어 쓰는 방식에서 다른 모델을 골라 주세요.`,
     blocked: IN_VIEWER ? 'claude.ai 안에서는 외부 API 호출이 막혀 있어요. 평어 쓰는 방식에서 \'Claude 계정\'을 고르거나, 배포한 주소에서 API 키를 써 주세요.' : `${nm}에 연결하지 못했어요. 인터넷 연결과 API 키를 확인해 주세요.` + (E.engine === 'upstage' && !IN_APP ? ' 웹에서 계속 막히면 업스테이지는 Windows 앱에서 써 주세요.' : ''),
     ocr_failed: '업스테이지가 이미지를 읽지 못했어요. 이미지 기능은 Claude·Gemini·GPT를 권장해요.',
@@ -2192,6 +2196,7 @@ async function checkUpdate(manual) {
   catch (e) { if (manual) toast('업데이트를 확인하지 못했어요: ' + String(e && (e.message || e)).slice(0, 120), 5000); return; }
   UPD.info = info;
   if (!info.available) {
+    const top0 = $('#updTop'); if (top0) top0.hidden = true;
     if (manual) toast(info.latest ? `최신 버전이에요 (${info.current})` : '아직 올라온 업데이트가 없어요');
     return;
   }
@@ -2266,7 +2271,7 @@ if (IN_APP) {
   } catch (e) {}
   setTimeout(() => checkUpdate(false), 2500);
   // 시험용 업스테이지: 앱에 키가 들어 있고 기한 안이면, 내 키가 없을 때 그것으로(처음 한 번 알림)
-  window.__TAURI__.core.invoke('test_key_info').then(info => {
+  try { window.__TAURI__.core.invoke('test_key_info').then(info => {
     if (!info || !info.available || !/^\d{4}-\d{2}-\d{2}$/.test(info.until || '')) return;
     const t = new Date(), now = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
     if (now > info.until) return;
@@ -2277,7 +2282,8 @@ if (IN_APP) {
       let told = null; try { told = localStorage.getItem('ssam:testkey:told'); } catch (e) {}
       if (!told) { try { localStorage.setItem('ssam:testkey:told', '1'); } catch (e) {} setTimeout(() => toast(`시험용으로 업스테이지 AI를 쓰고 있어요(${untilText()}까지, 하루 400번). 내 AI 키를 넣으면 그 키로 바뀌어요 — 설정 › AI`, 10000), 4000); }
     }
-  }).catch(() => {});
+    try { noteEngine(); } catch (e) {}
+  }).catch(() => {}); } catch (e) {}
 }
 async function openUninstall() {
   const T = window.__TAURI__;

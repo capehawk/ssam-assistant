@@ -147,6 +147,7 @@ function init() {
   // 설정 시트를 닫으면 AI 이름을 다시 읽음
   const root = $('#sheetRoot');
   if (root) new MutationObserver(drawAi).observe(root, { childList: true });
+  document.addEventListener('ssam:ai-changed', drawAi); // 시험용 업스테이지를 알게 됐을 때 등
   const saved = readNav();
   go(saved ? saved.menu : 'evaluate', saved && (saved.menu !== 'evaluate' || !LEGACY.includes(saved.tab)) ? saved.tab : undefined);
 }

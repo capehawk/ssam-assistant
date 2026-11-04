@@ -11,6 +11,8 @@ pub const UNTIL_TEXT: &str = "2027-03-31";
 /// 2027-03-31 23:59:59 한국 시각 = 2027-03-31T14:59:59Z
 pub const UNTIL: u64 = 1_806_505_199;
 pub const DAILY: u32 = 400;
+/// 시험용 키를 쓸 수 있는 주소(채팅·글자 읽기)만
+pub const TEST_URLS: &[&str] = &["https://api.upstage.ai/v1/chat/completions", "https://api.upstage.ai/v1/document-digitization"];
 /// build.rs와 같은 섞개
 pub const PAD: &[u8] = b"ssam-assistant-test-key-2027";
 
@@ -52,10 +54,13 @@ fn take(day: u64, used: &mut (u64, u32)) -> bool {
 }
 
 /// authorization이 표시(MARK)면 진짜 키로 바꿈. 다른 헤더·내 키는 그대로(세지 않음)
-pub fn swap(headers: Vec<(String, String)>, obf: &[u8], now: u64, used: &mut (u64, u32)) -> Result<Vec<(String, String)>, String> {
+pub fn swap(url: &str, headers: Vec<(String, String)>, obf: &[u8], now: u64, used: &mut (u64, u32)) -> Result<Vec<(String, String)>, String> {
     let mark = format!("Bearer {MARK}");
     if !headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v.trim() == mark) {
         return Ok(headers);
+    }
+    if !TEST_URLS.iter().any(|u| url == *u || url.starts_with(&format!("{u}?"))) {
+        return Err("시험용 업스테이지로는 이 주소를 부를 수 없어요.".to_string());
     }
     let key = key_at(obf, now).ok_or_else(|| "시험용 업스테이지 사용 기간(2027. 3. 31.)이 끝났어요. 설정 › AI에 내 AI 키를 넣어 주세요.".to_string())?;
     if !take((now + 9 * 3600) / 86_400, used) {
@@ -69,15 +74,16 @@ pub fn swap(headers: Vec<(String, String)>, obf: &[u8], now: u64, used: &mut (u6
 
 static USED: Mutex<(u64, u32)> = Mutex::new((0, 0));
 
-pub fn apply(headers: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
+pub fn apply(url: &str, headers: Vec<(String, String)>) -> Result<Vec<(String, String)>, String> {
     let mut used = USED.lock().map_err(|_| "시험용 키를 쓰지 못했어요.".to_string())?;
-    swap(headers, OBF, now_secs(), &mut used)
+    swap(url, headers, OBF, now_secs(), &mut used)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     const NOW: u64 = 1_793_000_000; // 2026-10-26쯤
+    const CHAT: &str = "https://api.upstage.ai/v1/chat/completions";
     fn h(v: &str) -> Vec<(String, String)> {
         vec![("authorization".into(), v.into()), ("content-type".into(), "application/json".into())]
     }
@@ -96,10 +102,10 @@ mod tests {
     fn swaps_only_the_mark() {
         let obf = xor(b"up_test_123");
         let mut used = (0, 0);
-        let out = swap(h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).unwrap();
+        let out = swap(CHAT, h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).unwrap();
         assert_eq!(out[0].1, "Bearer up_test_123");
         assert_eq!(out[1].1, "application/json");
-        let mine = swap(h("Bearer my_own_key"), &obf, NOW, &mut used).unwrap();
+        let mine = swap(CHAT, h("Bearer my_own_key"), &obf, NOW, &mut used).unwrap();
         assert_eq!(mine[0].1, "Bearer my_own_key");
         assert_eq!(used.1, 1, "내 키는 세지 않음");
     }
@@ -107,8 +113,18 @@ mod tests {
     #[test]
     fn expired_or_missing_key_is_an_error() {
         let mut used = (0, 0);
-        assert!(swap(h(&format!("Bearer {MARK}")), &xor(b"k"), UNTIL + 10, &mut used).unwrap_err().contains("2027. 3. 31."));
-        assert!(swap(h(&format!("Bearer {MARK}")), &[], NOW, &mut used).is_err());
+        assert!(swap(CHAT, h(&format!("Bearer {MARK}")), &xor(b"k"), UNTIL + 10, &mut used).unwrap_err().contains("2027. 3. 31."));
+        assert!(swap(CHAT, h(&format!("Bearer {MARK}")), &[], NOW, &mut used).is_err());
+    }
+
+    #[test]
+    fn only_chat_and_ocr_urls() {
+        let obf = xor(b"k");
+        let mut used = (0, 0);
+        assert!(swap("https://api.upstage.ai/v1/document-digitization", h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).is_ok());
+        assert!(swap("https://api.upstage.ai/v1/document-digitization/async", h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).is_err());
+        assert!(swap("https://api.upstage.ai/v2/anything", h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).is_err());
+        assert!(swap("https://api.upstage.ai/v2/anything", h("Bearer mine"), &obf, NOW, &mut used).is_ok(), "내 키는 그대로");
     }
 
     #[test]
@@ -116,9 +132,9 @@ mod tests {
         let obf = xor(b"k");
         let mut used = (0, 0);
         for _ in 0..DAILY {
-            assert!(swap(h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).is_ok());
+            assert!(swap(CHAT, h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).is_ok());
         }
-        assert!(swap(h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).unwrap_err().contains("400번"));
-        assert!(swap(h(&format!("Bearer {MARK}")), &obf, NOW + 86_400, &mut used).is_ok());
+        assert!(swap(CHAT, h(&format!("Bearer {MARK}")), &obf, NOW, &mut used).unwrap_err().contains("400번"));
+        assert!(swap(CHAT, h(&format!("Bearer {MARK}")), &obf, NOW + 86_400, &mut used).is_ok());
     }
 }

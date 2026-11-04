@@ -104,7 +104,7 @@ export function rowText(task, env = providerEnv()) {
   if (!hasReview(task)) return s;
   if (!t.reviewOn) return s + ' · 검토 끔';
   const rv = pick(task, 'review', env);
-  return s + (rv ? ` · 검토: ${aiLabel(rv, env)}` : ' · 검토: 검토 AI를 골라 주세요');
+  return s + (rv ? ` · 검토: ${aiLabel(rv, env)}${tk && tk.on && !tk.own && rv.engine === 'upstage' ? ' (시험용)' : ''}` : ' · 검토: 검토 AI를 골라 주세요');
 }
 
 export const aiRowHTML = task => `<div class="ai-row" data-ai-row="${task}"></div>`;

@@ -94,7 +94,6 @@ fn run_uninstall(app: tauri::AppHandle, clear_data: bool) -> Result<String, Stri
     result
 }
 
-/// 지금 앱 버전
 /// 시험용 업스테이지 키가 들어 있고 기한 안인지(키 값은 주지 않음)
 #[derive(serde::Serialize)]
 struct TestKeyInfo {
@@ -106,6 +105,7 @@ fn test_key_info() -> TestKeyInfo {
     TestKeyInfo { available: test_key::available(), until: test_key::UNTIL_TEXT }
 }
 
+/// 지금 앱 버전
 #[tauri::command]
 fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()

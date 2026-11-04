@@ -47,16 +47,20 @@ jobs:
         env:
           CARGO_TERM_COLOR: never
           NO_COLOR: '1'
-          # 시험용 업스테이지 키(저장소 비밀값, 2027. 3. 31.까지만 앱에 들어감 — build.rs). 로그에는 가려짐
-          UPSTAGE_TEST_KEY: ${{ secrets.UPSTAGE_TEST_KEY }}
+          # 시험용 업스테이지 키(저장소 비밀값). 기한(2027. 3. 31. 한국 시각) 안에만 빌드에 넘김 — build.rs가 섞어 넣음. 로그에는 가려짐
+          TEST_KEY_SECRET: ${{ secrets.UPSTAGE_TEST_KEY }}
         run: |
           set -o pipefail
+          if [ -n "$TEST_KEY_SECRET" ] && [ "$(date +%s)" -le 1806505199 ]; then export UPSTAGE_TEST_KEY="$TEST_KEY_SECRET"; fi
+          unset TEST_KEY_SECRET
           if ! npm run tauri build -- --bundles nsis 2>&1 | tee build.log; then
             # 실패하면 마지막 로그를 Actions 화면 위쪽에 바로 보이게 남김
             tail -n 80 build.log | sed 's/\x1b\[[0-9;]*m//g; s/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}' > tail.txt
             echo "::error title=빌드 실패::$(cat tail.txt)"
             exit 1
           fi
+          # 키가 그대로 남는 빌드 기록(지문·build 폴더)은 지움 — 캐시·올림에 섞이지 않게
+          rm -rf src-tauri/target/release/.fingerprint/ssam-* src-tauri/target/release/build/ssam-*
 
       # 자동 업데이트·AI 대신 보내기 등 Rust 시험 (빌드 뒤라 dist/가 있음)
       - name: Rust 시험

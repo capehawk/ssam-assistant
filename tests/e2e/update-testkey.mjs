@@ -11,6 +11,7 @@ await page.addInitScript(() => {
     window.__calls.push([cmd, cmd === 'ai_proxy' ? { url: args.url, headers: args.headers } : args]);
     if (cmd === 'check_update') return { available: true, current: '0.16.0', latest: '9.9.9', notes: '- 새 기능', date: '2026-11-04', size: 1000 };
     if (cmd === 'test_key_info') return { available: true, until: '2027-03-31' };
+    if (cmd === 'ai_proxy' && window.__proxyFail) throw window.__proxyFail;
     if (cmd === 'ai_proxy') return { status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ title: '시험 공문', due: '', tasks: [], kinds: [] })) };
     return null;
   } }, event: { listen: async () => () => {} } };
@@ -53,6 +54,27 @@ await run('update-testkey', [
     await page.reload(); await page.waitForTimeout(800);
     const ready = await page.evaluate(() => window.SSAM && window.SSAM.ai && window.SSAM.ai.engineName && window.SSAM.ai.engineName());
     assert(!String(ready || '').includes('시험용'), String(ready));
+  }],
+  ['I2 시험용 하루 횟수를 다 쓰면 그 까닭(400번)을 알림(인터넷 연결 탓이라고 하지 않음)', async () => {
+    await page.evaluate(() => { localStorage.removeItem('ssam:engine'); });
+    await page.reload(); await page.waitForTimeout(800);
+    await page.evaluate(() => { window.__proxyFail = '오늘 시험용 업스테이지 사용 횟수(400번)를 다 썼어요. 내일 다시 쓰거나 설정 › AI에 내 AI 키를 넣어 주세요.'; });
+    await page.click('nav.app-side [data-menu-go="etc"]'); await page.click('#menuTabs [data-tab="gongmun"]');
+    await page.fill('section[data-menu="etc"] .gm-box #gmPaste', '한도 시험 공문');
+    await page.click('section[data-menu="etc"] .gm-box [data-gm="paste"]');
+    await page.waitForFunction(() => (document.querySelector('#toast') || {}).textContent?.includes('400번'), null, { timeout: 8000 });
+    await page.evaluate(() => { window.__proxyFail = null; });
+  }],
+  ['I3 Claude를 골라 두고 키를 기억하지 않았으면, 시험용 업스테이지로 바꾸지 않음', async () => {
+    await page.evaluate(() => { localStorage.setItem('ssam:engine', JSON.stringify({ engine: 'claude', keys: { claude: '', gemini: '', openai: '', upstage: '' }, remember: false })); });
+    await page.reload(); await page.waitForTimeout(1200);
+    const r = await page.evaluate(() => [window.SSAM.ai.current().engine, window.SSAM.ai.engineName()]);
+    assert(r[0] === 'claude' && !String(r[1]).includes('시험용'), JSON.stringify(r));
+  }],
+  ['M5 시험용 키를 알게 되면 왼쪽 아래 AI 이름도 바로 바뀜', async () => {
+    await page.evaluate(() => { localStorage.removeItem('ssam:engine'); });
+    await page.reload();
+    await page.waitForFunction(() => (document.querySelector('#sideAiName') || {}).textContent?.includes('시험용'), null, { timeout: 8000 });
   }],
   ['페이지 오류 없음', async () => { assert(errors.length === 0, errors.join(' | ')); }]
 ]);
