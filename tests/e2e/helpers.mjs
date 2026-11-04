@@ -39,6 +39,8 @@ export async function open({ width = 1280, height = 860 } = {}) {
   page.on('console', m => { if (m.type() === 'error' && !/fonts\.g|net::ERR/.test(m.text())) errors.push(m.text()); });
   // 시험 중에는 바깥 글꼴을 부르지 않음
   await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, body: '' }));
+  // 시험용 업스테이지 중계(Vercel)는 시험에서 「없음」 — 시험마다 따로 정하면 그것이 앞섬
+  await page.route(/ssam-relay[\w-]*\.vercel\.app/, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"available":false,"until":"2027-03-31","daily":400}' }));
   const close = async () => { await browser.close(); await srv.close(); };
   return { page, ctx, browser, url: srv.url, errors, close };
 }

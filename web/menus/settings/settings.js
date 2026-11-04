@@ -22,7 +22,7 @@ const sharedHost = () => (!window.__TAURI__ && /\.github\.io$/i.test(location.ho
 function testKeyNote() {
   const t = SSAM().ai && SSAM().ai.testKey ? SSAM().ai.testKey() : null;
   if (!t || !t.on) return '';
-  return `<p class="banner info" style="margin:0 0 8px"><span class="grow">${t.using ? '지금은 <b>시험용 업스테이지 AI</b>를 쓰고 있어요' : '이 앱에는 <b>시험용 업스테이지 AI</b>가 들어 있어요'}(${esc(t.untilText)}까지, 하루 400번). 써 보시라고 넣어 둔 것이라 기한이 지나면 사라져요. 내 AI 키를 넣으면 그 키로 써요.</span></p>`;
+  return `<p class="banner info" style="margin:0 0 8px"><span class="grow">${t.using ? '지금은 <b>시험용 업스테이지 AI</b>를 쓰고 있어요' : '이 앱에는 <b>시험용 업스테이지 AI</b>가 들어 있어요'}(${esc(t.untilText)}까지, 하루 ${Number(t.daily) || 400}번). 써 보시라고 넣어 둔 것이라 기한이 지나면 쓸 수 없어요. 내 AI 키를 넣으면 그 키로 써요.</span></p>`;
 }
 const sharedNote = () => (sharedHost() ? `<p class="banner warn" style="margin:0 0 8px">웹판은 ${esc(sharedHost())} 주소를 같은 계정의 다른 웹페이지와 함께 써요. AI 키를 기억하게 하면 그 페이지들도 이 키를 읽을 수 있어요. 함께 쓰는 PC에서는 Windows 앱을 쓰거나 [AI 바꾸기]에서 「키 기억하기」를 꺼 주세요.</p>` : '');
 const won = n => Number(n).toLocaleString('ko-KR');

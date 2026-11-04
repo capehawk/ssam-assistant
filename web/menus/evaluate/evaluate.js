@@ -848,7 +848,15 @@ try {
 /* 시험용 업스테이지(Windows 앱, 빌드 때 넣은 키, 2027. 3. 31.까지): 웹 쪽에는 키가 없고 표시(TEST_MARK)만.
    앱(ai_proxy)이 표시를 진짜 키로 바꿔 보냄. 내 키가 있으면 내 키 */
 const TEST_MARK = 'ssam-test-upstage';
-const TEST = { on: false, until: '' };
+/* 시험용 업스테이지 중계(Vercel): 키는 Vercel 환경 변수에만 있고, 기한·하루 횟수는 중계가 지킴. 웹판·Windows 앱 모두 바로 부름 */
+const RELAY = 'https://ssam-relay.vercel.app';
+/* 중계가 낸 오류(한도·기한·준비 안 됨)는 그 까닭을 그대로(quota로 멈춤) */
+async function relayError(res) {
+  let j = null;
+  try { j = await res.clone().json(); } catch (e) {}
+  return j && j.ssam ? { code: 'quota', test: true, message: String(j.message || '시험용 업스테이지를 지금 쓸 수 없어요. 설정 › AI에 내 AI 키를 넣어 주세요.') } : null;
+}
+const TEST = { on: false, until: '', daily: 400 };
 const keyOf = p => (E.keys[p] || '').trim() || (p === 'upstage' && TEST.on ? TEST_MARK : '');
 const usingTest = () => E.engine === 'upstage' && !(E.keys.upstage || '').trim() && TEST.on;
 const untilText = () => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(TEST.until); return m ? `${+m[1]}. ${+m[2]}. ${+m[3]}.` : ''; };
@@ -949,9 +957,7 @@ const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError
 /* keepAlive: 대신 보내는 동안 30초마다 부름 (답이 통째로 와서 그동안 2분 멈춤 감시가 끊지 않게) */
 async function upFetch(url, init, keepAlive) {
   const sig = init.signal;
-  // 시험용 키(표시)는 늘 앱으로 — 앱이 진짜 키로 바꿔 보냄
-  const viaTest = new Headers(init.headers || {}).get('authorization') === 'Bearer ' + TEST_MARK;
-  if (!(IN_APP && (upViaApp || viaTest))) {
+  if (!(IN_APP && upViaApp)) {
     try { return await fetch(url, init); }
     catch (e) {
       // 멈추기·2분 멈춤으로 끊긴 것은 막힌 게 아니므로 대신 보내지 않음
@@ -974,8 +980,7 @@ async function upFetch(url, init, keepAlive) {
         onAbort = () => no(abortError());
         sig.addEventListener('abort', onAbort, { once: true });
       }
-      // 시험용 키의 하루 횟수·기한 오류는 그 까닭을 그대로(quota로 멈춤)
-      call.then(ok, er => no(viaTest && /시험용/.test(String(er)) ? { code: 'quota', test: true, message: String(er) } : er));
+      call.then(ok, no);
     });
     return new Response(r.body, { status: r.status, headers: { 'content-type': r.contentType || 'application/json' } });
   } finally {
@@ -1003,13 +1008,14 @@ async function ocrOne(im, i, signal) {
   fd.append('document', blob, `page-${i + 1}.${/png/.test(im.mime) ? 'png' : 'jpg'}`);
   fd.append('model', 'ocr');
   let res;
-  try { res = await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
+  try { res = key === TEST_MARK ? await fetch(RELAY + '/api/ocr', { method: 'POST', signal, body: fd }) : await upFetch(UPSTAGE_OCR, { method: 'POST', signal, headers: { authorization: 'Bearer ' + key }, body: fd }); }
   catch (e) {
     if (e && e.test) throw e;
     if (e && e.name === 'AbortError') throw { code: 'cancelled' };
     throw { code: 'blocked', message: String(e && e.message || e) };
   }
   if (!res.ok) {
+    if (key === TEST_MARK) { const te = await relayError(res); if (te) throw te; }
     const er = await httpError(res);
     // 키·한도·잠깐 끊김(429·5xx)은 그대로 넘겨 쉬었다가 다시 하게 함. 나머지는 이미지를 못 읽은 것
     throw ['auth', 'quota', 'rate_limited', 'upstream_error'].includes(er.code) ? er : { code: 'ocr_failed', message: er.message };
@@ -1063,11 +1069,14 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
       });
     } else if (provider === 'upstage') {
       // 이미지는 generate에서 글로 바꿔 둠
-      res = await upFetch(UPSTAGE_CHAT, {
-        method: 'POST', signal,
-        headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
-        body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: prompt }] })
-      }, idle);
+      const upBody = JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: prompt }] });
+      res = key === TEST_MARK
+        ? await fetch(RELAY + '/api/chat', { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body: upBody })
+        : await upFetch(UPSTAGE_CHAT, {
+          method: 'POST', signal,
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + key },
+          body: upBody
+        }, idle);
     } else {
       res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST', signal,
@@ -1082,7 +1091,7 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
     if (e && e.name === 'AbortError') throw { code: 'cancelled' };
     throw { code: 'blocked', message: String(e && e.message || e) };
   }
-  if (!res.ok) throw await httpError(res);
+  if (!res.ok) { if (key === TEST_MARK) { const te = await relayError(res); if (te) throw te; } throw await httpError(res); }
   idle();
   try {
     await readSSE(res, j => {
@@ -2270,21 +2279,27 @@ if (IN_APP) {
     window.__TAURI__.core.invoke('app_version').then(v => { UPD.version = v; const el = $('#menuVer'); el.textContent = `쌤비서 ${v}`; el.hidden = false; }).catch(() => {});
   } catch (e) {}
   setTimeout(() => checkUpdate(false), 2500);
-  // 시험용 업스테이지: 앱에 키가 들어 있고 기한 안이면, 내 키가 없을 때 그것으로(처음 한 번 알림)
-  try { window.__TAURI__.core.invoke('test_key_info').then(info => {
+}
+/* 시험용 업스테이지(Vercel 중계에 키가 있고 기한 안이면): 내 키가 없을 때 그것으로(처음 한 번 알림) — 웹판·Windows 앱 모두 */
+(function testKeyInfo() {
+  if (IN_VIEWER || typeof fetch !== 'function') return;
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const tm = ctl ? setTimeout(() => ctl.abort(), 6000) : null;
+  fetch(RELAY + '/api/info', ctl ? { signal: ctl.signal } : {}).then(r => (r.ok ? r.json() : null)).then(info => {
+    if (tm) clearTimeout(tm);
     if (!info || !info.available || !/^\d{4}-\d{2}-\d{2}$/.test(info.until || '')) return;
     const t = new Date(), now = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
     if (now > info.until) return;
-    TEST.on = true; TEST.until = info.until;
+    TEST.on = true; TEST.until = info.until; TEST.daily = Number(info.daily) || 400;
     settleEngine(); updateGen();
     document.dispatchEvent(new CustomEvent('ssam:ai-changed'));
     if (usingTest()) {
       let told = null; try { told = localStorage.getItem('ssam:testkey:told'); } catch (e) {}
-      if (!told) { try { localStorage.setItem('ssam:testkey:told', '1'); } catch (e) {} setTimeout(() => toast(`시험용으로 업스테이지 AI를 쓰고 있어요(${untilText()}까지, 하루 400번). 내 AI 키를 넣으면 그 키로 바뀌어요 — 설정 › AI`, 10000), 4000); }
+      if (!told) { try { localStorage.setItem('ssam:testkey:told', '1'); } catch (e) {} setTimeout(() => toast(`시험용으로 업스테이지 AI를 쓰고 있어요(${untilText()}까지, 하루 ${TEST.daily}번). 내 AI 키를 넣으면 그 키로 바뀌어요 — 설정 › AI`, 10000), 4000); }
     }
     try { noteEngine(); } catch (e) {}
-  }).catch(() => {}); } catch (e) {}
-}
+  }).catch(() => { if (tm) clearTimeout(tm); });
+})();
 async function openUninstall() {
   const T = window.__TAURI__;
   if (!T || !T.core) return;
@@ -5710,7 +5725,7 @@ window.SSAM = {
   // 평가 영역 이음(활동지·단원평가 → 평가지 채점): 지금 평가계획의 영역 [{ id, subject, label }]
   planUnits: () => allUnits().map(u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') })),
   onModeChange: fn => { modeHooks.push(fn); },
-  ai: { generate, engineReady, engineName, testKey: () => ({ on: TEST.on, until: TEST.until, untilText: untilText(), using: usingTest(), own: !!(E.keys.upstage || '').trim() }), providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
+  ai: { generate, engineReady, engineName, testKey: () => ({ on: TEST.on, until: TEST.until, daily: TEST.daily, untilText: untilText(), using: usingTest(), own: !!(E.keys.upstage || '').trim() }), providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
   rosterHTML, toast, openSheet, closeSheet, esc, copyText,
   // 단원평가: 이름 칸 가리기 편집기 { shots: [{ url, label }], mask, all, what, save(mask, all) }
   openMaskEditor,
