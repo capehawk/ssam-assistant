@@ -76,3 +76,4 @@ section[data-menu="evaluate"][hidden]{display:none}
 .qp-list .qp-next button { background: var(--accent-soft, #eef0ff); outline: 1.5px solid var(--accent, #4f46e5); }
 .qp-list .qp-done b { color: var(--ok, #15803d); }
 .qp-list .qp-empty { opacity: .55; }
+.upd-top{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;min-height:32px;font-size:.88rem;white-space:nowrap}.upd-top[hidden]{display:none}

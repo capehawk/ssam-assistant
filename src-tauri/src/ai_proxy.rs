@@ -35,6 +35,8 @@ pub async fn ai_proxy(
     if !allowed(&url) {
         return Err("이 주소는 대신 보낼 수 없어요".to_string());
     }
+    // 시험용 업스테이지: 웹 쪽이 보낸 표시를 진짜 키로(기한·하루 횟수 확인). 내 키면 그대로
+    let headers = crate::test_key::apply(headers)?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(900))

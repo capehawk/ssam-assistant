@@ -18,6 +18,12 @@ const toast = (m, ms) => SSAM().toast && SSAM().toast(m, ms);
 const FULL = FULL_MSG;
 /* 웹판 주소(*.github.io)는 같은 계정의 다른 GitHub Pages 페이지와 저장소를 함께 씀 (Windows 앱은 따로) */
 const sharedHost = () => (!window.__TAURI__ && /\.github\.io$/i.test(location.hostname) ? location.hostname : '');
+/* 시험용 업스테이지(Windows 앱): 내 키가 없으면 빌드에 넣은 키로, 기한까지 */
+function testKeyNote() {
+  const t = SSAM().ai && SSAM().ai.testKey ? SSAM().ai.testKey() : null;
+  if (!t || !t.on) return '';
+  return `<p class="banner info" style="margin:0 0 8px"><span class="grow">${t.using ? '지금은 <b>시험용 업스테이지 AI</b>를 쓰고 있어요' : '이 앱에는 <b>시험용 업스테이지 AI</b>가 들어 있어요'}(${esc(t.untilText)}까지, 하루 400번). 써 보시라고 넣어 둔 것이라 기한이 지나면 사라져요. 내 AI 키를 넣으면 그 키로 써요.</span></p>`;
+}
 const sharedNote = () => (sharedHost() ? `<p class="banner warn" style="margin:0 0 8px">웹판은 ${esc(sharedHost())} 주소를 같은 계정의 다른 웹페이지와 함께 써요. AI 키를 기억하게 하면 그 페이지들도 이 키를 읽을 수 있어요. 함께 쓰는 PC에서는 Windows 앱을 쓰거나 [AI 바꾸기]에서 「키 기억하기」를 꺼 주세요.</p>` : '');
 const won = n => Number(n).toLocaleString('ko-KR');
 
@@ -75,7 +81,7 @@ const VIEWS = {
   ai: () => {
     const ready = SSAM().ai && SSAM().ai.engineReady();
     return page('AI', 'Claude·Gemini·GPT·업스테이지 중 하나의 키를 넣어 써요. 키는 이 컴퓨터에만 저장돼요.',
-      card('지금 쓰는 AI', `${sharedNote()}<p class="set-big">${esc(ready ? SSAM().ai.engineName() : '아직 정하지 않았어요')}</p>
+      card('지금 쓰는 AI', `${sharedNote()}${testKeyNote()}<p class="set-big">${esc(ready ? SSAM().ai.engineName() : '아직 정하지 않았어요')}</p>
         <div class="row"><button class="btn primary" type="button" data-set="openAi">AI 바꾸기</button>
           <button class="btn" type="button" data-set="testAi" ${ready && !(aiMsg && aiMsg.busy) ? '' : 'disabled'}>연결 확인</button></div>
         ${aiMsg ? `<p class="set-msg ${aiMsg.busy ? '' : aiMsg.ok ? 'ok' : 'err'}" role="status">${aiMsg.busy ? '확인하는 중…' : esc(aiMsg.text)}</p>` : ''}`) + rolesCards());

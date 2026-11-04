@@ -845,13 +845,21 @@ try {
     if (/fable|mythos/i.test(E.models.claude || '')) { E.models.claude = 'claude-opus-5-5'; saveEngine(); }
   }
 } catch (e) {}
+/* 시험용 업스테이지(Windows 앱, 빌드 때 넣은 키, 2027. 3. 31.까지): 웹 쪽에는 키가 없고 표시(TEST_MARK)만.
+   앱(ai_proxy)이 표시를 진짜 키로 바꿔 보냄. 내 키가 있으면 내 키 */
+const TEST_MARK = 'ssam-test-upstage';
+const TEST = { on: false, until: '' };
+const keyOf = p => (E.keys[p] || '').trim() || (p === 'upstage' && TEST.on ? TEST_MARK : '');
+const usingTest = () => E.engine === 'upstage' && !(E.keys.upstage || '').trim() && TEST.on;
+const untilText = () => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(TEST.until); return m ? `${+m[1]}. ${+m[2]}. ${+m[3]}.` : ''; };
 function engineReady() {
   if (E.engine === 'account') return !!cap.sample;
-  if (E.engine && PROVIDERS[E.engine]) return !!(E.keys[E.engine] || '').trim();
+  if (E.engine && PROVIDERS[E.engine]) return !!keyOf(E.engine);
   return false;
 }
 function engineName() {
   if (E.engine === 'account') return 'Claude 계정';
+  if (usingTest()) return `시험용 ${PROVIDERS.upstage.label}(${untilText()}까지)`;
   return E.engine && PROVIDERS[E.engine] ? PROVIDERS[E.engine].label : '';
 }
 /* 업무별 AI 고르기용: 회사·모델 목록과 키가 있는지만(키 값은 주지 않음). 직접 입력한 모델도 목록에 */
@@ -859,15 +867,15 @@ function aiProviders() {
   return Object.entries(PROVIDERS).map(([id, p]) => {
     const models = p.models.slice();
     if (E.models[id] && !models.some(m => m[0] === E.models[id])) models.push([E.models[id], E.models[id]]);
-    return { id, name: p.name, label: p.label, models, hasKey: !!(E.keys[id] || '').trim() };
+    return { id, name: p.name, label: p.label, models, hasKey: !!keyOf(id) };
   });
 }
 /* 처음 정하기: Claude 안이면 계정, 아니면 키가 있는 곳 */
 function settleEngine() {
   if (E.engine === 'account' && cap.sample) return;
-  if (E.engine && PROVIDERS[E.engine] && E.keys[E.engine]) return;
+  if (E.engine && PROVIDERS[E.engine] && keyOf(E.engine)) return;
   if (cap.sample) { E.engine = 'account'; return; }
-  const withKey = Object.keys(PROVIDERS).find(p => E.keys[p]);
+  const withKey = Object.keys(PROVIDERS).find(p => (E.keys[p] || '').trim()) || (TEST.on ? 'upstage' : null);
   E.engine = withKey || (E.engine && PROVIDERS[E.engine] ? E.engine : null);
 }
 
@@ -940,7 +948,9 @@ const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError
 /* keepAlive: 대신 보내는 동안 30초마다 부름 (답이 통째로 와서 그동안 2분 멈춤 감시가 끊지 않게) */
 async function upFetch(url, init, keepAlive) {
   const sig = init.signal;
-  if (!(IN_APP && upViaApp)) {
+  // 시험용 키(표시)는 늘 앱으로 — 앱이 진짜 키로 바꿔 보냄
+  const viaTest = new Headers(init.headers || {}).get('authorization') === 'Bearer ' + TEST_MARK;
+  if (!(IN_APP && (upViaApp || viaTest))) {
     try { return await fetch(url, init); }
     catch (e) {
       // 멈추기·2분 멈춤으로 끊긴 것은 막힌 게 아니므로 대신 보내지 않음
@@ -985,7 +995,7 @@ async function upstageRead(images, signal) {
   return `[이미지에서 읽은 글]\n${out.join('\n')}\n[이미지에서 읽은 글 끝]\n아래 요청에서 이미지라고 한 것은 위에 적은 글이에요.\n\n`;
 }
 async function ocrOne(im, i, signal) {
-  const key = (E.keys.upstage || '').trim();
+  const key = keyOf('upstage');
   const blob = im.blob || await (await fetch(`data:${im.mime};base64,${im.b64}`)).blob();
   const fd = new FormData();
   fd.append('document', blob, `page-${i + 1}.${/png/.test(im.mime) ? 'png' : 'jpg'}`);
@@ -1029,7 +1039,7 @@ async function callApi(provider, prompt, { onText, signal: outer, images, carefu
   const signal = anySignal([outer, wd.signal]);
   idle();
   try {
-  const key = (E.keys[provider] || '').trim();
+  const key = keyOf(provider);
   const model = useModel || E.models[provider];
   let text = '', truncated = false, stopReason = '';
   const push = t => { if (!t) return; text += t; onText && onText({ text, delta: t }); };
@@ -1119,7 +1129,7 @@ function roleAI(use, task, role) {
 /* shared: { text, images } 학생마다 같은 공통 부분(앞에 두어 캐시), meter: 사용량을 모을 곳 */
 async function generate(prompt, { onText, signal, fresh, images, careful, use, task, role, shared, meter } = {}) {
   const pickd = E.engine === 'account' ? null : roleAI(use, task, role);
-  if (pickd && PROVIDERS[pickd.engine] && (E.keys[pickd.engine] || '').trim()) {
+  if (pickd && PROVIDERS[pickd.engine] && keyOf(pickd.engine)) {
     const prov = pickd.engine;
     try {
       if (prov === 'upstage') { prompt = await upstageFlat(prompt, images, shared, signal); images = null; shared = null; }
@@ -2185,6 +2195,9 @@ async function checkUpdate(manual) {
     if (manual) toast(info.latest ? `최신 버전이에요 (${info.current})` : '아직 올라온 업데이트가 없어요');
     return;
   }
+  // 알림 창을 실수로 닫아도 ⋮ 옆 버튼으로 다시 열 수 있게
+  const top = $('#updTop');
+  if (top) { top.hidden = false; $('#updTopText').textContent = `새 버전 ${info.latest}`; top.setAttribute('aria-label', `새 버전 ${info.latest} 설치`); }
   const dot = $('#menuUpdate');
   if (dot && !dot.querySelector('.dot')) { dot.insertAdjacentHTML('beforeend', '<span class="dot"></span>'); dot.lastChild.previousSibling.textContent = `새 버전 ${info.latest} 설치`; }
   if (!manual) {
@@ -2247,10 +2260,24 @@ async function runUpdate(sh, info) {
   } finally { if (un) try { un(); } catch (e) {} }
 }
 if (IN_APP) {
+  document.getElementById('updTop')?.addEventListener('click', () => { if (UPD.info && UPD.info.available && !UPD.busy) openUpdate(UPD.info); });
   try {
     window.__TAURI__.core.invoke('app_version').then(v => { UPD.version = v; const el = $('#menuVer'); el.textContent = `쌤비서 ${v}`; el.hidden = false; }).catch(() => {});
   } catch (e) {}
   setTimeout(() => checkUpdate(false), 2500);
+  // 시험용 업스테이지: 앱에 키가 들어 있고 기한 안이면, 내 키가 없을 때 그것으로(처음 한 번 알림)
+  window.__TAURI__.core.invoke('test_key_info').then(info => {
+    if (!info || !info.available || !/^\d{4}-\d{2}-\d{2}$/.test(info.until || '')) return;
+    const t = new Date(), now = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    if (now > info.until) return;
+    TEST.on = true; TEST.until = info.until;
+    settleEngine(); updateGen();
+    document.dispatchEvent(new CustomEvent('ssam:ai-changed'));
+    if (usingTest()) {
+      let told = null; try { told = localStorage.getItem('ssam:testkey:told'); } catch (e) {}
+      if (!told) { try { localStorage.setItem('ssam:testkey:told', '1'); } catch (e) {} setTimeout(() => toast(`시험용으로 업스테이지 AI를 쓰고 있어요(${untilText()}까지, 하루 400번). 내 AI 키를 넣으면 그 키로 바뀌어요 — 설정 › AI`, 10000), 4000); }
+    }
+  }).catch(() => {});
 }
 async function openUninstall() {
   const T = window.__TAURI__;
@@ -2329,7 +2356,7 @@ function drawEngine(sh) {
   box.querySelector('#keyRemember').addEventListener('change', e => { E.remember = e.target.checked; saveEngine(); });
   box.querySelector('#keyTest').addEventListener('click', async e => {
     const msg = box.querySelector('#keyMsg');
-    if (!E.keys[p]) { msg.textContent = '키를 먼저 넣어 주세요.'; return; }
+    if (!keyOf(p)) { msg.textContent = '키를 먼저 넣어 주세요.'; return; }
     e.target.disabled = true;
     msg.innerHTML = '<span style="display:inline-flex;gap:6px;align-items:center"><span class="spin"></span>확인하는 중…</span>';
     try {
@@ -5677,7 +5704,7 @@ window.SSAM = {
   // 평가 영역 이음(활동지·단원평가 → 평가지 채점): 지금 평가계획의 영역 [{ id, subject, label }]
   planUnits: () => allUnits().map(u => ({ id: u.id, subject: u.subject, label: [u.area, u.elem || u.unit].filter(Boolean).join(' · ') })),
   onModeChange: fn => { modeHooks.push(fn); },
-  ai: { generate, engineReady, engineName, providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
+  ai: { generate, engineReady, engineName, testKey: () => ({ on: TEST.on, until: TEST.until, untilText: untilText(), using: usingTest() }), providers: aiProviders, current: () => ({ engine: E.engine, model: E.engine && E.models[E.engine] || '' }), providerName: () => E.engine === 'account' ? 'Claude 계정' : (PROVIDERS[E.engine] ? PROVIDERS[E.engine].name : ''), errMsg, openSettings },
   rosterHTML, toast, openSheet, closeSheet, esc, copyText,
   // 단원평가: 이름 칸 가리기 편집기 { shots: [{ url, label }], mask, all, what, save(mask, all) }
   openMaskEditor,

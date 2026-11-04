@@ -47,6 +47,8 @@ jobs:
         env:
           CARGO_TERM_COLOR: never
           NO_COLOR: '1'
+          # 시험용 업스테이지 키(저장소 비밀값, 2027. 3. 31.까지만 앱에 들어감 — build.rs). 로그에는 가려짐
+          UPSTAGE_TEST_KEY: ${{ secrets.UPSTAGE_TEST_KEY }}
         run: |
           set -o pipefail
           if ! npm run tauri build -- --bundles nsis 2>&1 | tee build.log; then
