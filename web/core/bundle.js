@@ -191,6 +191,7 @@ export function openBundleCard(b, { what = '' } = {}) {
     SS().openSheet(`<div id="bundleCard" class="bundle-card"><h3>${esc(what ? `${what}에 이렇게 넣을까요?` : '이렇게 나눠 넣을까요?')}</h3>
       <p class="muted" id="bundleSum" style="margin:0"></p><div id="bundleBody"></div>
       <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="bundleOk">이대로 넣기</button></div></div>`, sh => {
+      sh.classList.add('wide');
       draw(sh);
       sh.addEventListener('click', e => {
         const pg = e.target.closest('[data-bundle-page]');

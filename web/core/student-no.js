@@ -110,7 +110,8 @@ export async function readNos(pages, { box, mask, signal } = {}) {
   const { images, crops } = await cropNos(pages, box, mask);
   if (signal && signal.aborted) throw { code: 'aborted' };
   const v = await ai.generateJSON(noPrompt(pages.length), { images, signal, valid: x => Array.isArray(x) || !!(x && Array.isArray(x.nos)) });
-  return { nos: normNos(v, pages.length), crops };
+  // 확인 표에서 번호 칸을 누르면 그 학생의 첫 쪽을 크게 보여 주려고 쪽·번호 칸 자리를 함께 돌려줌(화면에만, 저장·전송 안 함)
+  return { nos: normNos(v, pages.length).map((x, k) => ({ ...x, page: pages[k], box })), crops };
 }
 
 /* 읽는 동안 띄워 두는 창 (떠 있는 버튼의 다음 카드가 확인 표를 덮지 않게, 그만두기도 여기서).
@@ -129,14 +130,22 @@ export function openNoWait() {
 
 /* ---------- 확인 표 ---------- */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-/* rows: [{ crop, no, sure }] · allowed: Set|null · onOk(번호들). 노란 줄을 다 고쳐야 [이대로 채점] */
+/* 줄 아래에 펼치는 크게 보기: 번호 칸 그림(크게) + 시험지 첫 쪽(번호 칸을 빨간 테두리로). 쪽 그림이 없으면 번호 칸만 */
+const pct = v => `${Math.max(0, Math.min(100, Number(v) * 100 || 0)).toFixed(2)}%`;
+function noViewHTML(r, i, pageUrl) {
+  const b = r.box || null;
+  return `<figure class="no-view-crop"><img src="${esc(r.crop)}" alt="${i + 1}번째 학생의 번호 칸(크게)"><figcaption class="muted">번호 칸</figcaption></figure>`
+    + (pageUrl ? `<figure class="no-view-page"><div class="no-view-stage"><img src="${esc(pageUrl)}" alt="${i + 1}번째 학생의 시험지 첫 쪽">${b ? `<span class="no-view-box" style="left:${pct(b.x)};top:${pct(b.y)};width:${pct(b.w)};height:${pct(b.h)}"></span>` : ''}</div><figcaption class="muted">시험지 첫 쪽${b ? ' · 빨간 칸이 번호 칸' : ''}</figcaption></figure>` : '');
+}
+/* rows: [{ crop, no, sure, page?, box? }] · allowed: Set|null · onOk(번호들). 노란 줄을 다 고쳐야 [이대로 채점].
+   번호 칸 그림이나 번호 칸을 누르면 그 줄 아래에 번호 칸·시험지 첫 쪽을 크게 보여 줌(한 번에 한 줄) */
 export function openNoCheck({ rows, allowed, onOk }) {
   const SS = window.SSAM;
   const missing = () => (allowed ? [...allowed].filter(n => !cur().includes(n)) : []);
   let cur = () => rows.map(r => r.no);
   SS.openSheet(`<h3>읽은 번호를 확인해 주세요</h3>
-    <p class="muted" style="margin:0">스캔 차례마다 학생이 쓴 번호 칸과 읽은 번호예요. 노란 줄을 고치면 번호 차례로 늘어놓고 채점해요.</p>
-    <ol class="no-check">${rows.map((r, i) => `<li data-noline="${i}"><span class="muted num">${i + 1}번째</span><img src="${r.crop}" alt="${i + 1}번째 학생의 번호 칸"><label class="cls-inline"><input class="field num" type="number" min="1" max="99" data-noi="${i}" value="${r.no == null ? '' : r.no}" aria-label="${i + 1}번째 학생 번호">번</label><span class="no-why" data-nowhy="${i}"></span></li>`).join('')}</ol>
+    <p class="muted" style="margin:0">스캔 차례마다 학생이 쓴 번호 칸과 읽은 번호예요. 노란 줄을 고치면 번호 차례로 늘어놓고 채점해요. 번호 칸 그림이나 번호를 누르면 그 학생의 번호 칸과 시험지를 크게 볼 수 있어요.</p>
+    <ol class="no-check">${rows.map((r, i) => `<li data-noline="${i}"><span class="muted num">${i + 1}번째</span><button type="button" class="no-zoom" data-nozoom="${i}" aria-expanded="false" aria-controls="noView${i}" title="크게 보기"><img src="${esc(r.crop)}" alt="${i + 1}번째 학생의 번호 칸 · 눌러서 크게 보기"></button><label class="cls-inline"><input class="field num" type="number" min="1" max="99" data-noi="${i}" value="${r.no == null ? '' : r.no}" aria-label="${i + 1}번째 학생 번호">번</label><span class="no-why" data-nowhy="${i}"></span><div class="no-view" id="noView${i}" data-noview="${i}" hidden></div></li>`).join('')}</ol>
     <p class="muted" id="noMissing"></p>
     <div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-close>취소</button><button class="btn primary" type="button" id="noOk">이대로 채점</button></div>`,
   sh => {
@@ -154,6 +163,17 @@ export function openNoCheck({ rows, allowed, onOk }) {
       sh.querySelector('#noMissing').textContent = (bad ? `노란 줄 ${bad}개를 고쳐 주세요. ` : '') + (miss.length ? `읽은 번호에 없는 번호: ${miss.join(', ')}번 (결석이면 그대로 두세요)` : '');
     };
     inputs.forEach(el => el.addEventListener('input', () => { el.dataset.touched = '1'; draw(); }));
+    // 크게 보기: 쪽 그림 주소는 앱이 이미 만든 것(page.url)을 쓰고, 없으면 여기서 만들어 창이 닫힐 때 돌려줌
+    const urlOf = r => { const p = r.page; if (!p) return ''; if (p.url) return p.url; if (p.blob) { p.url = URL.createObjectURL(p.blob); p._noUrl = true; return p.url; } return ''; };
+    const views = [...sh.querySelectorAll('[data-noview]')], zooms = [...sh.querySelectorAll('[data-nozoom]')];
+    const show = (i, on) => {
+      views.forEach((v, k) => { const o = on && k === i; if (o && !v.innerHTML) v.innerHTML = noViewHTML(rows[k], k, urlOf(rows[k])); v.hidden = !o; zooms[k].setAttribute('aria-expanded', String(o)); });
+      if (on) requestAnimationFrame(() => { const li = sh.querySelector(`[data-noline="${i}"]`); if (li && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' }); });
+    };
+    zooms.forEach((b, i) => b.addEventListener('click', () => show(i, views[i].hidden)));
+    inputs.forEach((el, i) => el.addEventListener('click', () => { if (views[i].hidden) show(i, true); }));
+    const root = document.getElementById('sheetRoot');
+    if (root) { const obs = new MutationObserver(() => { if (!sh.isConnected) { obs.disconnect(); rows.forEach(r => { if (r.page && r.page._noUrl) { URL.revokeObjectURL(r.page.url); delete r.page.url; delete r.page._noUrl; } }); } }); obs.observe(root, { childList: true }); }
     sh.querySelector('#noOk').addEventListener('click', () => {
       const nos = cur();
       if (noProblems(nos, allowed).some(Boolean)) return;
