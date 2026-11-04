@@ -13,7 +13,7 @@ export const KINDS = [
   ['class-plan', '작년 학급운영계획', '올해 학급운영계획 만들기'],
   ['event-plan', '작년 행사 계획', '행사계획 만들기'],
   ['year-plan', '작년 업무 계획', '연간계획 만들기'],
-  ['notice', '연수·행사 안내', '쪽지로 안내하기'],
+  ['notice', '공문·안내', '공문 처리로'],
   ['guide', '올해 지침·공문', '계획에 지침으로 넣기'],
   ['jindo', '진도표', '학급 진도표에 넣기'],
   ['timetable', '기초시간표', '학급 시간표에 넣기'],
@@ -95,7 +95,7 @@ export function classify({ name = '', text = '', scan = false } = {}) {
   const meetTitle = MEET.test(titleLine) && /(안\s*내|알\s*림|개\s*최|계\s*획|모\s*집)/.test(titleLine);
   const planLike = YEAR_PARTS.filter(re => re.test(t)).length >= 2 || (EVENT.test(titleLine) && /계획/.test(titleLine)) || /(운영|추진|연간|사업)\s*계획/.test(titleLine);
   if (nSigns >= 2 && !/지\s*침/.test(head) && (meetTitle || (ANNOUNCE_END.test(titleLine) && !planLike)))
-    add('notice', 6 + 2 * nSigns, `안내 공문·계획이에요(일시·장소·대상·신청 중 ${nSigns}개). 선생님들께 쪽지로 안내해요.`);
+    add('notice', 6 + 2 * nSigns, `안내 공문·계획이에요(일시·장소·대상·신청 중 ${nSigns}개). 공문 처리에서 기한·할 일을 뽑고 쪽지·가정통신문으로 이어 써요.`);
   if (/(지침|공문|시행|안내|협조|알림)/.test(head)) add('guide', 3, '제목에 지침·안내가 있어요.');
   if ([/수신/, /발신/, /경유/, /교육(지원)?청/].filter(re => re.test(head)).length >= 2) add('guide', 4, '공문(수신·발신)이에요.');
   if (/지침|공문/.test(n)) add('guide', 2, '파일 이름에 「지침」이 있어요.');

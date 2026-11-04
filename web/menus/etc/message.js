@@ -2,7 +2,6 @@
    AI는 칸만 뽑고(message-ai.js), 쪽지 글은 앱이 맞춤. 넣은 파일은 이 화면에만 두고(붙임 후보) 이름만 저장.
    AI로 보내기 전 명단 줄·전화번호 줄·주민번호 줄은 빼고 「이름: ○○○」은 이름을 지움. 보내는 사람은 AI로 보내지 않음 */
 import { onEnter, go } from '../../core/shell.js';
-import { registerInbox } from '../../core/inbox.js';
 import * as ai from '../../core/ai.js';
 import { toast, copyText } from '../../core/ui.js';
 import { readText } from '../../core/files.js';
@@ -307,15 +306,9 @@ document.addEventListener('drop', e => {
   else { const t = e.dataTransfer && e.dataTransfer.getData('text/plain'); if (t) { M.paste = t; const p = box.querySelector('#msgPaste'); if (p) p.value = t; } }
 });
 
-/* 떠 있는 버튼: 연수·회의·행사 안내 공문·계획 → 기타 › 쪽지 작성(넣은 파일이 붙임) */
-registerInbox('notice', {
-  act: files => `기타 › 쪽지 작성에서 안내 쪽지 쓰기${files.length > 1 ? `(파일 ${files.length}개를 붙임으로)` : '(이 파일을 붙임으로)'}`,
-  async run(files) { await putMessageFiles(files); return ''; }
-});
-
 onEnter('etc', (tab, section) => {
   if (!box || !section.contains(box)) { box = document.createElement('div'); box.className = 'msg-box'; section.prepend(box); }
-  // 기타의 다른 탭(가정통신문)이면 숨김
+  // 기타의 다른 탭(가정통신문·공문 처리)이면 숨김
   box.hidden = tab !== 'message';
   if (!box.hidden) render();
 });
