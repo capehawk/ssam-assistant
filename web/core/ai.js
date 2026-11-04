@@ -1,6 +1,7 @@
 /* AI 부르기: 새 메뉴(품의·계획 등)는 이 파일만 씀.
    실제 호출·키·모델은 평가 메뉴(window.SSAM.ai)가 맡음 — Claude·Gemini·GPT·업스테이지 */
 import * as wire from './ai-wire.js';
+import './write-style.js'; // 글쓰기 원칙(window.SSAM_STYLE) — 평가 메뉴의 AI 부르기에서 씀
 const A = () => (window.SSAM && window.SSAM.ai) || null;
 // 평가 메뉴(옛 IIFE)의 AI 부르기가 요청 모양·사용량 읽기에 씀
 if (typeof window !== 'undefined') window.SSAM_WIRE = wire;

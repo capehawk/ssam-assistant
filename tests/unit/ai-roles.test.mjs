@@ -161,3 +161,14 @@ test('시험용 업스테이지를 쓰면 AI 줄에 「(시험용)」, 내 업�
     assert.ok(!rowText('message', env()).includes('시험용'));
   } finally { globalThis.window = old; }
 });
+
+test('업무별 AI 고르기: 시험용 업스테이지 모델은 「(시험용)」으로 보임(내 업스테이지 키가 있으면 없음)', () => {
+  const up = { engine: 'upstage', current: { engine: 'upstage', model: 'solar-pro3' }, keys: { claude: false, gemini: false, openai: false, upstage: true }, models: { upstage: ['solar-pro3'] }, labels: { upstage: 'Upstage' }, modelLabels: {} };
+  const old = globalThis.window;
+  try {
+    globalThis.window = { SSAM: { ai: { testKey: () => ({ on: true, own: false }) } } };
+    assert.ok(aiOptions(up).every(o => o.label.includes('(시험용)')), JSON.stringify(aiOptions(up)));
+    globalThis.window = { SSAM: { ai: { testKey: () => ({ on: true, own: true }) } } };
+    assert.ok(aiOptions(up).every(o => !o.label.includes('시험용')));
+  } finally { globalThis.window = old; }
+});

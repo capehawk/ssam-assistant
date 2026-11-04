@@ -51,8 +51,8 @@ html[data-theme="rail"]{
 /* 아이콘 레일: 세로 메뉴는 아이콘 위·글자 아래, 로고는 마크만 (넓은 화면에서만) */
 @media (min-width:761px){
   html[data-theme="rail"] .app-side .app-logo{justify-content:center;padding:0}
-  html[data-theme="rail"] .logo-mark{width:48px;height:48px;font-size:21px;border-radius:14px}
-  html[data-theme="rail"] .logo-name{display:none}
+  html[data-theme="rail"] .logo-mark{width:48px;height:48px}
+  html[data-theme="rail"] .logo-text{display:none}
   html[data-theme="rail"] .side-menus,html[data-theme="rail"] .side-foot{padding-left:10px;padding-right:10px}
   html[data-theme="rail"] .side-btn{flex-direction:column;justify-content:center;gap:5px;min-height:64px;padding:6px 2px;font-size:12.5px;text-align:center}
   html[data-theme="rail"] .side-ai{display:none}

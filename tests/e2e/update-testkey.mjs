@@ -76,6 +76,14 @@ await run('update-testkey', [
     r = await page.evaluate(() => window.SSAM.ai.engineName());
     assert(!String(r).includes('시험용'), String(r));
   }],
+  ['AI 설정 창의 업스테이지 칸: 키를 넣지 않으면 시험용을 쓴다고 알림', async () => {
+    await page.evaluate(() => localStorage.removeItem('ssam:engine'));
+    await page.reload(); await page.waitForFunction(() => String(window.SSAM.ai.engineName()).includes('시험용'), null, { timeout: 8000 });
+    await page.evaluate(() => window.SSAM.ai.openSettings());
+    await page.waitForSelector('#sheetRoot .sheet');
+    assert((await page.textContent('#sheetRoot .sheet')).includes('시험용 업스테이지'), (await page.textContent('#sheetRoot .sheet')).slice(0, 300));
+    await page.keyboard.press('Escape');
+  }],
   ['웹판(Windows 앱 아님)에서도 내 키가 없으면 시험용 업스테이지', async () => {
     await page.evaluate(() => localStorage.removeItem('ssam:engine'));
     const p2 = await ctx.newPage();

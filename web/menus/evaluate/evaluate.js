@@ -1140,7 +1140,14 @@ function roleAI(use, task, role) {
   return r ? r.pick(task, role || 'main') : null;
 }
 /* shared: { text, images } 학생마다 같은 공통 부분(앞에 두어 캐시), meter: 사용량을 모을 곳 */
-async function generate(prompt, { onText, signal, fresh, images, careful, use, task, role, shared, meter } = {}) {
+/* 글쓰기 원칙(core/write-style.js — 번역투·AI 단골 표현 빼기): 글을 쓰는 업무는 요청 끝에 원칙을 붙이고, 답의 이중 피동 등은 고침 */
+async function generate(prompt, opts = {}) {
+  const st = window.SSAM_STYLE, w = !!(st && opts && opts.task && st.WRITE_TASKS.includes(opts.task));
+  const r = await generateRaw(w ? st.withStyle(prompt, opts.task) : prompt, opts);
+  if (w && r && typeof r.text === 'string') r.text = st.tidyKo(r.text);
+  return r;
+}
+async function generateRaw(prompt, { onText, signal, fresh, images, careful, use, task, role, shared, meter } = {}) {
   const pickd = E.engine === 'account' ? null : roleAI(use, task, role);
   if (pickd && PROVIDERS[pickd.engine] && keyOf(pickd.engine)) {
     const prov = pickd.engine;
@@ -2363,6 +2370,7 @@ function drawEngine(sh) {
     <label class="switch"><input type="checkbox" id="keyRemember" ${E.remember ? 'checked' : ''}>${HERE}에 키 기억하기</label>
     ${!IN_APP && /\.github\.io$/i.test(location.hostname) ? `<p class="muted" style="margin:0">웹판은 ${esc(location.hostname)} 주소를 같은 계정의 다른 웹페이지와 함께 써요. 함께 쓰는 PC에서는 키를 기억하지 않거나 Windows 앱을 쓰는 것이 안전해요.</p>` : ''}
     <div class="row"><button class="btn tonal" type="button" id="keyTest">연결 확인</button><span class="muted" id="keyMsg"></span></div>
+    ${p === 'upstage' && TEST.on && !(E.keys.upstage || '').trim() ? `<p class="banner info" style="margin:0"><span class="grow">키를 넣지 않으면 <b>시험용 업스테이지</b>(${esc(untilText())}까지, 하루 ${TEST.daily}번)로 써요. 쌤비서 중계 서버를 거쳐 업스테이지로 가고, 보낸 글은 저장하지 않아요.</span></p>` : ''}
     <p class="muted" style="margin:0">키 받는 곳: <a href="${esc(P.keyUrl)}" target="_blank" rel="noopener">${esc(P.keyHost)}</a><br>키는 ${HERE}에만 저장되고, 평어를 만들 때 ${esc(P.name)} 회사로만 보내져요. 사용 요금은 키 주인에게 청구돼요.</p>`;
   const key = box.querySelector('#apiKey');
   key.addEventListener('input', () => { E.keys[p] = key.value.trim(); saveEngine(); box.querySelector('#keyMsg').textContent = ''; updateGen(); });

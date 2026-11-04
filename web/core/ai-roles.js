@@ -85,7 +85,9 @@ const defaultLabel = env => (env.current && env.current.engine && env.keys[env.c
 /* 키를 넣은 회사의 모델들: [{ value: 'engine|model', label }] */
 export function aiOptions(env = providerEnv()) {
   const out = [];
-  for (const e of ENGINES) if (env.keys[e]) for (const m of env.models[e] || []) out.push({ value: `${e}|${m}`, label: aiLabel({ engine: e, model: m }, env) });
+  const tk = globalThis.window && window.SSAM && window.SSAM.ai && window.SSAM.ai.testKey ? window.SSAM.ai.testKey() : null;
+  const test = e => e === 'upstage' && tk && tk.on && !tk.own; // 시험용 업스테이지(내 키 없음)
+  for (const e of ENGINES) if (env.keys[e]) for (const m of env.models[e] || []) out.push({ value: `${e}|${m}`, label: aiLabel({ engine: e, model: m }, env) + (test(e) ? ' (시험용)' : '') });
   return out;
 }
 
